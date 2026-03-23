@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Puzzle Solver</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main class="layout">
+    <h1>Puzzle Solver</h1>
+
+    <label class="field">
+      <span>Puzzle Type</span>
+      <select id="puzzleType">
+        <option value="queens">Queens</option>
+        <option value="tango">Tango</option>
+      </select>
+    </label>
+
+    <label class="field">
+      <span>API URL</span>
+      <input id="apiUrl" type="text" value="http://127.0.0.1:8000" autocomplete="off">
+    </label>
+
+    <div class="actions">
+      <button id="selectBoard" type="button">Select Board</button>
+      <button id="autoDetect" type="button">Auto Detect</button>
+      <button id="solveBoard" type="button" class="primary">Solve</button>
+      <button id="solveAndApply" type="button" class="primary">Solve + Apply</button>
+      <button id="applyMoves" type="button">Apply</button>
+      <button id="clearOverlay" type="button">Clear Overlay</button>
+    </div>
+
+    <section class="settings">
+      <h2>Apply Settings</h2>
+
+      <label class="field">
+        <span>Inter-click delay (ms)</span>
+        <input id="interClickDelayMs" type="number" min="0" max="500" step="5" value="45">
+      </label>
+
+      <label class="field">
+        <span>Inter-move delay (ms)</span>
+        <input id="interMoveDelayMs" type="number" min="0" max="500" step="5" value="40">
+      </label>
+
+      <label class="field">
+        <span>Tango input mode</span>
+        <select id="tangoApplyMode">
+          <option value="left-cycle">Left click: sun=1, moon=2</option>
+          <option value="right-moon">Left sun + right moon</option>
+        </select>
+      </label>
+
+      <label class="checkbox-field">
+        <input id="autoCloseAfterApply" type="checkbox" checked>
+        <span>Auto-close popup after Apply</span>
+      </label>
+    </section>
+
+    <pre id="result" class="result">No result yet.</pre>
+    <p id="status" class="status"></p>
+  </main>
+
+  <script src="popup.js"></script>
+</body>
+</html>

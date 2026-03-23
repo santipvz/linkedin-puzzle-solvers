@@ -22,9 +22,10 @@ class ColorBasedRegionExtractor(RegionExtractor):
 
         # Extract cell colors
         cell_colors, cell_positions = self._extract_cell_colors(image, h_lines, v_lines, board_size)
+        color_grid = self._build_color_grid(cell_colors, cell_positions, board_size)
 
         # Try multiple tolerances to find best grouping
-        best_regions = self._find_best_color_grouping(cell_colors, cell_positions, board_size)
+        best_regions = self._find_best_color_grouping(cell_colors, cell_positions, color_grid, board_size)
 
         # Convert to Region objects
         regions = {}
@@ -42,6 +43,17 @@ class ColorBasedRegionExtractor(RegionExtractor):
 
         return regions
 
+    def _build_color_grid(self, cell_colors: List[np.ndarray], cell_positions: List[Tuple[int, int]],
+                         board_size: int) -> np.ndarray:
+        """Build board-sized color matrix from flattened cell color list."""
+        color_grid = np.zeros((board_size, board_size, 3), dtype=float)
+
+        for index, (row, col) in enumerate(cell_positions):
+            if index < len(cell_colors):
+                color_grid[row, col] = cell_colors[index]
+
+        return color_grid
+
     def _extract_cell_colors(self, image: np.ndarray, h_lines: List[int], v_lines: List[int],
                            board_size: int) -> Tuple[List[np.ndarray], List[Tuple[int, int]]]:
         """Extract average color from each cell."""
@@ -50,11 +62,21 @@ class ColorBasedRegionExtractor(RegionExtractor):
 
         for r in range(board_size):
             for c in range(board_size):
-                # Cell coordinates with larger margins to avoid grid lines
-                y1 = h_lines[r] + 8
-                y2 = h_lines[r + 1] - 8
-                x1 = v_lines[c] + 8
-                x2 = v_lines[c + 1] - 8
+                raw_y1 = h_lines[r]
+                raw_y2 = h_lines[r + 1]
+                raw_x1 = v_lines[c]
+                raw_x2 = v_lines[c + 1]
+
+                cell_height = max(1, raw_y2 - raw_y1)
+                cell_width = max(1, raw_x2 - raw_x1)
+
+                # Dynamic inner margin to avoid grid lines while keeping enough border pixels
+                margin = max(3, min(cell_height, cell_width) // 8)
+
+                y1 = raw_y1 + margin
+                y2 = raw_y2 - margin
+                x1 = raw_x1 + margin
+                x2 = raw_x2 - margin
 
                 # Ensure within image bounds
                 y1 = max(0, min(y1, image.shape[0] - 1))
@@ -65,39 +87,69 @@ class ColorBasedRegionExtractor(RegionExtractor):
                 if y2 > y1 and x2 > x1:
                     cell_region = image[y1:y2, x1:x2]
 
-                    # Use smaller central region for better precision
-                    h_margin = max(3, (y2 - y1) // 3)
-                    w_margin = max(3, (x2 - x1) // 3)
-
-                    if cell_region.shape[0] > 2 * h_margin and cell_region.shape[1] > 2 * w_margin:
-                        center_region = cell_region[h_margin:-h_margin, w_margin:-w_margin]
-                        avg_color = np.mean(center_region.reshape(-1, 3), axis=0)
-                    else:
-                        avg_color = np.mean(cell_region.reshape(-1, 3), axis=0)
+                    # Use border-biased sampling so symbols placed in the center
+                    # (queens, marks) do not distort region color estimation.
+                    avg_color = self._extract_robust_cell_color(cell_region)
 
                     cell_colors.append(avg_color)
                     cell_positions.append((r, c))
 
         return cell_colors, cell_positions
 
+    def _extract_robust_cell_color(self, cell_region: np.ndarray) -> np.ndarray:
+        """Estimate cell color robustly against center overlays/icons."""
+        if cell_region.size == 0:
+            return np.array([0.0, 0.0, 0.0])
+
+        height, width = cell_region.shape[:2]
+        band = max(2, min(height, width) // 6)
+
+        top = cell_region[:band, :, :]
+        bottom = cell_region[-band:, :, :]
+        left = cell_region[:, :band, :]
+        right = cell_region[:, -band:, :]
+
+        sampled_pixels = np.concatenate(
+            [
+                top.reshape(-1, 3),
+                bottom.reshape(-1, 3),
+                left.reshape(-1, 3),
+                right.reshape(-1, 3),
+            ],
+            axis=0,
+        )
+
+        if sampled_pixels.size == 0:
+            sampled_pixels = cell_region.reshape(-1, 3)
+
+        brightness = np.mean(sampled_pixels, axis=1)
+        low = np.percentile(brightness, 10)
+        high = np.percentile(brightness, 95)
+
+        filtered = sampled_pixels[(brightness >= low) & (brightness <= high)]
+        if filtered.size == 0:
+            filtered = sampled_pixels
+
+        return np.median(filtered, axis=0)
+
     def _find_best_color_grouping(self, cell_colors: List[np.ndarray],
                                 cell_positions: List[Tuple[int, int]],
+                                color_grid: np.ndarray,
                                 board_size: int) -> Dict[int, List[Tuple[int, int]]]:
         """Find the best color grouping using multiple tolerances."""
         best_regions = None
         best_score = float("inf")
 
         for tolerance in self.tolerance_range:
-            regions = self._cluster_colors(cell_colors, cell_positions, tolerance)
+            regions = self._cluster_colors_connected(color_grid, board_size, tolerance)
             score = self._evaluate_region_quality(regions, board_size)
 
-            if abs(len(regions) - board_size) <= 1 and score < best_score:
+            if abs(len(regions) - board_size) <= 2 and score < best_score:
                 best_regions = regions
                 best_score = score
 
         if best_regions is None:
-            # Use default tolerance if no good grouping found
-            best_regions = self._cluster_colors(cell_colors, cell_positions, self.color_tolerance)
+            best_regions = self._cluster_colors_global(cell_colors, cell_positions, self.color_tolerance)
 
         # Adjust region count if necessary - but only for major discrepancies
         if abs(len(best_regions) - board_size) > 2:
@@ -105,18 +157,62 @@ class ColorBasedRegionExtractor(RegionExtractor):
 
         return best_regions
 
-    def _cluster_colors(self, colors: List[np.ndarray], positions: List[Tuple[int, int]],
-                       tolerance: int) -> Dict[int, List[Tuple[int, int]]]:
+    def _cluster_colors_connected(self, color_grid: np.ndarray, board_size: int,
+                                 tolerance: int) -> Dict[int, List[Tuple[int, int]]]:
+        """Cluster cells by color using 4-neighbor connectivity constraints."""
+        regions: Dict[int, List[Tuple[int, int]]] = {}
+        assigned = np.zeros((board_size, board_size), dtype=bool)
+        region_id = 0
+        directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+
+        for row in range(board_size):
+            for col in range(board_size):
+                if assigned[row, col]:
+                    continue
+
+                region_positions: List[Tuple[int, int]] = []
+                stack = [(row, col)]
+                assigned[row, col] = True
+
+                while stack:
+                    current_row, current_col = stack.pop()
+                    region_positions.append((current_row, current_col))
+
+                    for dr, dc in directions:
+                        next_row = current_row + dr
+                        next_col = current_col + dc
+
+                        if not (0 <= next_row < board_size and 0 <= next_col < board_size):
+                            continue
+
+                        if assigned[next_row, next_col]:
+                            continue
+
+                        current_color = color_grid[current_row, current_col]
+                        next_color = color_grid[next_row, next_col]
+                        distance = np.linalg.norm(current_color - next_color)
+
+                        if distance <= tolerance:
+                            assigned[next_row, next_col] = True
+                            stack.append((next_row, next_col))
+
+                regions[region_id] = region_positions
+                region_id += 1
+
+        return regions
+
+    def _cluster_colors_global(self, colors: List[np.ndarray], positions: List[Tuple[int, int]],
+                              tolerance: int) -> Dict[int, List[Tuple[int, int]]]:
         """Group colors into regions based on similarity."""
         if not colors:
             return {}
 
-        colors = np.array(colors)
+        colors_array = np.array(colors)
         regions = {}
         region_id = 0
-        assigned = [False] * len(colors)
+        assigned = [False] * len(colors_array)
 
-        for i, color in enumerate(colors):
+        for i, color in enumerate(colors_array):
             if assigned[i]:
                 continue
 
@@ -125,12 +221,12 @@ class ColorBasedRegionExtractor(RegionExtractor):
             assigned[i] = True
 
             # Find similar colors
-            for j, other_color in enumerate(colors):
+            for j, other_color in enumerate(colors_array):
                 if assigned[j]:
                     continue
 
                 # Calculate Euclidean distance in BGR space
-                distance = np.linalg.norm(color - other_color)
+                distance = float(np.linalg.norm(color - other_color))
 
                 if distance <= tolerance:
                     current_region.append(positions[j])
@@ -160,9 +256,9 @@ class ColorBasedRegionExtractor(RegionExtractor):
                 size_penalty += 10
 
         # Penalize high variance in sizes
-        variance_penalty = np.var(sizes) / 10 if len(sizes) > 1 else 0
+        variance_penalty = float(np.var(sizes) / 10) if len(sizes) > 1 else 0.0
 
-        return count_penalty + size_penalty + variance_penalty
+        return float(count_penalty + size_penalty + variance_penalty)
 
     def _adjust_regions_count(self, regions: Dict[int, List[Tuple[int, int]]],
                             target_count: int) -> Dict[int, List[Tuple[int, int]]]:

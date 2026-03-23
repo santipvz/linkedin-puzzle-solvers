@@ -1,0 +1,131 @@
+:root {
+  font-family: "Segoe UI", Tahoma, sans-serif;
+  color: #102a43;
+}
+
+body {
+  margin: 0;
+  width: 336px;
+  background: linear-gradient(180deg, #f8fbff 0%, #eef5ff 100%);
+}
+
+.layout {
+  padding: 14px;
+}
+
+h1 {
+  margin: 0 0 12px;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.field span {
+  font-size: 12px;
+  font-weight: 600;
+  color: #334e68;
+}
+
+input,
+select,
+button {
+  font: inherit;
+}
+
+input,
+select {
+  padding: 8px;
+  border: 1px solid #bcccdc;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.settings {
+  margin: 8px 0 12px;
+  padding: 10px;
+  background: #e5edf7;
+  border: 1px solid #bcccdc;
+  border-radius: 10px;
+}
+
+.settings h2 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: #243b53;
+}
+
+.settings .field {
+  margin-bottom: 8px;
+}
+
+.checkbox-field {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  color: #243b53;
+}
+
+.checkbox-field input {
+  margin: 0;
+}
+
+button {
+  border: 1px solid #9fb3c8;
+  background: #fff;
+  color: #102a43;
+  border-radius: 8px;
+  padding: 8px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #f0f4f8;
+}
+
+button.primary {
+  background: #0f766e;
+  border-color: #0f766e;
+  color: #fff;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.result {
+  margin: 0;
+  padding: 8px;
+  min-height: 84px;
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  background: #d9e2ec;
+  border-radius: 8px;
+  border: 1px solid #bcccdc;
+  font-size: 12px;
+}
+
+.status {
+  margin: 10px 0 0;
+  min-height: 18px;
+  font-size: 12px;
+  color: #0f5132;
+}
+
+.status.error {
+  color: #b42318;
+}
