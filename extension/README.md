@@ -13,6 +13,7 @@ Chrome extension that connects to the local solver API.
 - Auto-apply support for Tango (1 left click for sun, 2 left clicks for moon)
 - One-click `Solve + Apply` action in popup
 - Apply settings: auto-close, click delays, Tango input mode
+- In-page quick widget that auto-detects game type and runs solve+apply in one click
 
 
 ## Load in Chrome
@@ -34,6 +35,13 @@ Chrome extension that connects to the local solver API.
 5. Use `Select Board` (or `Auto Detect`)
 6. Click `Solve`
 7. Click `Apply` or `Solve + Apply`
+
+`Solve` shows overlay preview. `Solve + Apply` skips preview markers and directly applies moves.
+
+## Faster flow (in-page)
+
+On LinkedIn Queens/Tango pages, a small `Puzzle Quick Solve` widget appears on the page.
+Click `Solve <Game>` and the extension auto-detects the game and board, solves, and applies.
 
 After `Apply`, overlays are cleared. Popup auto-close can be toggled in settings.
 

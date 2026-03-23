@@ -16,6 +16,7 @@ The `games/*` projects were imported from their original repositories with histo
 - Unified local API for Queens and Tango solvers.
 - Chrome extension with board select, auto-detect, solve, and apply.
 - One-click `Solve + Apply` flow in extension popup.
+- In-page quick solve widget with automatic game detection on LinkedIn game pages.
 - Configurable apply settings (auto-close, click delays, Tango input mode).
 
 ## Quick Start

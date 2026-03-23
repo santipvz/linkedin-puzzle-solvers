@@ -567,7 +567,8 @@ async function handleAutoDetect() {
   setStatus("Board auto-detected.");
 }
 
-async function solveForTab(tab) {
+async function solveForTab(tab, options = {}) {
+  const renderSolution = options.renderSolution !== false;
   const puzzleType = puzzleTypeSelect.value;
   const apiBaseUrl = apiUrlInput.value.trim() || DEFAULT_API_URL;
 
@@ -586,37 +587,39 @@ async function solveForTab(tab) {
     throw new Error((solveResponse && solveResponse.error) || "Solver request failed.");
   }
 
-  const interactionTarget = resolveInteractionTarget(topSelection, frameContext);
-  if (!interactionTarget) {
-    throw new Error("Could not map board selection for rendering.");
-  }
+  if (renderSolution) {
+    const interactionTarget = resolveInteractionTarget(topSelection, frameContext);
+    if (!interactionTarget) {
+      throw new Error("Could not map board selection for rendering.");
+    }
 
-  let renderResponse = await safeSendTabMessage(
-    tab.id,
-    {
-      type: "renderSolution",
-      puzzleType: solveResponse.puzzleType,
-      result: solveResponse.result,
-      selection: interactionTarget.selection,
-    },
-    { frameId: interactionTarget.frameId }
-  );
-
-  if ((!renderResponse || !renderResponse.ok) && interactionTarget.frameId !== 0) {
-    renderResponse = await safeSendTabMessage(
+    let renderResponse = await safeSendTabMessage(
       tab.id,
       {
         type: "renderSolution",
         puzzleType: solveResponse.puzzleType,
         result: solveResponse.result,
-        selection: topSelection,
+        selection: interactionTarget.selection,
       },
-      { frameId: 0 }
+      { frameId: interactionTarget.frameId }
     );
-  }
 
-  if (!renderResponse || !renderResponse.ok) {
-    throw new Error((renderResponse && renderResponse.error) || "Failed to render solution overlay.");
+    if ((!renderResponse || !renderResponse.ok) && interactionTarget.frameId !== 0) {
+      renderResponse = await safeSendTabMessage(
+        tab.id,
+        {
+          type: "renderSolution",
+          puzzleType: solveResponse.puzzleType,
+          result: solveResponse.result,
+          selection: topSelection,
+        },
+        { frameId: 0 }
+      );
+    }
+
+    if (!renderResponse || !renderResponse.ok) {
+      throw new Error((renderResponse && renderResponse.error) || "Failed to render solution overlay.");
+    }
   }
 
   const payload = {
@@ -630,10 +633,11 @@ async function solveForTab(tab) {
   });
 
   setResult(summarizeResult(solveResponse.puzzleType, solveResponse.result));
-  setStatus(
-    solveResponse.result.solved ? "Solved and overlay rendered." : "No solution found.",
-    !solveResponse.result.solved
-  );
+  if (solveResponse.result.solved) {
+    setStatus(renderSolution ? "Solved and overlay rendered." : "Solved.");
+  } else {
+    setStatus("No solution found.", true);
+  }
 
   return {
     ...payload,
@@ -738,7 +742,7 @@ async function handleApply() {
 
 async function handleSolveAndApply() {
   const tab = await getActiveTab();
-  const solvedPayload = await solveForTab(tab);
+  const solvedPayload = await solveForTab(tab, { renderSolution: false });
 
   if (!solvedPayload.result || !solvedPayload.result.solved) {
     return;

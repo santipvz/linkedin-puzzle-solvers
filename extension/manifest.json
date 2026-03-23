@@ -4,7 +4,13 @@
   "version": "0.1.0",
   "description": "Capture puzzle boards, solve through a local API, and overlay/apply solutions.",
   "permissions": ["activeTab", "scripting", "storage", "tabs", "webNavigation"],
-  "host_permissions": ["http://127.0.0.1/*", "http://localhost/*", "https://www.linkedin.com/*"],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "http://localhost/*",
+    "https://www.linkedin.com/*",
+    "https://*.linkedin.com/*",
+    "<all_urls>"
+  ],
   "background": {
     "service_worker": "background.js",
     "type": "module"

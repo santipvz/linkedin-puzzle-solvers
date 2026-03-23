@@ -1,5 +1,230 @@
 let boardSelection = null;
 let solutionOverlayRoot = null;
+let quickSolveWidgetRoot = null;
+let quickSolveButton = null;
+let quickSolveStatus = null;
+let quickSolveBusy = false;
+let quickSolveObservedUrl = "";
+
+function detectPuzzleTypeFromUrl(url) {
+  if (!url || typeof url !== "string") {
+    return null;
+  }
+
+  const normalized = url.toLowerCase();
+  if (normalized.includes("/games/queens") || normalized.includes("/games/view/queens")) {
+    return "queens";
+  }
+  if (normalized.includes("/games/tango") || normalized.includes("/games/view/tango")) {
+    return "tango";
+  }
+  return null;
+}
+
+function detectPuzzleTypeFromPage() {
+  const fromLocation = detectPuzzleTypeFromUrl(window.location.href);
+  if (fromLocation) {
+    return fromLocation;
+  }
+
+  const iframe = document.querySelector("iframe[src*='/games/view/']");
+  if (iframe && typeof iframe.src === "string") {
+    return detectPuzzleTypeFromUrl(iframe.src);
+  }
+
+  return null;
+}
+
+function sendRuntimeMessage(message) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(message, (response) => {
+      const error = chrome.runtime.lastError;
+      if (error) {
+        reject(new Error(error.message));
+        return;
+      }
+      resolve(response);
+    });
+  });
+}
+
+function setQuickSolveStatus(text, isError = false) {
+  if (!quickSolveStatus) {
+    return;
+  }
+
+  quickSolveStatus.textContent = text || "";
+  quickSolveStatus.style.color = isError ? "#b42318" : "#166534";
+}
+
+function updateQuickSolveButtonText() {
+  if (!quickSolveButton) {
+    return;
+  }
+
+  const puzzleType = detectPuzzleTypeFromPage();
+  const puzzleLabel = puzzleType === "tango" ? "Tango" : "Queens";
+
+  if (quickSolveBusy) {
+    quickSolveButton.textContent = `Solving ${puzzleLabel}...`;
+  } else {
+    quickSolveButton.textContent = `Solve ${puzzleLabel}`;
+  }
+}
+
+function removeQuickSolveWidget() {
+  if (quickSolveWidgetRoot && quickSolveWidgetRoot.parentNode) {
+    quickSolveWidgetRoot.parentNode.removeChild(quickSolveWidgetRoot);
+  }
+
+  quickSolveWidgetRoot = null;
+  quickSolveButton = null;
+  quickSolveStatus = null;
+  quickSolveBusy = false;
+}
+
+async function onQuickSolveClick() {
+  const puzzleType = detectPuzzleTypeFromPage();
+  if (!puzzleType) {
+    setQuickSolveStatus("Open Queens or Tango game page.", true);
+    return;
+  }
+
+  if (quickSolveBusy) {
+    return;
+  }
+
+  quickSolveBusy = true;
+  if (quickSolveButton) {
+    quickSolveButton.disabled = true;
+  }
+  updateQuickSolveButtonText();
+  setQuickSolveStatus("Solving and applying...");
+
+  try {
+    const response = await sendRuntimeMessage({
+      type: "quickSolveFromPage",
+      puzzleType,
+    });
+
+    if (!response || !response.ok) {
+      throw new Error((response && response.error) || "Quick solve failed.");
+    }
+
+    if (!response.solved) {
+      setQuickSolveStatus(response.error || "No solution found.", true);
+      return;
+    }
+
+    if (!response.applied) {
+      setQuickSolveStatus(`Solved, but apply failed: ${response.error || "unknown"}`, true);
+      return;
+    }
+
+    const appliedCount = Number(response.appliedCount) || 0;
+    const clickCount = Number(response.clickCount) || 0;
+    const strategyText = response.strategy ? ` (${response.strategy})` : "";
+    setQuickSolveStatus(`Solved and applied ${appliedCount} moves with ${clickCount} clicks${strategyText}.`);
+  } catch (error) {
+    setQuickSolveStatus(error.message || String(error), true);
+  } finally {
+    quickSolveBusy = false;
+    if (quickSolveButton) {
+      quickSolveButton.disabled = false;
+    }
+    updateQuickSolveButtonText();
+  }
+}
+
+function createQuickSolveWidget() {
+  if (quickSolveWidgetRoot || window.self !== window.top) {
+    return;
+  }
+
+  const container = document.createElement("div");
+  container.style.position = "fixed";
+  container.style.right = "16px";
+  container.style.bottom = "16px";
+  container.style.zIndex = "2147483645";
+  container.style.width = "220px";
+  container.style.padding = "10px";
+  container.style.borderRadius = "12px";
+  container.style.background = "linear-gradient(165deg, rgba(255,255,255,0.96), rgba(236,245,255,0.96))";
+  container.style.border = "1px solid #b6c6d9";
+  container.style.boxShadow = "0 6px 18px rgba(15, 23, 42, 0.22)";
+  container.style.backdropFilter = "blur(2px)";
+
+  const title = document.createElement("div");
+  title.textContent = "Puzzle Quick Solve";
+  title.style.font = "700 12px/1.2 'Segoe UI', sans-serif";
+  title.style.color = "#1f2937";
+  title.style.marginBottom = "8px";
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.style.width = "100%";
+  button.style.border = "1px solid #0f766e";
+  button.style.background = "#0f766e";
+  button.style.color = "#ffffff";
+  button.style.borderRadius = "8px";
+  button.style.padding = "8px 10px";
+  button.style.font = "600 13px/1.2 'Segoe UI', sans-serif";
+  button.style.cursor = "pointer";
+  button.addEventListener("click", () => {
+    onQuickSolveClick();
+  });
+
+  const status = document.createElement("div");
+  status.style.marginTop = "8px";
+  status.style.minHeight = "16px";
+  status.style.font = "500 11px/1.3 'Segoe UI', sans-serif";
+  status.style.color = "#166534";
+
+  container.appendChild(title);
+  container.appendChild(button);
+  container.appendChild(status);
+  document.documentElement.appendChild(container);
+
+  quickSolveWidgetRoot = container;
+  quickSolveButton = button;
+  quickSolveStatus = status;
+  updateQuickSolveButtonText();
+}
+
+function syncQuickSolveWidget() {
+  if (window.self !== window.top) {
+    removeQuickSolveWidget();
+    return;
+  }
+
+  const puzzleType = detectPuzzleTypeFromPage();
+  if (!puzzleType) {
+    removeQuickSolveWidget();
+    return;
+  }
+
+  if (!quickSolveWidgetRoot) {
+    createQuickSolveWidget();
+  }
+
+  updateQuickSolveButtonText();
+}
+
+function initializeQuickSolveWidget() {
+  if (window.self !== window.top) {
+    return;
+  }
+
+  quickSolveObservedUrl = window.location.href;
+  syncQuickSolveWidget();
+
+  setInterval(() => {
+    if (window.location.href !== quickSolveObservedUrl) {
+      quickSolveObservedUrl = window.location.href;
+    }
+    syncQuickSolveWidget();
+  }, 1200);
+}
 
 function normalizeSelection(selection) {
   if (!selection) {
@@ -827,3 +1052,5 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 });
+
+initializeQuickSolveWidget();
