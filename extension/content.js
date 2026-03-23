@@ -18,6 +18,9 @@ function detectPuzzleTypeFromUrl(url) {
   if (normalized.includes("/games/tango") || normalized.includes("/games/view/tango")) {
     return "tango";
   }
+  if (normalized.includes("/games/mini-sudoku") || normalized.includes("/games/view/mini-sudoku")) {
+    return "sudoku";
+  }
   return null;
 }
 
@@ -63,7 +66,8 @@ function updateQuickSolveButtonText() {
   }
 
   const puzzleType = detectPuzzleTypeFromPage();
-  const puzzleLabel = puzzleType === "tango" ? "Tango" : "Queens";
+  const puzzleLabel =
+    puzzleType === "tango" ? "Tango" : puzzleType === "sudoku" ? "Mini Sudoku" : "Queens";
 
   if (quickSolveBusy) {
     quickSolveButton.textContent = `Solving ${puzzleLabel}...`;
@@ -86,7 +90,7 @@ function removeQuickSolveWidget() {
 async function onQuickSolveClick() {
   const puzzleType = detectPuzzleTypeFromPage();
   if (!puzzleType) {
-    setQuickSolveStatus("Open Queens or Tango game page.", true);
+    setQuickSolveStatus("Open Queens, Tango, or Mini Sudoku page.", true);
     return;
   }
 
@@ -275,11 +279,18 @@ function isRectVisible(rect) {
   return true;
 }
 
+function puzzleTypeToFrameSlug(puzzleType) {
+  if (puzzleType === "sudoku") {
+    return "mini-sudoku";
+  }
+  return puzzleType;
+}
+
 function detectLinkedInGameIframe(puzzleType) {
   const selectors = [];
 
   if (puzzleType) {
-    selectors.push(`iframe[src*="/games/view/${puzzleType}/"]`);
+    selectors.push(`iframe[src*="/games/view/${puzzleTypeToFrameSlug(puzzleType)}/"]`);
   }
 
   selectors.push("iframe[src*='/games/view/']");
@@ -674,6 +685,46 @@ function renderTangoOverlay(root, selection, result) {
   }
 }
 
+function renderSudokuOverlay(root, selection, result) {
+  const boardSize = Number(result.board_size);
+  const moves = Array.isArray(result.moves) ? result.moves : [];
+  if (!boardSize || !moves.length) {
+    return;
+  }
+
+  const cellWidth = selection.width / boardSize;
+  const cellHeight = selection.height / boardSize;
+
+  for (const move of moves) {
+    const row = Number(move.row);
+    const col = Number(move.col);
+    const value = Number(move.value);
+
+    if (!Number.isFinite(row) || !Number.isFinite(col) || !Number.isFinite(value)) {
+      continue;
+    }
+
+    const marker = document.createElement("div");
+    marker.textContent = String(value);
+    marker.style.position = "fixed";
+    marker.style.width = "24px";
+    marker.style.height = "24px";
+    marker.style.borderRadius = "12px";
+    marker.style.left = `${selection.x + (col + 0.5) * cellWidth - 12}px`;
+    marker.style.top = `${selection.y + (row + 0.5) * cellHeight - 12}px`;
+    marker.style.display = "flex";
+    marker.style.alignItems = "center";
+    marker.style.justifyContent = "center";
+    marker.style.font = "700 13px/1 sans-serif";
+    marker.style.background = "#f59e0b";
+    marker.style.color = "#111827";
+    marker.style.border = "2px solid #111827";
+    marker.style.boxShadow = "0 2px 6px rgba(0, 0, 0, 0.35)";
+
+    root.appendChild(marker);
+  }
+}
+
 function renderSolutionOverlay(puzzleType, result, selection) {
   const normalized = normalizeSelection(selection || boardSelection);
   if (!normalized) {
@@ -701,6 +752,11 @@ function renderSolutionOverlay(puzzleType, result, selection) {
 
   if (puzzleType === "tango") {
     renderTangoOverlay(root, normalized, result);
+    return;
+  }
+
+  if (puzzleType === "sudoku") {
+    renderSudokuOverlay(root, normalized, result);
     return;
   }
 
@@ -762,6 +818,42 @@ function leftClickViewportPoint(x, y) {
 
 function rightClickViewportPoint(x, y) {
   return clickViewportPoint(x, y, 2);
+}
+
+function dispatchDigitKey(digitValue) {
+  const key = String(digitValue);
+  const keyCode = key.charCodeAt(0);
+  const code = `Digit${key}`;
+
+  const rawTargets = [document.activeElement, document.body, document.documentElement, document, window];
+  const targets = [];
+  for (const target of rawTargets) {
+    if (!target || targets.includes(target)) {
+      continue;
+    }
+    targets.push(target);
+  }
+
+  let dispatched = false;
+
+  for (const target of targets) {
+    for (const type of ["keydown", "keypress", "keyup"]) {
+      const event = new KeyboardEvent(type, {
+        key,
+        code,
+        keyCode,
+        which: keyCode,
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+      });
+
+      target.dispatchEvent(event);
+      dispatched = true;
+    }
+  }
+
+  return dispatched;
 }
 
 function normalizeDelay(value, fallback) {
@@ -986,9 +1078,86 @@ async function applyTangoSolution(result, selection, settings) {
   };
 }
 
+async function applySudokuSolution(result, selection, settings) {
+  const applySettings = normalizeApplySettings(settings);
+  const normalized = normalizeSelection(selection || boardSelection);
+  if (!normalized) {
+    return { ok: false, error: "Board selection is required before applying moves." };
+  }
+
+  const boardSize = Number(result?.board_size);
+  if (!boardSize) {
+    return { ok: false, error: "Invalid board size in solution." };
+  }
+
+  const moves = Array.isArray(result?.moves) ? result.moves : [];
+  if (!moves.length) {
+    if (result?.solved) {
+      return {
+        ok: true,
+        appliedCount: 0,
+        clickCount: 0,
+        keyCount: 0,
+        strategy: "already-filled",
+      };
+    }
+    return { ok: false, error: "No Sudoku solution moves are available." };
+  }
+
+  const cellWidth = normalized.width / boardSize;
+  const cellHeight = normalized.height / boardSize;
+
+  let appliedCount = 0;
+  let clickCount = 0;
+  let keyCount = 0;
+
+  for (const move of moves) {
+    const row = Number(move.row);
+    const col = Number(move.col);
+    const value = Number(move.value);
+
+    if (!Number.isFinite(row) || !Number.isFinite(col) || !Number.isFinite(value)) {
+      continue;
+    }
+    if (value < 1 || value > boardSize) {
+      continue;
+    }
+
+    const x = normalized.x + (col + 0.5) * cellWidth;
+    const y = normalized.y + (row + 0.5) * cellHeight;
+
+    const clicked = leftClickViewportPoint(x, y);
+    if (!clicked) {
+      continue;
+    }
+
+    clickCount += 1;
+    await sleep(applySettings.interClickDelayMs);
+
+    if (dispatchDigitKey(value)) {
+      keyCount += 1;
+      appliedCount += 1;
+    }
+
+    await sleep(applySettings.interMoveDelayMs);
+  }
+
+  return {
+    ok: true,
+    appliedCount,
+    clickCount,
+    keyCount,
+    strategy: "cell-then-keyboard",
+  };
+}
+
 async function applySolution(puzzleType, result, selection, settings) {
   if (puzzleType === "tango") {
     return applyTangoSolution(result, selection, settings);
+  }
+
+  if (puzzleType === "sudoku") {
+    return applySudokuSolution(result, selection, settings);
   }
 
   return applyQueensSolution(result, selection, settings);

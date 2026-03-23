@@ -1,6 +1,6 @@
 # Solver API
 
-Local FastAPI wrapper around the Queens and Tango solvers.
+Local FastAPI wrapper around the Queens, Tango, and Mini Sudoku solvers.
 
 ## Run
 
@@ -17,8 +17,9 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 - `GET /health`
 - `POST /solve/queens`
 - `POST /solve/tango`
+- `POST /solve/sudoku`
 
-Both solve endpoints expect multipart form data with one field named `image`.
+All solve endpoints expect multipart form data with one field named `image`.
 
 Example:
 

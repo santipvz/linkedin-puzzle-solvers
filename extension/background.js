@@ -17,6 +17,9 @@ function normalizeApiBase(value) {
 }
 
 function sanitizePuzzleType(value) {
+  if (value === "sudoku") {
+    return "sudoku";
+  }
   if (value === "tango") {
     return "tango";
   }
@@ -38,7 +41,17 @@ function detectPuzzleTypeFromUrl(url) {
   if (normalized.includes("/games/tango") || normalized.includes("/games/view/tango")) {
     return "tango";
   }
+  if (normalized.includes("/games/mini-sudoku") || normalized.includes("/games/view/mini-sudoku")) {
+    return "sudoku";
+  }
   return null;
+}
+
+function puzzleTypeToFrameSlug(puzzleType) {
+  if (puzzleType === "sudoku") {
+    return "mini-sudoku";
+  }
+  return puzzleType;
 }
 
 function normalizeSelection(selection) {
@@ -97,6 +110,87 @@ function translateFrameSelectionToTab(frameSelection, iframeRect) {
     width: selection.width,
     height: selection.height,
     devicePixelRatio: selection.devicePixelRatio,
+  });
+}
+
+function translateTabSelectionToFrame(tabSelection, iframeRect) {
+  const selection = normalizeSelection(tabSelection);
+  const rect = normalizeRect(iframeRect);
+  if (!selection || !rect) {
+    return null;
+  }
+
+  const relativeX = selection.x - rect.left;
+  const relativeY = selection.y - rect.top;
+  const clampedX = Math.max(0, relativeX);
+  const clampedY = Math.max(0, relativeY);
+  const maxWidth = rect.width - clampedX;
+  const maxHeight = rect.height - clampedY;
+
+  if (maxWidth < 10 || maxHeight < 10) {
+    return null;
+  }
+
+  return normalizeSelection({
+    x: clampedX,
+    y: clampedY,
+    width: Math.min(selection.width, maxWidth),
+    height: Math.min(selection.height, maxHeight),
+    devicePixelRatio: selection.devicePixelRatio,
+  });
+}
+
+function getBoardBboxFromResult(result) {
+  const details = result && typeof result === "object" ? result.details : null;
+  const bbox = details && typeof details === "object" ? details.board_bbox : null;
+  if (!bbox || typeof bbox !== "object") {
+    return null;
+  }
+
+  const x = Number(bbox.x);
+  const y = Number(bbox.y);
+  const width = Number(bbox.width);
+  const height = Number(bbox.height);
+
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height)) {
+    return null;
+  }
+
+  if (width < 20 || height < 20) {
+    return null;
+  }
+
+  return { x, y, width, height };
+}
+
+function refineSelectionWithBoardBbox(selection, result) {
+  const normalized = normalizeSelection(selection);
+  const boardBbox = getBoardBboxFromResult(result);
+  if (!normalized || !boardBbox) {
+    return normalized;
+  }
+
+  const dpr = normalized.devicePixelRatio || 1;
+  const offsetX = boardBbox.x / dpr;
+  const offsetY = boardBbox.y / dpr;
+  const refinedWidth = boardBbox.width / dpr;
+  const refinedHeight = boardBbox.height / dpr;
+
+  const maxX = normalized.x + normalized.width - 10;
+  const maxY = normalized.y + normalized.height - 10;
+
+  const refinedX = Math.max(normalized.x, Math.min(maxX, normalized.x + offsetX));
+  const refinedY = Math.max(normalized.y, Math.min(maxY, normalized.y + offsetY));
+
+  const remainingWidth = normalized.x + normalized.width - refinedX;
+  const remainingHeight = normalized.y + normalized.height - refinedY;
+
+  return normalizeSelection({
+    x: refinedX,
+    y: refinedY,
+    width: Math.max(10, Math.min(refinedWidth, remainingWidth)),
+    height: Math.max(10, Math.min(refinedHeight, remainingHeight)),
+    devicePixelRatio: normalized.devicePixelRatio,
   });
 }
 
@@ -239,7 +333,8 @@ async function cropCapturedImage(dataUrl, selection) {
 }
 
 async function callSolverApi(apiBaseUrl, puzzleType, imageBlob) {
-  const safePuzzleType = puzzleType === "tango" ? "tango" : "queens";
+  const safePuzzleType =
+    puzzleType === "tango" ? "tango" : puzzleType === "sudoku" ? "sudoku" : "queens";
   const endpoint = `${normalizeApiBase(apiBaseUrl)}/solve/${safePuzzleType}`;
 
   const formData = new FormData();
@@ -268,15 +363,18 @@ async function callSolverApi(apiBaseUrl, puzzleType, imageBlob) {
 }
 
 async function solveBoardCore({ tabId, puzzleType, apiBaseUrl, selection }) {
+  const normalizedSelection = normalizeSelection(selection);
   const tab = await tabsGet(tabId);
   const screenshotDataUrl = await captureVisibleTab(tab.windowId);
-  const boardImage = await cropCapturedImage(screenshotDataUrl, selection);
+  const boardImage = await cropCapturedImage(screenshotDataUrl, normalizedSelection);
   const result = await callSolverApi(apiBaseUrl, puzzleType, boardImage);
+  const refinedSelection = refineSelectionWithBoardBbox(normalizedSelection, result);
 
   return {
     result,
-    selection: normalizeSelection(selection),
-    puzzleType: puzzleType === "tango" ? "tango" : "queens",
+    selection: refinedSelection,
+    puzzleType:
+      puzzleType === "tango" ? "tango" : puzzleType === "sudoku" ? "sudoku" : "queens",
   };
 }
 
@@ -286,7 +384,7 @@ function findLinkedInGameFrame(frames, puzzleType) {
   }
 
   if (puzzleType) {
-    const exactNeedle = `/games/view/${puzzleType}/desktop`;
+    const exactNeedle = `/games/view/${puzzleTypeToFrameSlug(puzzleType)}/desktop`;
     const exactMatch = frames.find((frame) => typeof frame.url === "string" && frame.url.includes(exactNeedle));
     if (exactMatch) {
       return exactMatch;
@@ -448,7 +546,7 @@ async function quickSolveFromPage(message, sender) {
   const puzzleType = requestedPuzzleType || detectedPuzzleType;
 
   if (!puzzleType) {
-    throw new Error("Open LinkedIn Queens or Tango page first.");
+    throw new Error("Open LinkedIn Queens, Tango, or Mini Sudoku page first.");
   }
 
   const quickSettings = await loadQuickSettings();
@@ -475,13 +573,34 @@ async function quickSolveFromPage(message, sender) {
     };
   }
 
+  const applyTopSelection = normalizeSelection(solvedPayload.selection) || selectionContext.topSelection;
+  let applyFrameId = selectionContext.interactionFrameId;
+  let applyInteractionSelection = selectionContext.interactionSelection;
+
+  if (
+    applyFrameId !== 0 &&
+    frameContext &&
+    frameContext.iframeRect &&
+    Number.isInteger(frameContext.gameFrameId)
+  ) {
+    const mappedFrameSelection = translateTabSelectionToFrame(applyTopSelection, frameContext.iframeRect);
+    if (mappedFrameSelection) {
+      applyInteractionSelection = mappedFrameSelection;
+    } else {
+      applyFrameId = 0;
+      applyInteractionSelection = applyTopSelection;
+    }
+  } else {
+    applyInteractionSelection = applyTopSelection;
+  }
+
   const applyResponse = await applySolutionForSelection(
     tabId,
     puzzleType,
     solvedPayload.result,
-    selectionContext.interactionFrameId,
-    selectionContext.interactionSelection,
-    selectionContext.topSelection,
+    applyFrameId,
+    applyInteractionSelection,
+    applyTopSelection,
     quickSettings.applySettings
   );
 
@@ -505,7 +624,7 @@ async function quickSolveFromPage(message, sender) {
     puzzleType,
     solved: true,
     applied: true,
-    selection: solvedPayload.selection,
+    selection: applyTopSelection,
     result: solvedPayload.result,
     appliedCount: Number(applyResponse.appliedCount) || 0,
     clickCount: Number(applyResponse.clickCount) || 0,

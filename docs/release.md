@@ -12,6 +12,9 @@ From repo root:
 ```bash
 python -m pip install -r services/solver_api/requirements.txt
 python -m compileall services/solver_api/app
+python -m compileall games/queen_solver/src
+python -m compileall games/tango_solver/src
+python -m compileall games/sudoku_solver/src
 python scripts/smoke_check.py
 node --check extension/background.js
 node --check extension/content.js
@@ -41,7 +44,7 @@ git push origin v0.1.0
 ```
 
 3. Create release notes including:
-   - Queens and Tango solve/apply support
+   - Queens, Tango, and Mini Sudoku solve/apply support
    - Extension UX updates
    - API/solver changes
 

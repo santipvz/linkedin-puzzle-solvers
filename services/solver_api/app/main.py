@@ -21,7 +21,7 @@ WORKER_TIMEOUT_SECONDS = 60
 app = FastAPI(
     title="LinkedIn Puzzle Solver API",
     version="0.1.0",
-    description="Local API wrapper for Queens and Tango image solvers.",
+    description="Local API wrapper for Queens, Tango, and Mini Sudoku image solvers.",
 )
 
 app.add_middleware(
@@ -113,3 +113,8 @@ async def solve_queens(image: UploadFile = File(...)) -> dict[str, Any]:
 @app.post("/solve/tango")
 async def solve_tango(image: UploadFile = File(...)) -> dict[str, Any]:
     return await _solve_with_worker("solve_tango_worker.py", image)
+
+
+@app.post("/solve/sudoku")
+async def solve_sudoku(image: UploadFile = File(...)) -> dict[str, Any]:
+    return await _solve_with_worker("solve_sudoku_worker.py", image)

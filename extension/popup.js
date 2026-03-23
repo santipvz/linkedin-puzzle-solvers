@@ -245,12 +245,19 @@ function translateTabSelectionToFrame(tabSelection, iframeRect) {
   });
 }
 
+function puzzleTypeToFrameSlug(puzzleType) {
+  if (puzzleType === "sudoku") {
+    return "mini-sudoku";
+  }
+  return puzzleType;
+}
+
 function findLinkedInGameFrame(frames, puzzleType) {
   if (!Array.isArray(frames) || !frames.length) {
     return null;
   }
 
-  const exactNeedle = `/games/view/${puzzleType}/desktop`;
+  const exactNeedle = `/games/view/${puzzleTypeToFrameSlug(puzzleType)}/desktop`;
   const exactMatch = frames.find((frame) => typeof frame.url === "string" && frame.url.includes(exactNeedle));
   if (exactMatch) {
     return exactMatch;
@@ -305,6 +312,21 @@ function resolveInteractionTarget(topSelection, frameContext) {
   }
 
   return { frameId: 0, selection };
+}
+
+function hasMeaningfulSelectionDelta(baseSelection, nextSelection) {
+  const base = normalizeSelection(baseSelection);
+  const next = normalizeSelection(nextSelection);
+  if (!base || !next) {
+    return false;
+  }
+
+  return (
+    Math.abs(base.x - next.x) > 2 ||
+    Math.abs(base.y - next.y) > 2 ||
+    Math.abs(base.width - next.width) > 2 ||
+    Math.abs(base.height - next.height) > 2
+  );
 }
 
 async function getActiveTab() {
@@ -573,6 +595,7 @@ async function solveForTab(tab, options = {}) {
   const apiBaseUrl = apiUrlInput.value.trim() || DEFAULT_API_URL;
 
   const frameContext = await getGameFrameContext(tab.id, puzzleType);
+  await clearOverlaysForFrameContext(tab.id, frameContext);
   const topSelection = await ensureBoardSelection(tab.id, puzzleType, frameContext);
 
   const solveResponse = await sendRuntimeMessage({
@@ -587,8 +610,13 @@ async function solveForTab(tab, options = {}) {
     throw new Error((solveResponse && solveResponse.error) || "Solver request failed.");
   }
 
+  const solveSelection = normalizeSelection(solveResponse.selection) || topSelection;
+  if (hasMeaningfulSelectionDelta(topSelection, solveSelection)) {
+    await setTopBoardSelection(tab.id, solveSelection);
+  }
+
   if (renderSolution) {
-    const interactionTarget = resolveInteractionTarget(topSelection, frameContext);
+    const interactionTarget = resolveInteractionTarget(solveSelection, frameContext);
     if (!interactionTarget) {
       throw new Error("Could not map board selection for rendering.");
     }
@@ -611,7 +639,7 @@ async function solveForTab(tab, options = {}) {
           type: "renderSolution",
           puzzleType: solveResponse.puzzleType,
           result: solveResponse.result,
-          selection: topSelection,
+          selection: solveSelection,
         },
         { frameId: 0 }
       );
@@ -625,7 +653,7 @@ async function solveForTab(tab, options = {}) {
   const payload = {
     puzzleType: solveResponse.puzzleType,
     result: solveResponse.result,
-    selection: topSelection,
+    selection: solveSelection,
   };
 
   await storageSet({
@@ -663,7 +691,9 @@ function buildApplyStatusText(response) {
       ? ` [${response.strategy}]`
       : "";
 
-  return `${appliedText}${clickText}${strategyText}`;
+  const keyText = typeof response.keyCount === "number" ? ` (${response.keyCount} key events)` : "";
+
+  return `${appliedText}${clickText}${keyText}${strategyText}`;
 }
 
 async function applyPayloadToTab(tab, payload, frameContext) {

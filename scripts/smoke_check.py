@@ -58,13 +58,21 @@ def run_worker(worker_path: Path, image_path: Path, puzzle_name: str, expected_b
 
 def main() -> int:
     queens_worker = REPO_ROOT / "services" / "solver_api" / "app" / "workers" / "solve_queens_worker.py"
-    queens_sample = REPO_ROOT / "games" / "queen_solver" / "tests" / "boards" / "solvable" / "board1.png"
+    queens_sample = REPO_ROOT / "games" / "queen_solver" / "examples" / "sample1.png"
 
     tango_worker = REPO_ROOT / "services" / "solver_api" / "app" / "workers" / "solve_tango_worker.py"
     tango_sample = REPO_ROOT / "games" / "tango_solver" / "examples" / "sample1.png"
 
+    sudoku_worker = REPO_ROOT / "services" / "solver_api" / "app" / "workers" / "solve_sudoku_worker.py"
+    sudoku_sample = REPO_ROOT / "games" / "sudoku_solver" / "examples" / "sample1.png"
+
     run_worker(queens_worker, queens_sample, "queens", expected_board_size=9)
     run_worker(tango_worker, tango_sample, "tango", expected_board_size=6)
+
+    if sudoku_sample.exists():
+        run_worker(sudoku_worker, sudoku_sample, "sudoku", expected_board_size=6)
+    else:
+        print("[skip] solve_sudoku_worker.py: sample image not found at games/sudoku_solver/examples/sample1.png")
 
     return 0
 

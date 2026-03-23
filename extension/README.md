@@ -7,10 +7,11 @@ Chrome extension that connects to the local solver API.
 - Manual board region selection on the active tab
 - Auto board region detection heuristic (top page and iframe-aware)
 - Board screenshot capture and crop via extension background worker
-- Solve request to local API (`/solve/queens` or `/solve/tango`)
-- Visual overlay for both puzzle types
+- Solve request to local API (`/solve/queens`, `/solve/tango`, or `/solve/sudoku`)
+- Visual overlay for all supported puzzle types
 - Auto-apply support for Queens (2 clicks per cell)
 - Auto-apply support for Tango (1 left click for sun, 2 left clicks for moon)
+- Auto-apply support for Mini Sudoku (click cell + keyboard digit)
 - One-click `Solve + Apply` action in popup
 - Apply settings: auto-close, click delays, Tango input mode
 - In-page quick widget that auto-detects game type and runs solve+apply in one click
@@ -30,6 +31,7 @@ Chrome extension that connects to the local solver API.
 2. Open one of the puzzle pages in your browser:
    - `https://www.linkedin.com/games/queens/`
    - `https://www.linkedin.com/games/tango/`
+   - `https://www.linkedin.com/games/mini-sudoku/`
 3. Click extension icon
 4. Choose puzzle type
 5. Use `Select Board` (or `Auto Detect`)
@@ -43,7 +45,7 @@ See `docs/nas-tailscale.md`.
 
 ## Faster flow (in-page)
 
-On LinkedIn Queens/Tango pages, a small `Puzzle Quick Solve` widget appears on the page.
+On LinkedIn Queens/Tango/Mini Sudoku pages, a small `Puzzle Quick Solve` widget appears on the page.
 Click `Solve <Game>` and the extension auto-detects the game and board, solves, and applies.
 
 After `Apply`, overlays are cleared. Popup auto-close can be toggled in settings.
