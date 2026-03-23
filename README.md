@@ -43,6 +43,11 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 - `POST /solve/queens` (multipart form field: `image`)
 - `POST /solve/tango` (multipart form field: `image`)
 
+## NAS Deployment (Private)
+
+- Docker deployment files: `deploy/nas/docker-compose.yml`, `deploy/nas/Dockerfile`
+- Private network setup with Tailscale: `docs/nas-tailscale.md`
+
 ## CI and Release
 
 - CI workflow: `.github/workflows/ci.yml`

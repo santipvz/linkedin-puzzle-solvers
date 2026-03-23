@@ -38,6 +38,9 @@ Chrome extension that connects to the local solver API.
 
 `Solve` shows overlay preview. `Solve + Apply` skips preview markers and directly applies moves.
 
+You can also point `API URL` to a private NAS endpoint over Tailscale.
+See `docs/nas-tailscale.md`.
+
 ## Faster flow (in-page)
 
 On LinkedIn Queens/Tango pages, a small `Puzzle Quick Solve` widget appears on the page.
