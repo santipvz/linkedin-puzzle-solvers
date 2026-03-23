@@ -7,11 +7,12 @@ Chrome extension that connects to the local solver API.
 - Manual board region selection on the active tab
 - Auto board region detection heuristic (top page and iframe-aware)
 - Board screenshot capture and crop via extension background worker
-- Solve request to local API (`/solve/queens`, `/solve/tango`, or `/solve/sudoku`)
+- Solve request to local API (`/solve/queens`, `/solve/tango`, `/solve/sudoku`, or `/solve/zip`)
 - Visual overlay for all supported puzzle types
 - Auto-apply support for Queens (2 clicks per cell)
 - Auto-apply support for Tango (1 left click for sun, 2 left clicks for moon)
 - Auto-apply support for Mini Sudoku (click cell + keyboard digit)
+- Auto-apply support for Zip (click start + arrow keys)
 - One-click `Solve + Apply` action in popup
 - Apply settings: auto-close, click delays, Tango input mode
 - In-page quick widget that auto-detects game type and runs solve+apply in one click
@@ -25,6 +26,21 @@ Chrome extension that connects to the local solver API.
 4. Select this folder: `extension/`
 5. Enable `Allow in incognito` if you want to test in incognito mode
 
+## Load in Firefox
+
+For local development/testing:
+
+1. Open `about:debugging#/runtime/this-firefox`
+2. Click `Load Temporary Add-on`
+3. Select `extension/manifest.json`
+4. Open one of the LinkedIn puzzle pages and use the extension popup
+
+Notes:
+
+- Keep the local API running at `http://127.0.0.1:8000`
+- Temporary add-ons are removed when Firefox restarts
+- For persistent install/signing, package `extension/` and submit through Mozilla Add-on signing
+
 ## Usage
 
 1. Start the local API at `http://127.0.0.1:8000`
@@ -32,6 +48,7 @@ Chrome extension that connects to the local solver API.
    - `https://www.linkedin.com/games/queens/`
    - `https://www.linkedin.com/games/tango/`
    - `https://www.linkedin.com/games/mini-sudoku/`
+   - `https://www.linkedin.com/games/zip/`
 3. Click extension icon
 4. Choose puzzle type
 5. Use `Select Board` (or `Auto Detect`)
@@ -45,7 +62,7 @@ See `docs/nas-tailscale.md`.
 
 ## Faster flow (in-page)
 
-On LinkedIn Queens/Tango/Mini Sudoku pages, a small `Puzzle Quick Solve` widget appears on the page.
+On LinkedIn Queens/Tango/Mini Sudoku/Zip pages, a small `Puzzle Quick Solve` widget appears on the page.
 Click `Solve <Game>` and the extension auto-detects the game and board, solves, and applies.
 
 After `Apply`, overlays are cleared. Popup auto-close can be toggled in settings.

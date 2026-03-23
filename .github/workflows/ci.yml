@@ -28,6 +28,7 @@ jobs:
           python -m compileall games/queen_solver/src
           python -m compileall games/tango_solver/src
           python -m compileall games/sudoku_solver/src
+          python -m compileall games/zip_solver/src
 
       - name: Run solver smoke checks
         run: python scripts/smoke_check.py

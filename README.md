@@ -7,6 +7,7 @@ Monorepo for computer vision solvers for LinkedIn daily puzzles.
 - `games/queen_solver`: solver for the Queens puzzle.
 - `games/tango_solver`: solver for the Tango puzzle.
 - `games/sudoku_solver`: solver for the Mini Sudoku puzzle.
+- `games/zip_solver`: solver for the Zip puzzle.
 - `services/solver_api`: local FastAPI service that exposes all solvers.
 - `extension`: Chrome extension scaffold for board selection, capture, solving, and overlays.
 
@@ -14,7 +15,7 @@ The Queens and Tango game projects were imported from their original repositorie
 
 ## Highlights
 
-- Unified local API for Queens, Tango, and Mini Sudoku solvers.
+- Unified local API for Queens, Tango, Mini Sudoku, and Zip solvers.
 - Chrome extension with board select, auto-detect, solve, and apply.
 - One-click `Solve + Apply` flow in extension popup.
 - In-page quick solve widget with automatic game detection on LinkedIn game pages.
@@ -44,6 +45,7 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 - `POST /solve/queens` (multipart form field: `image`)
 - `POST /solve/tango` (multipart form field: `image`)
 - `POST /solve/sudoku` (multipart form field: `image`)
+- `POST /solve/zip` (multipart form field: `image`)
 
 ## NAS Deployment (Private)
 

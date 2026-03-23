@@ -21,6 +21,9 @@ function detectPuzzleTypeFromUrl(url) {
   if (normalized.includes("/games/mini-sudoku") || normalized.includes("/games/view/mini-sudoku")) {
     return "sudoku";
   }
+  if (normalized.includes("/games/zip") || normalized.includes("/games/view/zip")) {
+    return "zip";
+  }
   return null;
 }
 
@@ -67,7 +70,13 @@ function updateQuickSolveButtonText() {
 
   const puzzleType = detectPuzzleTypeFromPage();
   const puzzleLabel =
-    puzzleType === "tango" ? "Tango" : puzzleType === "sudoku" ? "Mini Sudoku" : "Queens";
+    puzzleType === "tango"
+      ? "Tango"
+      : puzzleType === "sudoku"
+      ? "Mini Sudoku"
+      : puzzleType === "zip"
+      ? "Zip"
+      : "Queens";
 
   if (quickSolveBusy) {
     quickSolveButton.textContent = `Solving ${puzzleLabel}...`;
@@ -90,7 +99,7 @@ function removeQuickSolveWidget() {
 async function onQuickSolveClick() {
   const puzzleType = detectPuzzleTypeFromPage();
   if (!puzzleType) {
-    setQuickSolveStatus("Open Queens, Tango, or Mini Sudoku page.", true);
+    setQuickSolveStatus("Open Queens, Tango, Mini Sudoku, or Zip page.", true);
     return;
   }
 
@@ -725,6 +734,83 @@ function renderSudokuOverlay(root, selection, result) {
   }
 }
 
+function renderZipOverlay(root, selection, result) {
+  const boardSize = Number(result.board_size);
+  const path = Array.isArray(result.path) ? result.path : [];
+  if (!boardSize || path.length < 2) {
+    return;
+  }
+
+  const cellWidth = selection.width / boardSize;
+  const cellHeight = selection.height / boardSize;
+
+  const centers = path
+    .map((step) => {
+      const row = Number(step.row);
+      const col = Number(step.col);
+      if (!Number.isFinite(row) || !Number.isFinite(col)) {
+        return null;
+      }
+      return {
+        x: selection.x + (col + 0.5) * cellWidth,
+        y: selection.y + (row + 0.5) * cellHeight,
+      };
+    })
+    .filter(Boolean);
+
+  if (centers.length < 2) {
+    return;
+  }
+
+  for (let index = 0; index < centers.length - 1; index += 1) {
+    const current = centers[index];
+    const next = centers[index + 1];
+
+    const dx = next.x - current.x;
+    const dy = next.y - current.y;
+    const length = Math.hypot(dx, dy);
+    const angle = Math.atan2(dy, dx);
+
+    const segment = document.createElement("div");
+    segment.style.position = "fixed";
+    segment.style.left = `${current.x}px`;
+    segment.style.top = `${current.y}px`;
+    segment.style.width = `${length}px`;
+    segment.style.height = "6px";
+    segment.style.transformOrigin = "0 50%";
+    segment.style.transform = `translateY(-3px) rotate(${angle}rad)`;
+    segment.style.borderRadius = "999px";
+    segment.style.background = "rgba(14, 116, 144, 0.85)";
+    segment.style.boxShadow = "0 0 0 1px rgba(255, 255, 255, 0.65)";
+    root.appendChild(segment);
+  }
+
+  const start = centers[0];
+  const end = centers[centers.length - 1];
+
+  const startDot = document.createElement("div");
+  startDot.style.position = "fixed";
+  startDot.style.left = `${start.x - 7}px`;
+  startDot.style.top = `${start.y - 7}px`;
+  startDot.style.width = "14px";
+  startDot.style.height = "14px";
+  startDot.style.borderRadius = "50%";
+  startDot.style.background = "#0284c7";
+  startDot.style.border = "2px solid #ffffff";
+  root.appendChild(startDot);
+
+  const endDot = document.createElement("div");
+  endDot.style.position = "fixed";
+  endDot.style.left = `${end.x - 7}px`;
+  endDot.style.top = `${end.y - 7}px`;
+  endDot.style.width = "14px";
+  endDot.style.height = "14px";
+  endDot.style.borderRadius = "50%";
+  endDot.style.background = "#f97316";
+  endDot.style.border = "2px solid #ffffff";
+  root.appendChild(endDot);
+}
+
 function renderSolutionOverlay(puzzleType, result, selection) {
   const normalized = normalizeSelection(selection || boardSelection);
   if (!normalized) {
@@ -757,6 +843,11 @@ function renderSolutionOverlay(puzzleType, result, selection) {
 
   if (puzzleType === "sudoku") {
     renderSudokuOverlay(root, normalized, result);
+    return;
+  }
+
+  if (puzzleType === "zip") {
+    renderZipOverlay(root, normalized, result);
     return;
   }
 
@@ -820,40 +911,72 @@ function rightClickViewportPoint(x, y) {
   return clickViewportPoint(x, y, 2);
 }
 
+function dispatchKeyboardKey(key, code, keyCode, options = {}) {
+  if (!key || !code || !Number.isFinite(keyCode)) {
+    return false;
+  }
+
+  const includeKeypress = options.includeKeypress !== false;
+  const activeElement = document.activeElement;
+
+  let target = null;
+  if (activeElement && typeof activeElement.dispatchEvent === "function") {
+    target = activeElement;
+  } else if (document.body && typeof document.body.dispatchEvent === "function") {
+    target = document.body;
+  } else if (document.documentElement && typeof document.documentElement.dispatchEvent === "function") {
+    target = document.documentElement;
+  } else if (typeof document.dispatchEvent === "function") {
+    target = document;
+  } else if (typeof window.dispatchEvent === "function") {
+    target = window;
+  }
+
+  if (!target) {
+    return false;
+  }
+
+  const eventTypes = includeKeypress ? ["keydown", "keypress", "keyup"] : ["keydown", "keyup"];
+
+  for (const type of eventTypes) {
+    const event = new KeyboardEvent(type, {
+      key,
+      code,
+      keyCode,
+      which: keyCode,
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+    });
+
+    target.dispatchEvent(event);
+  }
+
+  return true;
+}
+
 function dispatchDigitKey(digitValue) {
   const key = String(digitValue);
   const keyCode = key.charCodeAt(0);
   const code = `Digit${key}`;
+  return dispatchKeyboardKey(key, code, keyCode, { includeKeypress: true });
+}
 
-  const rawTargets = [document.activeElement, document.body, document.documentElement, document, window];
-  const targets = [];
-  for (const target of rawTargets) {
-    if (!target || targets.includes(target)) {
-      continue;
-    }
-    targets.push(target);
+function dispatchArrowKey(direction) {
+  const normalized = typeof direction === "string" ? direction.toLowerCase() : "";
+  if (normalized === "up") {
+    return dispatchKeyboardKey("ArrowUp", "ArrowUp", 38, { includeKeypress: false });
   }
-
-  let dispatched = false;
-
-  for (const target of targets) {
-    for (const type of ["keydown", "keypress", "keyup"]) {
-      const event = new KeyboardEvent(type, {
-        key,
-        code,
-        keyCode,
-        which: keyCode,
-        bubbles: true,
-        cancelable: true,
-        composed: true,
-      });
-
-      target.dispatchEvent(event);
-      dispatched = true;
-    }
+  if (normalized === "down") {
+    return dispatchKeyboardKey("ArrowDown", "ArrowDown", 40, { includeKeypress: false });
   }
-
-  return dispatched;
+  if (normalized === "left") {
+    return dispatchKeyboardKey("ArrowLeft", "ArrowLeft", 37, { includeKeypress: false });
+  }
+  if (normalized === "right") {
+    return dispatchKeyboardKey("ArrowRight", "ArrowRight", 39, { includeKeypress: false });
+  }
+  return false;
 }
 
 function normalizeDelay(value, fallback) {
@@ -1151,6 +1274,130 @@ async function applySudokuSolution(result, selection, settings) {
   };
 }
 
+function buildZipDirectionList(result) {
+  if (Array.isArray(result?.directions) && result.directions.length > 0) {
+    return result.directions;
+  }
+
+  const path = Array.isArray(result?.path) ? result.path : [];
+  if (path.length < 2) {
+    return [];
+  }
+
+  const directions = [];
+  for (let index = 0; index < path.length - 1; index += 1) {
+    const current = path[index];
+    const next = path[index + 1];
+    const rowA = Number(current?.row);
+    const colA = Number(current?.col);
+    const rowB = Number(next?.row);
+    const colB = Number(next?.col);
+
+    if (!Number.isFinite(rowA) || !Number.isFinite(colA) || !Number.isFinite(rowB) || !Number.isFinite(colB)) {
+      continue;
+    }
+
+    if (rowB === rowA - 1 && colB === colA) {
+      directions.push("up");
+      continue;
+    }
+    if (rowB === rowA + 1 && colB === colA) {
+      directions.push("down");
+      continue;
+    }
+    if (rowB === rowA && colB === colA - 1) {
+      directions.push("left");
+      continue;
+    }
+    if (rowB === rowA && colB === colA + 1) {
+      directions.push("right");
+      continue;
+    }
+  }
+
+  return directions;
+}
+
+function getZipStartCell(result) {
+  const start = result?.start_cell;
+  const startRow = Number(start?.row);
+  const startCol = Number(start?.col);
+  if (Number.isFinite(startRow) && Number.isFinite(startCol)) {
+    return { row: startRow, col: startCol };
+  }
+
+  const path = Array.isArray(result?.path) ? result.path : [];
+  const first = path[0] || null;
+  const pathRow = Number(first?.row);
+  const pathCol = Number(first?.col);
+  if (Number.isFinite(pathRow) && Number.isFinite(pathCol)) {
+    return { row: pathRow, col: pathCol };
+  }
+
+  return null;
+}
+
+async function applyZipSolution(result, selection, settings) {
+  const applySettings = normalizeApplySettings(settings);
+  const normalized = normalizeSelection(selection || boardSelection);
+  if (!normalized) {
+    return { ok: false, error: "Board selection is required before applying moves." };
+  }
+
+  const boardSize = Number(result?.board_size);
+  if (!boardSize) {
+    return { ok: false, error: "Invalid board size in solution." };
+  }
+
+  const directions = buildZipDirectionList(result);
+  if (!directions.length) {
+    if (result?.solved) {
+      return {
+        ok: true,
+        appliedCount: 0,
+        clickCount: 0,
+        keyCount: 0,
+        strategy: "already-filled",
+      };
+    }
+    return { ok: false, error: "No Zip path directions are available." };
+  }
+
+  const start = getZipStartCell(result);
+  if (!start) {
+    return { ok: false, error: "Zip solution is missing a start cell." };
+  }
+
+  const cellWidth = normalized.width / boardSize;
+  const cellHeight = normalized.height / boardSize;
+
+  const startX = normalized.x + (start.col + 0.5) * cellWidth;
+  const startY = normalized.y + (start.row + 0.5) * cellHeight;
+
+  const clicked = leftClickViewportPoint(startX, startY);
+  if (!clicked) {
+    return { ok: false, error: "Could not activate Zip start cell." };
+  }
+
+  await sleep(Math.max(80, applySettings.interClickDelayMs));
+
+  let keyCount = 0;
+  for (const direction of directions) {
+    if (dispatchArrowKey(direction)) {
+      keyCount += 1;
+    }
+    await sleep(applySettings.interMoveDelayMs);
+  }
+
+  return {
+    ok: true,
+    appliedCount: directions.length,
+    clickCount: 1,
+    keyCount,
+    strategy: "start-click-then-arrows",
+  };
+}
+
 async function applySolution(puzzleType, result, selection, settings) {
   if (puzzleType === "tango") {
     return applyTangoSolution(result, selection, settings);
@@ -1158,6 +1405,10 @@ async function applySolution(puzzleType, result, selection, settings) {
 
   if (puzzleType === "sudoku") {
     return applySudokuSolution(result, selection, settings);
+  }
+
+  if (puzzleType === "zip") {
+    return applyZipSolution(result, selection, settings);
   }
 
   return applyQueensSolution(result, selection, settings);

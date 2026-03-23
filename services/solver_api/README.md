@@ -1,6 +1,6 @@
 # Solver API
 
-Local FastAPI wrapper around the Queens, Tango, and Mini Sudoku solvers.
+Local FastAPI wrapper around the Queens, Tango, Mini Sudoku, and Zip solvers.
 
 ## Run
 
@@ -18,6 +18,7 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 - `POST /solve/queens`
 - `POST /solve/tango`
 - `POST /solve/sudoku`
+- `POST /solve/zip`
 
 All solve endpoints expect multipart form data with one field named `image`.
 

@@ -66,6 +66,9 @@ def main() -> int:
     sudoku_worker = REPO_ROOT / "services" / "solver_api" / "app" / "workers" / "solve_sudoku_worker.py"
     sudoku_sample = REPO_ROOT / "games" / "sudoku_solver" / "examples" / "sample1.png"
 
+    zip_worker = REPO_ROOT / "services" / "solver_api" / "app" / "workers" / "solve_zip_worker.py"
+    zip_sample = REPO_ROOT / "games" / "zip_solver" / "examples" / "sample1.png"
+
     run_worker(queens_worker, queens_sample, "queens", expected_board_size=9)
     run_worker(tango_worker, tango_sample, "tango", expected_board_size=6)
 
@@ -73,6 +76,11 @@ def main() -> int:
         run_worker(sudoku_worker, sudoku_sample, "sudoku", expected_board_size=6)
     else:
         print("[skip] solve_sudoku_worker.py: sample image not found at games/sudoku_solver/examples/sample1.png")
+
+    if zip_sample.exists():
+        run_worker(zip_worker, zip_sample, "zip", expected_board_size=7)
+    else:
+        print("[skip] solve_zip_worker.py: sample image not found at games/zip_solver/examples/sample1.png")
 
     return 0
 

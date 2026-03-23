@@ -17,6 +17,9 @@ function normalizeApiBase(value) {
 }
 
 function sanitizePuzzleType(value) {
+  if (value === "zip") {
+    return "zip";
+  }
   if (value === "sudoku") {
     return "sudoku";
   }
@@ -43,6 +46,9 @@ function detectPuzzleTypeFromUrl(url) {
   }
   if (normalized.includes("/games/mini-sudoku") || normalized.includes("/games/view/mini-sudoku")) {
     return "sudoku";
+  }
+  if (normalized.includes("/games/zip") || normalized.includes("/games/view/zip")) {
+    return "zip";
   }
   return null;
 }
@@ -334,7 +340,13 @@ async function cropCapturedImage(dataUrl, selection) {
 
 async function callSolverApi(apiBaseUrl, puzzleType, imageBlob) {
   const safePuzzleType =
-    puzzleType === "tango" ? "tango" : puzzleType === "sudoku" ? "sudoku" : "queens";
+    puzzleType === "tango"
+      ? "tango"
+      : puzzleType === "sudoku"
+      ? "sudoku"
+      : puzzleType === "zip"
+      ? "zip"
+      : "queens";
   const endpoint = `${normalizeApiBase(apiBaseUrl)}/solve/${safePuzzleType}`;
 
   const formData = new FormData();
@@ -374,7 +386,13 @@ async function solveBoardCore({ tabId, puzzleType, apiBaseUrl, selection }) {
     result,
     selection: refinedSelection,
     puzzleType:
-      puzzleType === "tango" ? "tango" : puzzleType === "sudoku" ? "sudoku" : "queens",
+      puzzleType === "tango"
+        ? "tango"
+        : puzzleType === "sudoku"
+        ? "sudoku"
+        : puzzleType === "zip"
+        ? "zip"
+        : "queens",
   };
 }
 
@@ -546,7 +564,7 @@ async function quickSolveFromPage(message, sender) {
   const puzzleType = requestedPuzzleType || detectedPuzzleType;
 
   if (!puzzleType) {
-    throw new Error("Open LinkedIn Queens, Tango, or Mini Sudoku page first.");
+    throw new Error("Open LinkedIn Queens, Tango, Mini Sudoku, or Zip page first.");
   }
 
   const quickSettings = await loadQuickSettings();
