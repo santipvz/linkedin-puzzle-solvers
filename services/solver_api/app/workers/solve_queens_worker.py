@@ -423,11 +423,14 @@ def solve(image_path: Path) -> dict[str, Any]:
 
     attempts: list[dict[str, Any]] = []
     temp_paths: list[Path] = []
+    detected_board_bbox: dict[str, int] | None = None
 
     try:
         crop_path, crop_metadata = _prepare_queens_image(image_path)
         if crop_path is not None:
             temp_paths.append(crop_path)
+            if crop_metadata is not None:
+                detected_board_bbox = crop_metadata
 
             inpainted_crop_path, inpainted_crop_meta = _prepare_inpainted_image(crop_path, board_detector_class)
             if inpainted_crop_path is not None:
@@ -466,6 +469,11 @@ def solve(image_path: Path) -> dict[str, Any]:
         best_attempt = _select_best_attempt(attempts)
 
         details = best_attempt.setdefault("details", {})
+        if detected_board_bbox is not None:
+            details["board_bbox"] = detected_board_bbox
+        elif isinstance(details.get("crop_bbox"), dict):
+            details["board_bbox"] = details["crop_bbox"]
+
         details["attempt_count"] = len(attempts)
         details["attempts"] = [
             {

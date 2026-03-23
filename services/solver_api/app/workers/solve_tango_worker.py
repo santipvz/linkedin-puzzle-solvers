@@ -25,6 +25,55 @@ def _normalize_board(board: list[list[Any]]) -> list[list[int]]:
     return normalized
 
 
+def _board_bbox_from_grid_coords(grid_coords: Any) -> dict[str, int] | None:
+    if not isinstance(grid_coords, list):
+        return None
+
+    min_x: int | None = None
+    min_y: int | None = None
+    max_x: int | None = None
+    max_y: int | None = None
+
+    for row in grid_coords:
+        if not isinstance(row, list):
+            continue
+
+        for cell in row:
+            if not isinstance(cell, (tuple, list)) or len(cell) < 4:
+                continue
+
+            x = int(cell[0])
+            y = int(cell[1])
+            width = int(cell[2])
+            height = int(cell[3])
+
+            if width <= 0 or height <= 0:
+                continue
+
+            x2 = x + width
+            y2 = y + height
+
+            min_x = x if min_x is None else min(min_x, x)
+            min_y = y if min_y is None else min(min_y, y)
+            max_x = x2 if max_x is None else max(max_x, x2)
+            max_y = y2 if max_y is None else max(max_y, y2)
+
+    if min_x is None or min_y is None or max_x is None or max_y is None:
+        return None
+
+    width = max_x - min_x
+    height = max_y - min_y
+    if width < 20 or height < 20:
+        return None
+
+    return {
+        "x": int(min_x),
+        "y": int(min_y),
+        "width": int(width),
+        "height": int(height),
+    }
+
+
 def solve(image_path: Path) -> dict[str, Any]:
     game_root = _repo_root() / "games" / "tango_solver"
     if not game_root.exists():
@@ -115,6 +164,7 @@ def solve(image_path: Path) -> dict[str, Any]:
             "steps": int(solver.get_steps()),
             "fixed_count": int(len(board_state["fixed_pieces"])),
             "constraint_count": int(len(board_state["constraints"])),
+            "board_bbox": _board_bbox_from_grid_coords(board_state.get("grid_coords")),
         },
     }
 

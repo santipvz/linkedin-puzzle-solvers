@@ -33,7 +33,7 @@ function detectPuzzleTypeFromPage() {
     return fromLocation;
   }
 
-  const iframe = document.querySelector("iframe[src*='/games/view/']");
+  const iframe = document.querySelector("iframe[src*='/games/view']");
   if (iframe && typeof iframe.src === "string") {
     return detectPuzzleTypeFromUrl(iframe.src);
   }
@@ -299,10 +299,10 @@ function detectLinkedInGameIframe(puzzleType) {
   const selectors = [];
 
   if (puzzleType) {
-    selectors.push(`iframe[src*="/games/view/${puzzleTypeToFrameSlug(puzzleType)}/"]`);
+    selectors.push(`iframe[src*="/games/view/${puzzleTypeToFrameSlug(puzzleType)}"]`);
   }
 
-  selectors.push("iframe[src*='/games/view/']");
+  selectors.push("iframe[src*='/games/view']");
   selectors.push("iframe.game-launch-page__iframe");
 
   const seen = new Set();
@@ -355,7 +355,7 @@ function getGameIframeRect(puzzleType) {
   };
 }
 
-function autoDetectBoardSelection() {
+function autoDetectBoardSelection(puzzleType = null) {
   const selectors = [
     "canvas",
     "svg",
@@ -363,7 +363,10 @@ function autoDetectBoardSelection() {
     "table",
     "div[class*='board']",
     "div[class*='grid']",
+    "div[class*='game-board']",
     "div[data-test*='board']",
+    "div[data-testid*='board']",
+    "[aria-label*='board' i]",
   ];
 
   const candidates = [];
@@ -382,6 +385,16 @@ function autoDetectBoardSelection() {
         continue;
       }
 
+      if (puzzleType === "tango") {
+        const viewportArea = Math.max(1, window.innerWidth * window.innerHeight);
+        const areaRatio = (rect.width * rect.height) / viewportArea;
+        const widthRatio = rect.width / Math.max(1, window.innerWidth);
+        const heightRatio = rect.height / Math.max(1, window.innerHeight);
+        if (widthRatio > 0.72 || heightRatio > 0.72 || areaRatio > 0.25) {
+          continue;
+        }
+      }
+
       const ratio = rect.width / rect.height;
       if (ratio < 0.65 || ratio > 1.45) {
         continue;
@@ -393,7 +406,14 @@ function autoDetectBoardSelection() {
       const viewportCenterX = window.innerWidth / 2;
       const viewportCenterY = window.innerHeight / 2;
       const centerDistance = Math.hypot(centerX - viewportCenterX, centerY - viewportCenterY);
-      const score = area - centerDistance * 350;
+
+      let score = area - centerDistance * 350;
+      if (puzzleType === "tango") {
+        const viewportArea = Math.max(1, window.innerWidth * window.innerHeight);
+        const targetArea = viewportArea * 0.12;
+        const sizePenalty = Math.abs(area - targetArea);
+        score = -sizePenalty - centerDistance * 260;
+      }
 
       candidates.push({ score, rect });
     }
@@ -416,7 +436,7 @@ function autoDetectBoardSelection() {
 }
 
 function autoDetectBoardSelectionWithFallback(puzzleType) {
-  const directSelection = autoDetectBoardSelection();
+  const directSelection = autoDetectBoardSelection(puzzleType);
   if (directSelection) {
     return directSelection;
   }
@@ -433,6 +453,16 @@ function autoDetectBoardSelectionWithFallback(puzzleType) {
     y: iframeRect.top + inset,
     width: Math.max(10, iframeRect.width - inset * 2),
     height: Math.max(10, iframeRect.height - inset * 2),
+    devicePixelRatio: window.devicePixelRatio,
+  });
+}
+
+function getViewportSelection() {
+  return normalizeSelection({
+    x: 0,
+    y: 0,
+    width: window.innerWidth,
+    height: window.innerHeight,
     devicePixelRatio: window.devicePixelRatio,
   });
 }
@@ -863,6 +893,10 @@ function clickViewportPoint(x, y, button = 0) {
     return false;
   }
 
+  if (target instanceof HTMLIFrameElement) {
+    return false;
+  }
+
   const isRightClick = button === 2;
   const eventTypes = isRightClick
     ? ["pointerdown", "mousedown", "pointerup", "mouseup", "contextmenu"]
@@ -1096,6 +1130,16 @@ async function applyQueensSolution(result, selection, settings) {
     await sleep(applySettings.interMoveDelayMs);
   }
 
+  if (result.moves.length > 0 && appliedCount === 0) {
+    return {
+      ok: false,
+      error: "Could not dispatch Queens clicks to board cells.",
+      appliedCount,
+      clickCount,
+      clicksPerMove: applySettings.queensClicksPerMove,
+    };
+  }
+
   return {
     ok: true,
     appliedCount,
@@ -1192,6 +1236,16 @@ async function applyTangoSolution(result, selection, settings) {
       ? "left-sun-right-moon"
       : "left-cycle";
 
+  if (appliedCount === 0) {
+    return {
+      ok: false,
+      error: "Could not dispatch Tango clicks to board cells.",
+      appliedCount,
+      clickCount,
+      strategy,
+    };
+  }
+
   return {
     ok: true,
     appliedCount,
@@ -1263,6 +1317,17 @@ async function applySudokuSolution(result, selection, settings) {
     }
 
     await sleep(applySettings.interMoveDelayMs);
+  }
+
+  if (moves.length > 0 && appliedCount === 0) {
+    return {
+      ok: false,
+      error: "Could not dispatch Sudoku input to board cells.",
+      appliedCount,
+      clickCount,
+      keyCount,
+      strategy: "cell-then-keyboard",
+    };
   }
 
   return {
@@ -1446,6 +1511,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "autoDetectBoard") {
     boardSelection = autoDetectBoardSelectionWithFallback(message.puzzleType);
     sendResponse({ ok: Boolean(boardSelection), selection: boardSelection });
+    return;
+  }
+
+  if (message.type === "getViewportMetrics") {
+    const selection = getViewportSelection();
+    sendResponse({
+      ok: Boolean(selection),
+      selection,
+      viewport: {
+        width: window.innerWidth,
+        height: window.innerHeight,
+        devicePixelRatio: window.devicePixelRatio,
+      },
+    });
     return;
   }
 

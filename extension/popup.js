@@ -65,6 +65,19 @@ function tabsQuery(queryInfo) {
   });
 }
 
+function tabsGet(tabId) {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.get(tabId, (tab) => {
+      const error = chrome.runtime.lastError;
+      if (error) {
+        reject(new Error(error.message));
+        return;
+      }
+      resolve(tab);
+    });
+  });
+}
+
 function sendTabMessage(tabId, message, options = {}) {
   return new Promise((resolve, reject) => {
     chrome.tabs.sendMessage(tabId, message, options, (response) => {
@@ -263,7 +276,7 @@ function findLinkedInGameFrame(frames, puzzleType) {
     return exactMatch;
   }
 
-  return frames.find((frame) => typeof frame.url === "string" && frame.url.includes("/games/view/")) || null;
+  return frames.find((frame) => typeof frame.url === "string" && frame.url.includes("/games/view")) || null;
 }
 
 async function getGameFrameContext(tabId, puzzleType) {
@@ -312,6 +325,101 @@ function resolveInteractionTarget(topSelection, frameContext) {
   }
 
   return { frameId: 0, selection };
+}
+
+function findLinkedInGameFrameIds(frames, puzzleType) {
+  if (!Array.isArray(frames) || !frames.length) {
+    return [];
+  }
+
+  const ids = [];
+  const seen = new Set();
+
+  const pushFrameId = (frame) => {
+    if (!frame || !Number.isInteger(frame.frameId) || frame.frameId === 0) {
+      return;
+    }
+    if (seen.has(frame.frameId)) {
+      return;
+    }
+    seen.add(frame.frameId);
+    ids.push(frame.frameId);
+  };
+
+  const exactNeedle = `/games/view/${puzzleTypeToFrameSlug(puzzleType)}`;
+  for (const frame of frames) {
+    if (typeof frame.url === "string" && frame.url.includes(exactNeedle)) {
+      pushFrameId(frame);
+    }
+  }
+
+  for (const frame of frames) {
+    if (typeof frame.url === "string" && frame.url.includes("/games/view")) {
+      pushFrameId(frame);
+    }
+  }
+
+  return ids;
+}
+
+async function buildApplyTargets(tabId, puzzleType, topSelection, frameContext, interactionTarget) {
+  const normalizedTopSelection = normalizeSelection(topSelection);
+  if (!normalizedTopSelection) {
+    return [];
+  }
+
+  const targets = [];
+  const seen = new Set();
+
+  const pushTarget = (frameId, selection) => {
+    if (!Number.isInteger(frameId)) {
+      return;
+    }
+
+    const normalizedSelection = normalizeSelection(selection);
+    if (!normalizedSelection) {
+      return;
+    }
+
+    const key = `${frameId}:${Math.round(normalizedSelection.x)}:${Math.round(normalizedSelection.y)}:${Math.round(
+      normalizedSelection.width
+    )}:${Math.round(normalizedSelection.height)}`;
+
+    if (seen.has(key)) {
+      return;
+    }
+
+    seen.add(key);
+    targets.push({ frameId, selection: normalizedSelection });
+  };
+
+  if (interactionTarget) {
+    pushTarget(interactionTarget.frameId, interactionTarget.selection);
+  }
+
+  const mappedFrameSelection =
+    frameContext && frameContext.iframeRect
+      ? translateTabSelectionToFrame(normalizedTopSelection, frameContext.iframeRect)
+      : null;
+
+  if (mappedFrameSelection) {
+    if (frameContext && Number.isInteger(frameContext.gameFrameId) && frameContext.gameFrameId !== 0) {
+      pushTarget(frameContext.gameFrameId, mappedFrameSelection);
+    }
+
+    try {
+      const frames = await webNavigationGetAllFrames(tabId);
+      const frameIds = findLinkedInGameFrameIds(frames, puzzleType);
+      for (const frameId of frameIds) {
+        pushTarget(frameId, mappedFrameSelection);
+      }
+    } catch (error) {
+      // Ignore frame enumeration failures and fall back to top frame.
+    }
+  }
+
+  pushTarget(0, normalizedTopSelection);
+  return targets;
 }
 
 function hasMeaningfulSelectionDelta(baseSelection, nextSelection) {
@@ -455,6 +563,120 @@ async function getTopBoardSelection(tabId) {
   return normalizeSelection(existing.selection);
 }
 
+function selectionFromTabBounds(tab) {
+  const width = Number(tab && tab.width);
+  const height = Number(tab && tab.height);
+  if (!Number.isFinite(width) || !Number.isFinite(height)) {
+    return null;
+  }
+
+  return normalizeSelection({
+    x: 0,
+    y: 0,
+    width,
+    height,
+    devicePixelRatio: 1,
+  });
+}
+
+function selectionFromRect(rect, insetRatio = 0.04) {
+  const normalizedRect = normalizeRect(rect);
+  if (!normalizedRect) {
+    return null;
+  }
+
+  const inset = Math.max(0, Math.min(normalizedRect.width, normalizedRect.height) * insetRatio);
+  return normalizeSelection({
+    x: normalizedRect.left + inset,
+    y: normalizedRect.top + inset,
+    width: Math.max(10, normalizedRect.width - inset * 2),
+    height: Math.max(10, normalizedRect.height - inset * 2),
+    devicePixelRatio: 1,
+  });
+}
+
+function createTangoFocusedSelection(baseSelection) {
+  const normalized = normalizeSelection(baseSelection);
+  if (!normalized) {
+    return null;
+  }
+
+  const side = Math.max(10, Math.min(normalized.width * 0.7, normalized.height * 0.74));
+  const x = normalized.x + (normalized.width - side) / 2;
+  const rawY = normalized.y + (normalized.height - side) / 2 - normalized.height * 0.08;
+  const y = Math.max(normalized.y, Math.min(normalized.y + normalized.height - side, rawY));
+
+  return normalizeSelection({
+    x,
+    y,
+    width: side,
+    height: side,
+    devicePixelRatio: normalized.devicePixelRatio,
+  });
+}
+
+function maybeNormalizeSelectionForPuzzle(puzzleType, selection, frameContext) {
+  const normalized = normalizeSelection(selection);
+  if (!normalized) {
+    return null;
+  }
+
+  if (puzzleType !== "tango") {
+    return normalized;
+  }
+
+  const frameSelection = selectionFromRect(frameContext && frameContext.iframeRect, 0);
+  if (!frameSelection) {
+    return normalized;
+  }
+
+  const tooLargeForFrame =
+    normalized.width > frameSelection.width * 0.82 ||
+    normalized.height > frameSelection.height * 0.82;
+
+  if (!tooLargeForFrame) {
+    return normalized;
+  }
+
+  return createTangoFocusedSelection(frameSelection) || normalized;
+}
+
+function centeredBoardSelection(baseSelection) {
+  const normalized = normalizeSelection(baseSelection);
+  if (!normalized) {
+    return null;
+  }
+
+  const side = Math.max(10, Math.min(normalized.width * 0.74, normalized.height * 0.86));
+  const x = normalized.x + (normalized.width - side) / 2;
+  const y = normalized.y + (normalized.height - side) / 2;
+
+  return normalizeSelection({
+    x,
+    y,
+    width: side,
+    height: side,
+    devicePixelRatio: normalized.devicePixelRatio,
+  });
+}
+
+async function getViewportFallbackSelection(tab) {
+  const viewportResponse = await safeSendTabMessage(tab.id, { type: "getViewportMetrics" }, { frameId: 0 });
+  if (viewportResponse && viewportResponse.ok && viewportResponse.selection) {
+    const viewportSelection = normalizeSelection(viewportResponse.selection);
+    if (viewportSelection) {
+      return centeredBoardSelection(viewportSelection) || viewportSelection;
+    }
+  }
+
+  const tabSelection = selectionFromTabBounds(tab);
+  if (!tabSelection) {
+    return null;
+  }
+
+  return centeredBoardSelection(tabSelection) || tabSelection;
+}
+
 async function setTopBoardSelection(tabId, selection) {
   const normalized = normalizeSelection(selection);
   if (!normalized) {
@@ -477,7 +699,15 @@ async function setTopBoardSelection(tabId, selection) {
 async function ensureBoardSelection(tabId, puzzleType, frameContext) {
   const existing = await getTopBoardSelection(tabId);
   if (existing) {
-    return existing;
+    const normalizedExisting = maybeNormalizeSelectionForPuzzle(puzzleType, existing, frameContext);
+    if (normalizedExisting && hasMeaningfulSelectionDelta(existing, normalizedExisting)) {
+      const savedNormalized = await setTopBoardSelection(tabId, normalizedExisting);
+      if (savedNormalized) {
+        setStatus("Adjusted board region for Tango grid.");
+        return savedNormalized;
+      }
+    }
+    return normalizedExisting || existing;
   }
 
   if (
@@ -494,8 +724,9 @@ async function ensureBoardSelection(tabId, puzzleType, frameContext) {
 
     if (frameDetected && frameDetected.selection) {
       const topSelection = translateFrameSelectionToTab(frameDetected.selection, frameContext.iframeRect);
-      if (topSelection) {
-        const savedSelection = await setTopBoardSelection(tabId, topSelection);
+      const normalizedTopSelection = maybeNormalizeSelectionForPuzzle(puzzleType, topSelection, frameContext);
+      if (normalizedTopSelection) {
+        const savedSelection = await setTopBoardSelection(tabId, normalizedTopSelection);
         if (savedSelection) {
           setStatus("Board auto-detected inside game frame.");
           return savedSelection;
@@ -511,8 +742,35 @@ async function ensureBoardSelection(tabId, puzzleType, frameContext) {
   );
 
   if (topDetected && topDetected.selection) {
-    setStatus("Board auto-detected.");
-    return normalizeSelection(topDetected.selection);
+    const normalizedTopSelection = maybeNormalizeSelectionForPuzzle(puzzleType, topDetected.selection, frameContext);
+    if (normalizedTopSelection) {
+      setStatus("Board auto-detected.");
+      return normalizedTopSelection;
+    }
+  }
+
+  const frameBaseSelection = selectionFromRect(frameContext && frameContext.iframeRect, 0.04);
+  const frameFallbackSelection =
+    puzzleType === "tango"
+      ? createTangoFocusedSelection(frameBaseSelection)
+      : frameBaseSelection;
+
+  if (frameFallbackSelection) {
+    const savedSelection = await setTopBoardSelection(tabId, frameFallbackSelection);
+    if (savedSelection) {
+      setStatus("Board auto-detect missed; using game-frame fallback.");
+      return savedSelection;
+    }
+  }
+
+  const tab = await tabsGet(tabId);
+  const fallbackSelection = await getViewportFallbackSelection(tab);
+  if (fallbackSelection) {
+    const savedSelection = await setTopBoardSelection(tabId, fallbackSelection);
+    if (savedSelection) {
+      setStatus("Board auto-detect missed; using viewport fallback.");
+      return savedSelection;
+    }
   }
 
   throw new Error("No board region selected. Use Select Board first.");
@@ -568,7 +826,8 @@ async function handleAutoDetect() {
 
     if (frameResponse && frameResponse.ok && frameResponse.selection) {
       const topSelection = translateFrameSelectionToTab(frameResponse.selection, frameContext.iframeRect);
-      const saved = await setTopBoardSelection(tab.id, topSelection);
+      const normalizedTopSelection = maybeNormalizeSelectionForPuzzle(puzzleType, topSelection, frameContext);
+      const saved = await setTopBoardSelection(tab.id, normalizedTopSelection);
       if (saved) {
         setStatus("Board auto-detected inside game frame.");
         return;
@@ -583,7 +842,40 @@ async function handleAutoDetect() {
   );
 
   if (!response || !response.ok || !response.selection) {
+    const frameBaseSelection = selectionFromRect(frameContext && frameContext.iframeRect, 0.04);
+    const frameFallbackSelection =
+      puzzleType === "tango"
+        ? createTangoFocusedSelection(frameBaseSelection)
+        : frameBaseSelection;
+
+    if (frameFallbackSelection) {
+      const savedSelection = await setTopBoardSelection(tab.id, frameFallbackSelection);
+      if (savedSelection) {
+        setStatus("Board auto-detect missed; using game-frame fallback.");
+        return;
+      }
+    }
+
+    const fallbackSelection = await getViewportFallbackSelection(tab);
+    if (fallbackSelection) {
+      const savedSelection = await setTopBoardSelection(tab.id, fallbackSelection);
+      if (savedSelection) {
+        setStatus("Board auto-detect missed; using viewport fallback.");
+        return;
+      }
+    }
+
     throw new Error("Could not auto-detect a board. Use Select Board.");
+  }
+
+  const normalizedDetected = maybeNormalizeSelectionForPuzzle(puzzleType, response.selection, frameContext);
+  if (!normalizedDetected) {
+    throw new Error("Could not normalize detected board region.");
+  }
+
+  const savedSelection = await setTopBoardSelection(tab.id, normalizedDetected);
+  if (!savedSelection) {
+    throw new Error("Could not save detected board region.");
   }
 
   setStatus("Board auto-detected.");
@@ -697,17 +989,23 @@ function buildApplyStatusText(response) {
 }
 
 async function applyPayloadToTab(tab, payload, frameContext) {
-  const interactionTarget = resolveInteractionTarget(payload.selection, frameContext);
-  if (!interactionTarget) {
+  const topSelection = normalizeSelection(payload.selection);
+  if (!topSelection) {
+    throw new Error("Could not map board selection for applying moves.");
+  }
+
+  const interactionTarget = resolveInteractionTarget(topSelection, frameContext);
+  const applyTargets = await buildApplyTargets(tab.id, payload.puzzleType, topSelection, frameContext, interactionTarget);
+
+  if (!applyTargets.length) {
     throw new Error("Could not map board selection for applying moves.");
   }
 
   const applySettings = getApplySettingsFromUi();
-  const messagePayload = {
+  const messagePayloadBase = {
     type: "applySolution",
     puzzleType: payload.puzzleType,
     result: payload.result,
-    selection: interactionTarget.selection,
     settings: {
       interClickDelayMs: applySettings.interClickDelayMs,
       interMoveDelayMs: applySettings.interMoveDelayMs,
@@ -715,17 +1013,20 @@ async function applyPayloadToTab(tab, payload, frameContext) {
     },
   };
 
-  let response = await safeSendTabMessage(tab.id, messagePayload, { frameId: interactionTarget.frameId });
-
-  if ((!response || !response.ok) && interactionTarget.frameId !== 0) {
+  let response = null;
+  for (const target of applyTargets) {
     response = await safeSendTabMessage(
       tab.id,
       {
-        ...messagePayload,
-        selection: payload.selection,
+        ...messagePayloadBase,
+        selection: target.selection,
       },
-      { frameId: 0 }
+      { frameId: target.frameId }
     );
+
+    if (response && response.ok) {
+      break;
+    }
   }
 
   if (!response || !response.ok) {
