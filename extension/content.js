@@ -385,16 +385,6 @@ function autoDetectBoardSelection(puzzleType = null) {
         continue;
       }
 
-      if (puzzleType === "tango") {
-        const viewportArea = Math.max(1, window.innerWidth * window.innerHeight);
-        const areaRatio = (rect.width * rect.height) / viewportArea;
-        const widthRatio = rect.width / Math.max(1, window.innerWidth);
-        const heightRatio = rect.height / Math.max(1, window.innerHeight);
-        if (widthRatio > 0.72 || heightRatio > 0.72 || areaRatio > 0.25) {
-          continue;
-        }
-      }
-
       const ratio = rect.width / rect.height;
       if (ratio < 0.65 || ratio > 1.45) {
         continue;
@@ -407,13 +397,7 @@ function autoDetectBoardSelection(puzzleType = null) {
       const viewportCenterY = window.innerHeight / 2;
       const centerDistance = Math.hypot(centerX - viewportCenterX, centerY - viewportCenterY);
 
-      let score = area - centerDistance * 350;
-      if (puzzleType === "tango") {
-        const viewportArea = Math.max(1, window.innerWidth * window.innerHeight);
-        const targetArea = viewportArea * 0.12;
-        const sizePenalty = Math.abs(area - targetArea);
-        score = -sizePenalty - centerDistance * 260;
-      }
+      const score = area - centerDistance * 350;
 
       candidates.push({ score, rect });
     }
@@ -1035,6 +1019,35 @@ function normalizeApplySettings(settings) {
   };
 }
 
+function buildApplySelectionCandidates(puzzleType, primarySelection) {
+  const candidates = [];
+  const seen = new Set();
+
+  const pushCandidate = (selection, source) => {
+    const normalized = normalizeSelection(selection);
+    if (!normalized) {
+      return;
+    }
+
+    const key = `${Math.round(normalized.x)}:${Math.round(normalized.y)}:${Math.round(normalized.width)}:${Math.round(
+      normalized.height
+    )}`;
+
+    if (seen.has(key)) {
+      return;
+    }
+
+    seen.add(key);
+    candidates.push({ selection: normalized, source });
+  };
+
+  pushCandidate(primarySelection, "provided");
+  pushCandidate(boardSelection, "stored");
+  pushCandidate(autoDetectBoardSelection(puzzleType), "auto-detect");
+
+  return candidates;
+}
+
 function getTangoClickCountForValue(value, applySettings) {
   // Tango solver encoding: 0 = moon, 1 = sun
   if (value === 0) {
@@ -1257,10 +1270,6 @@ async function applyTangoSolution(result, selection, settings) {
 
 async function applySudokuSolution(result, selection, settings) {
   const applySettings = normalizeApplySettings(settings);
-  const normalized = normalizeSelection(selection || boardSelection);
-  if (!normalized) {
-    return { ok: false, error: "Board selection is required before applying moves." };
-  }
 
   const boardSize = Number(result?.board_size);
   if (!boardSize) {
@@ -1281,60 +1290,84 @@ async function applySudokuSolution(result, selection, settings) {
     return { ok: false, error: "No Sudoku solution moves are available." };
   }
 
-  const cellWidth = normalized.width / boardSize;
-  const cellHeight = normalized.height / boardSize;
-
-  let appliedCount = 0;
-  let clickCount = 0;
-  let keyCount = 0;
-
-  for (const move of moves) {
-    const row = Number(move.row);
-    const col = Number(move.col);
-    const value = Number(move.value);
-
-    if (!Number.isFinite(row) || !Number.isFinite(col) || !Number.isFinite(value)) {
-      continue;
-    }
-    if (value < 1 || value > boardSize) {
-      continue;
-    }
-
-    const x = normalized.x + (col + 0.5) * cellWidth;
-    const y = normalized.y + (row + 0.5) * cellHeight;
-
-    const clicked = leftClickViewportPoint(x, y);
-    if (!clicked) {
-      continue;
-    }
-
-    clickCount += 1;
-    await sleep(applySettings.interClickDelayMs);
-
-    if (dispatchDigitKey(value)) {
-      keyCount += 1;
-      appliedCount += 1;
-    }
-
-    await sleep(applySettings.interMoveDelayMs);
+  const selectionCandidates = buildApplySelectionCandidates("sudoku", selection);
+  if (!selectionCandidates.length) {
+    return { ok: false, error: "Board selection is required before applying moves." };
   }
 
-  if (moves.length > 0 && appliedCount === 0) {
-    return {
-      ok: false,
-      error: "Could not dispatch Sudoku input to board cells.",
-      appliedCount,
-      clickCount,
-      keyCount,
-      strategy: "cell-then-keyboard",
-    };
+  let bestAttempt = {
+    appliedCount: 0,
+    clickCount: 0,
+    keyCount: 0,
+  };
+
+  for (let candidateIndex = 0; candidateIndex < selectionCandidates.length; candidateIndex += 1) {
+    const candidateEntry = selectionCandidates[candidateIndex];
+    const candidate = candidateEntry.selection;
+    const cellWidth = candidate.width / boardSize;
+    const cellHeight = candidate.height / boardSize;
+
+    let appliedCount = 0;
+    let clickCount = 0;
+    let keyCount = 0;
+
+    for (const move of moves) {
+      const row = Number(move.row);
+      const col = Number(move.col);
+      const value = Number(move.value);
+
+      if (!Number.isFinite(row) || !Number.isFinite(col) || !Number.isFinite(value)) {
+        continue;
+      }
+      if (value < 1 || value > boardSize) {
+        continue;
+      }
+
+      const x = candidate.x + (col + 0.5) * cellWidth;
+      const y = candidate.y + (row + 0.5) * cellHeight;
+
+      const clicked = leftClickViewportPoint(x, y);
+      if (!clicked) {
+        continue;
+      }
+
+      clickCount += 1;
+      await sleep(applySettings.interClickDelayMs);
+
+      if (dispatchDigitKey(value)) {
+        keyCount += 1;
+        appliedCount += 1;
+      }
+
+      await sleep(applySettings.interMoveDelayMs);
+    }
+
+    if (appliedCount > bestAttempt.appliedCount || (appliedCount === bestAttempt.appliedCount && clickCount > bestAttempt.clickCount)) {
+      bestAttempt = {
+        appliedCount,
+        clickCount,
+        keyCount,
+      };
+    }
+
+    if (appliedCount > 0) {
+      return {
+        ok: true,
+        appliedCount,
+        clickCount,
+        keyCount,
+        strategy:
+          candidateEntry.source === "auto-detect" ? "cell-then-keyboard:auto-detect" : "cell-then-keyboard",
+      };
+    }
   }
 
   return {
-    ok: true,
-    appliedCount,
-    clickCount,
-    keyCount,
+    ok: false,
+    error: `Could not dispatch Sudoku input to board cells. Tried ${selectionCandidates.length} region(s).`,
+    appliedCount: bestAttempt.appliedCount,
+    clickCount: bestAttempt.clickCount,
+    keyCount: bestAttempt.keyCount,
     strategy: "cell-then-keyboard",
   };
 }

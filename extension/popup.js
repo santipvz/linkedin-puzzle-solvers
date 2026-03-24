@@ -359,6 +359,12 @@ function findLinkedInGameFrameIds(frames, puzzleType) {
     }
   }
 
+  for (const frame of frames) {
+    if (typeof frame.url === "string" && frame.url.includes("linkedin.com")) {
+      pushFrameId(frame);
+    }
+  }
+
   return ids;
 }
 
@@ -595,26 +601,6 @@ function selectionFromRect(rect, insetRatio = 0.04) {
   });
 }
 
-function createTangoFocusedSelection(baseSelection) {
-  const normalized = normalizeSelection(baseSelection);
-  if (!normalized) {
-    return null;
-  }
-
-  const side = Math.max(10, Math.min(normalized.width * 0.7, normalized.height * 0.74));
-  const x = normalized.x + (normalized.width - side) / 2;
-  const rawY = normalized.y + (normalized.height - side) / 2 - normalized.height * 0.08;
-  const y = Math.max(normalized.y, Math.min(normalized.y + normalized.height - side, rawY));
-
-  return normalizeSelection({
-    x,
-    y,
-    width: side,
-    height: side,
-    devicePixelRatio: normalized.devicePixelRatio,
-  });
-}
-
 function maybeNormalizeSelectionForPuzzle(puzzleType, selection, frameContext) {
   const normalized = normalizeSelection(selection);
   if (!normalized) {
@@ -631,14 +617,14 @@ function maybeNormalizeSelectionForPuzzle(puzzleType, selection, frameContext) {
   }
 
   const tooLargeForFrame =
-    normalized.width > frameSelection.width * 0.82 ||
-    normalized.height > frameSelection.height * 0.82;
+    normalized.width > frameSelection.width * 0.95 ||
+    normalized.height > frameSelection.height * 0.95;
 
   if (!tooLargeForFrame) {
     return normalized;
   }
 
-  return createTangoFocusedSelection(frameSelection) || normalized;
+  return centeredBoardSelection(frameSelection) || normalized;
 }
 
 function centeredBoardSelection(baseSelection) {
@@ -750,10 +736,7 @@ async function ensureBoardSelection(tabId, puzzleType, frameContext) {
   }
 
   const frameBaseSelection = selectionFromRect(frameContext && frameContext.iframeRect, 0.04);
-  const frameFallbackSelection =
-    puzzleType === "tango"
-      ? createTangoFocusedSelection(frameBaseSelection)
-      : frameBaseSelection;
+  const frameFallbackSelection = frameBaseSelection;
 
   if (frameFallbackSelection) {
     const savedSelection = await setTopBoardSelection(tabId, frameFallbackSelection);
@@ -843,10 +826,7 @@ async function handleAutoDetect() {
 
   if (!response || !response.ok || !response.selection) {
     const frameBaseSelection = selectionFromRect(frameContext && frameContext.iframeRect, 0.04);
-    const frameFallbackSelection =
-      puzzleType === "tango"
-        ? createTangoFocusedSelection(frameBaseSelection)
-        : frameBaseSelection;
+    const frameFallbackSelection = frameBaseSelection;
 
     if (frameFallbackSelection) {
       const savedSelection = await setTopBoardSelection(tab.id, frameFallbackSelection);
@@ -1023,6 +1003,17 @@ async function applyPayloadToTab(tab, payload, frameContext) {
       },
       { frameId: target.frameId }
     );
+
+    if ((!response || !response.ok) && payload.puzzleType === "sudoku") {
+      response = await safeSendTabMessage(
+        tab.id,
+        {
+          ...messagePayloadBase,
+          selection: null,
+        },
+        { frameId: target.frameId }
+      );
+    }
 
     if (response && response.ok) {
       break;

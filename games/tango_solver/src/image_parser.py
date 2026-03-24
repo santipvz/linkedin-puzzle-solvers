@@ -1,4 +1,5 @@
 from typing import List, Tuple, Optional, Dict, Any
+import itertools
 import cv2
 import numpy as np
 
@@ -37,17 +38,213 @@ class TangoImageParser:
 
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-            grid_coords = self.grid_detector.detect_grid(img_rgb)
+            board_img, board_bbox = self._extract_board_crop(img_rgb)
 
-            board_state = self._extract_board_contents(img_rgb, grid_coords)
+            grid_coords = self.grid_detector.detect_grid(board_img)
+
+            board_state = self._extract_board_contents(board_img, grid_coords)
 
             board_state['grid_coords'] = grid_coords
+            board_state['board_bbox'] = board_bbox
 
             return board_state
 
         except Exception as e:
             print(f"Error parsing image: {e}")
             return None
+
+    def _extract_board_crop(self, img: np.ndarray) -> Tuple[np.ndarray, Dict[str, int]]:
+        height, width = img.shape[:2]
+        bbox = self._detect_board_bbox(img)
+
+        if bbox is None:
+            return img, {
+                'x': 0,
+                'y': 0,
+                'width': int(width),
+                'height': int(height),
+            }
+
+        x, y, crop_width, crop_height = bbox
+        x1 = max(0, int(x))
+        y1 = max(0, int(y))
+        x2 = min(width, int(x + crop_width))
+        y2 = min(height, int(y + crop_height))
+
+        if x2 - x1 < 120 or y2 - y1 < 120:
+            return img, {
+                'x': 0,
+                'y': 0,
+                'width': int(width),
+                'height': int(height),
+            }
+
+        return img[y1:y2, x1:x2], {
+            'x': int(x1),
+            'y': int(y1),
+            'width': int(x2 - x1),
+            'height': int(y2 - y1),
+        }
+
+    def _detect_board_bbox(self, img: np.ndarray) -> Optional[Tuple[int, int, int, int]]:
+        gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+        image_height, image_width = gray.shape
+        image_area = image_height * image_width
+
+        expected_line_count = self.grid_size + 1
+        best_score: Optional[float] = None
+        best_bbox: Optional[Tuple[int, int, int, int]] = None
+
+        for block_size in (17, 21):
+            if block_size >= min(image_height, image_width):
+                continue
+
+            for constant in (3, 4):
+                binary = cv2.adaptiveThreshold(
+                    gray,
+                    255,
+                    cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                    cv2.THRESH_BINARY_INV,
+                    block_size,
+                    constant,
+                )
+                binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8), iterations=1)
+
+                for frac in (0.1, 0.12, 0.14):
+                    horizontal_kernel = max(10, int(image_width * frac))
+                    vertical_kernel = max(10, int(image_height * frac))
+
+                    horizontal_lines = cv2.morphologyEx(
+                        binary,
+                        cv2.MORPH_OPEN,
+                        cv2.getStructuringElement(cv2.MORPH_RECT, (horizontal_kernel, 1)),
+                    )
+                    vertical_lines = cv2.morphologyEx(
+                        binary,
+                        cv2.MORPH_OPEN,
+                        cv2.getStructuringElement(cv2.MORPH_RECT, (1, vertical_kernel)),
+                    )
+
+                    row_projection = horizontal_lines.sum(axis=1)
+                    col_projection = vertical_lines.sum(axis=0)
+
+                    row_groups = self._extract_line_groups(row_projection, 255 * max(8, image_width // 9))
+                    col_groups = self._extract_line_groups(col_projection, 255 * max(8, image_height // 9))
+
+                    row_lines, row_score = self._select_regular_line_subset(row_groups, expected_line_count)
+                    col_lines, col_score = self._select_regular_line_subset(col_groups, expected_line_count)
+                    if row_lines is None or col_lines is None:
+                        continue
+
+                    row_span = row_lines[-1] - row_lines[0]
+                    col_span = col_lines[-1] - col_lines[0]
+                    if row_span < 120 or col_span < 120:
+                        continue
+
+                    row_step = row_span / self.grid_size
+                    col_step = col_span / self.grid_size
+                    if row_step < 18 or col_step < 18:
+                        continue
+                    if abs(row_step - col_step) > max(row_step, col_step) * 0.3:
+                        continue
+
+                    board_area = row_span * col_span
+                    if board_area < image_area * 0.03:
+                        continue
+
+                    square_penalty = abs(row_step - col_step)
+                    center_x = (col_lines[0] + col_lines[-1]) / 2
+                    center_y = (row_lines[0] + row_lines[-1]) / 2
+                    center_distance = float(np.hypot(center_x - (image_width / 2), center_y - (image_height / 2)))
+
+                    touches_edge = (
+                        row_lines[0] <= 1
+                        or col_lines[0] <= 1
+                        or row_lines[-1] >= image_height - 2
+                        or col_lines[-1] >= image_width - 2
+                    )
+                    edge_penalty = 350.0 if touches_edge else 0.0
+
+                    score = (
+                        float(row_score or 0.0)
+                        + float(col_score or 0.0)
+                        + board_area * 0.005
+                        - square_penalty * 120
+                        - center_distance * 35
+                        - edge_penalty
+                    )
+
+                    if best_score is None or score > best_score:
+                        pad = max(1, int(min(row_step, col_step) * 0.08))
+                        x1 = max(0, int(col_lines[0] - pad))
+                        y1 = max(0, int(row_lines[0] - pad))
+                        x2 = min(image_width, int(col_lines[-1] + pad))
+                        y2 = min(image_height, int(row_lines[-1] + pad))
+                        if x2 - x1 < 120 or y2 - y1 < 120:
+                            continue
+
+                        best_score = score
+                        best_bbox = (x1, y1, x2 - x1, y2 - y1)
+
+        return best_bbox
+
+    def _extract_line_groups(self, projection: np.ndarray, min_signal: float) -> List[Tuple[int, int, float]]:
+        indices = np.where(projection > min_signal)[0]
+        if indices.size == 0:
+            return []
+
+        split_indices = np.where(np.diff(indices) > 1)[0] + 1
+        chunks = np.split(indices, split_indices)
+
+        groups: List[Tuple[int, int, float]] = []
+        for chunk in chunks:
+            if chunk.size == 0:
+                continue
+
+            start = int(chunk[0])
+            end = int(chunk[-1])
+            strength = float(np.sum(projection[start : end + 1]))
+            groups.append((start, end, strength))
+
+        return groups
+
+    def _select_regular_line_subset(
+        self,
+        groups: List[Tuple[int, int, float]],
+        expected_count: int,
+    ) -> Tuple[Optional[List[int]], Optional[float]]:
+        if len(groups) < expected_count:
+            return None, None
+
+        strongest = sorted(groups, key=lambda group: group[2], reverse=True)[:14]
+        strongest = sorted(strongest, key=lambda group: (group[0] + group[1]) // 2)
+        if len(strongest) < expected_count:
+            return None, None
+
+        best_lines: Optional[List[int]] = None
+        best_score: Optional[float] = None
+
+        for combo in itertools.combinations(range(len(strongest)), expected_count):
+            lines = [int((strongest[index][0] + strongest[index][1]) // 2) for index in combo]
+            steps = np.diff(lines)
+            if steps.size != expected_count - 1:
+                continue
+            if int(np.min(steps)) < 12:
+                continue
+
+            steps_std = float(np.std(steps))
+            step_range = float(np.max(steps) - np.min(steps))
+            strength = float(sum(strongest[index][2] for index in combo))
+
+            score = strength * 0.001
+            score -= steps_std * 32
+            score -= step_range * 8
+
+            if best_score is None or score > best_score:
+                best_score = score
+                best_lines = lines
+
+        return best_lines, best_score
 
     def _extract_board_contents(self, img: np.ndarray, grid_coords: List[List[Tuple]]) -> Dict[str, Any]:
         board_state = {

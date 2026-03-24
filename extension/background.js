@@ -211,12 +211,13 @@ function buildTangoSelectionCandidates(baseSelection) {
 
   const specs = [
     { sideRatio: 1.0, yOffsetRatio: 0 },
-    { sideRatio: 0.9, yOffsetRatio: -0.02 },
-    { sideRatio: 0.82, yOffsetRatio: -0.04 },
-    { sideRatio: 0.74, yOffsetRatio: -0.06 },
-    { sideRatio: 0.68, yOffsetRatio: -0.08 },
-    { sideRatio: 0.62, yOffsetRatio: -0.08 },
-    { sideRatio: 0.62, yOffsetRatio: 0 },
+    { sideRatio: 0.94, yOffsetRatio: -0.02 },
+    { sideRatio: 0.88, yOffsetRatio: -0.04 },
+    { sideRatio: 0.82, yOffsetRatio: -0.06 },
+    { sideRatio: 0.76, yOffsetRatio: -0.08 },
+    { sideRatio: 0.7, yOffsetRatio: -0.08 },
+    { sideRatio: 0.64, yOffsetRatio: -0.08 },
+    { sideRatio: 0.64, yOffsetRatio: 0 },
   ];
 
   const candidates = [];
@@ -277,25 +278,34 @@ function tangoAttemptScore(result, attemptSelection, baseSelection) {
   if (solved) {
     score += 4500;
   } else {
-    score -= 2200;
+    score -= 2600;
   }
 
-  score += fixedCount * 34;
-  score += constraintCount * 38;
-  score += Math.min(120, movesCount * 2);
+  score -= Math.abs(fixedCount - 12) * 42;
+  score -= Math.abs(constraintCount - 9) * 36;
 
-  if (solved && movesCount === 0) {
-    score -= 900;
-  }
-
-  if (areaRatio > 0.9) {
-    score -= 600;
-  } else if (areaRatio > 0.8) {
-    score -= 240;
-  } else if (areaRatio >= 0.35 && areaRatio <= 0.75) {
-    score += 220;
-  } else if (areaRatio < 0.22) {
+  if (fixedCount < 3) {
+    score -= 700;
+  } else if (fixedCount > 24) {
     score -= 500;
+  }
+
+  if (constraintCount < 2) {
+    score -= 520;
+  } else if (constraintCount > 24) {
+    score -= 360;
+  }
+
+  if (solved && movesCount === 0 && fixedCount < 36) {
+    score -= 1000;
+  }
+
+  if (areaRatio < 0.35) {
+    score -= Math.round((0.35 - areaRatio) * 1600);
+  } else if (areaRatio > 1.05) {
+    score -= Math.round((areaRatio - 1.05) * 900);
+  } else if (areaRatio >= 0.5 && areaRatio <= 0.95) {
+    score += 120;
   }
 
   if (attemptSelection) {
@@ -396,9 +406,49 @@ function tabsSendMessage(tabId, message, options = {}) {
   });
 }
 
-async function safeSendTabMessage(tabId, message, options = {}) {
+function executeContentScript(tabId, frameId = 0) {
+  return new Promise((resolve, reject) => {
+    const target = Number.isInteger(frameId) ? { tabId, frameIds: [frameId] } : { tabId };
+
+    chrome.scripting.executeScript(
+      {
+        target,
+        files: ["content.js"],
+      },
+      () => {
+        const error = chrome.runtime.lastError;
+        if (error) {
+          reject(new Error(error.message));
+          return;
+        }
+        resolve();
+      }
+    );
+  });
+}
+
+function isNoReceiverError(error) {
+  const message = error && error.message ? error.message : "";
+  return message.includes("Receiving end does not exist");
+}
+
+async function sendTabMessageWithInjection(tabId, message, options = {}) {
   try {
     return await tabsSendMessage(tabId, message, options);
+  } catch (error) {
+    if (!isNoReceiverError(error)) {
+      throw error;
+    }
+
+    const frameId = Number.isInteger(options.frameId) ? options.frameId : 0;
+    await executeContentScript(tabId, frameId);
+    return tabsSendMessage(tabId, message, options);
+  }
+}
+
+async function safeSendTabMessage(tabId, message, options = {}) {
+  try {
+    return await sendTabMessageWithInjection(tabId, message, options);
   } catch (error) {
     return null;
   }
@@ -615,6 +665,12 @@ function findLinkedInGameFrameIds(frames, puzzleType) {
     }
   }
 
+  for (const frame of frames) {
+    if (typeof frame.url === "string" && frame.url.includes("linkedin.com")) {
+      pushFrameId(frame);
+    }
+  }
+
   return ids;
 }
 
@@ -677,26 +733,6 @@ function selectionFromRect(rect, insetRatio = 0.04) {
   });
 }
 
-function createTangoFocusedSelection(baseSelection) {
-  const normalized = normalizeSelection(baseSelection);
-  if (!normalized) {
-    return null;
-  }
-
-  const side = Math.max(10, Math.min(normalized.width * 0.7, normalized.height * 0.74));
-  const x = normalized.x + (normalized.width - side) / 2;
-  const rawY = normalized.y + (normalized.height - side) / 2 - normalized.height * 0.08;
-  const y = clamp(rawY, normalized.y, normalized.y + normalized.height - side);
-
-  return normalizeSelection({
-    x,
-    y,
-    width: side,
-    height: side,
-    devicePixelRatio: normalized.devicePixelRatio,
-  });
-}
-
 function maybeNormalizeSelectionForPuzzle(puzzleType, selection, frameRect) {
   const normalized = normalizeSelection(selection);
   if (!normalized) {
@@ -713,14 +749,14 @@ function maybeNormalizeSelectionForPuzzle(puzzleType, selection, frameRect) {
   }
 
   const tooLargeForFrame =
-    normalized.width > frameSelection.width * 0.82 ||
-    normalized.height > frameSelection.height * 0.82;
+    normalized.width > frameSelection.width * 0.95 ||
+    normalized.height > frameSelection.height * 0.95;
 
   if (!tooLargeForFrame) {
     return normalized;
   }
 
-  return createTangoFocusedSelection(frameSelection) || normalized;
+  return centeredBoardSelection(frameSelection) || normalized;
 }
 
 function centeredBoardSelection(baseSelection) {
@@ -808,10 +844,7 @@ async function detectSelectionForQuickSolve(tabId, puzzleType, frameContext, tab
 
   if (frameContext && frameContext.iframeRect) {
     const frameBaseSelection = selectionFromRect(frameContext.iframeRect, 0.04);
-    const topSelection =
-      puzzleType === "tango"
-        ? createTangoFocusedSelection(frameBaseSelection)
-        : frameBaseSelection;
+    const topSelection = frameBaseSelection;
 
     if (topSelection) {
       const hasFrameId = Number.isInteger(frameContext.gameFrameId) && frameContext.gameFrameId !== 0;
@@ -922,19 +955,34 @@ async function applySolutionForSelection(
     return { ok: false, error: "Could not map board selection for applying moves." };
   }
 
+  const messagePayloadBase = {
+    type: "applySolution",
+    puzzleType,
+    result,
+    settings: applySettings,
+  };
+
   let response = null;
   for (const target of applyTargets) {
     response = await safeSendTabMessage(
       tabId,
       {
-        type: "applySolution",
-        puzzleType,
-        result,
+        ...messagePayloadBase,
         selection: target.selection,
-        settings: applySettings,
       },
       { frameId: target.frameId }
     );
+
+    if ((!response || !response.ok) && puzzleType === "sudoku") {
+      response = await safeSendTabMessage(
+        tabId,
+        {
+          ...messagePayloadBase,
+          selection: null,
+        },
+        { frameId: target.frameId }
+      );
+    }
 
     if (response && response.ok) {
       break;

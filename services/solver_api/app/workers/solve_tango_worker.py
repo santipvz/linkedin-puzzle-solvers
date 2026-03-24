@@ -135,6 +135,10 @@ def solve(image_path: Path) -> dict[str, Any]:
 
     fixed_lookup = {(piece["row"], piece["col"]): piece["piece_type"] for piece in board_state["fixed_pieces"]}
 
+    board_bbox = board_state.get("board_bbox")
+    if not isinstance(board_bbox, dict):
+        board_bbox = _board_bbox_from_grid_coords(board_state.get("grid_coords"))
+
     moves: list[dict[str, int]] = []
     if solved:
         for row_index, row_values in enumerate(solver.board):
@@ -164,7 +168,7 @@ def solve(image_path: Path) -> dict[str, Any]:
             "steps": int(solver.get_steps()),
             "fixed_count": int(len(board_state["fixed_pieces"])),
             "constraint_count": int(len(board_state["constraints"])),
-            "board_bbox": _board_bbox_from_grid_coords(board_state.get("grid_coords")),
+            "board_bbox": board_bbox,
         },
     }
 
