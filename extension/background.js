@@ -989,6 +989,50 @@ async function applySolutionForSelection(
     }
   }
 
+  if ((!response || !response.ok) && puzzleType === "sudoku") {
+    const attemptedFrameIds = new Set(applyTargets.map((target) => target.frameId));
+    const fallbackFrameIds = [];
+    const seenFallbackFrameIds = new Set();
+
+    const pushFallbackFrameId = (frameId) => {
+      if (!Number.isInteger(frameId) || frameId === 0) {
+        return;
+      }
+      if (attemptedFrameIds.has(frameId) || seenFallbackFrameIds.has(frameId)) {
+        return;
+      }
+      seenFallbackFrameIds.add(frameId);
+      fallbackFrameIds.push(frameId);
+    };
+
+    pushFallbackFrameId(frameContext && frameContext.gameFrameId);
+
+    try {
+      const frames = await webNavigationGetAllFrames(tabId);
+      const frameIds = findLinkedInGameFrameIds(frames, puzzleType);
+      for (const frameId of frameIds) {
+        pushFallbackFrameId(frameId);
+      }
+    } catch (error) {
+      // Ignore frame enumeration failures and return the prior apply response.
+    }
+
+    for (const frameId of fallbackFrameIds) {
+      response = await safeSendTabMessage(
+        tabId,
+        {
+          ...messagePayloadBase,
+          selection: null,
+        },
+        { frameId }
+      );
+
+      if (response && response.ok) {
+        break;
+      }
+    }
+  }
+
   return response;
 }
 

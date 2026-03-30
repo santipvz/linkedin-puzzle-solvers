@@ -1020,6 +1020,50 @@ async function applyPayloadToTab(tab, payload, frameContext) {
     }
   }
 
+  if ((!response || !response.ok) && payload.puzzleType === "sudoku") {
+    const attemptedFrameIds = new Set(applyTargets.map((target) => target.frameId));
+    const fallbackFrameIds = [];
+    const seenFallbackFrameIds = new Set();
+
+    const pushFallbackFrameId = (frameId) => {
+      if (!Number.isInteger(frameId) || frameId === 0) {
+        return;
+      }
+      if (attemptedFrameIds.has(frameId) || seenFallbackFrameIds.has(frameId)) {
+        return;
+      }
+      seenFallbackFrameIds.add(frameId);
+      fallbackFrameIds.push(frameId);
+    };
+
+    pushFallbackFrameId(frameContext && frameContext.gameFrameId);
+
+    try {
+      const frames = await webNavigationGetAllFrames(tab.id);
+      const frameIds = findLinkedInGameFrameIds(frames, payload.puzzleType);
+      for (const frameId of frameIds) {
+        pushFallbackFrameId(frameId);
+      }
+    } catch (error) {
+      // Ignore frame enumeration failures and keep the latest apply response.
+    }
+
+    for (const frameId of fallbackFrameIds) {
+      response = await safeSendTabMessage(
+        tab.id,
+        {
+          ...messagePayloadBase,
+          selection: null,
+        },
+        { frameId }
+      );
+
+      if (response && response.ok) {
+        break;
+      }
+    }
+  }
+
   if (!response || !response.ok) {
     throw new Error((response && response.error) || "Failed to apply moves.");
   }
