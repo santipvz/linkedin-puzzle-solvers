@@ -118,7 +118,6 @@ class ZipSolver:
             clue_by_index[index] = int(value)
 
         clue_order = sorted(clue_values)
-        clue_index_by_value = {value: position for position, value in enumerate(clue_order)}
         index_by_clue_value = {value: index for index, value in clue_by_index.items()}
 
         if 1 not in index_by_clue_value:
@@ -131,9 +130,6 @@ class ZipSolver:
             )
 
         start_index = index_by_clue_value[1]
-        end_value = clue_order[-1]
-        end_index = index_by_clue_value[end_value]
-
         neighbors: list[list[int]] = [[] for _ in range(total_cells)]
 
         for row in range(size):
@@ -237,6 +233,8 @@ class ZipSolver:
             if remain == 0:
                 return True
 
+            degree_one_nodes = 0
+
             for node in range(total_cells):
                 if not is_unvisited(node, visited_mask):
                     continue
@@ -246,16 +244,16 @@ class ZipSolver:
                     if neighbor == head or is_unvisited(neighbor, visited_mask):
                         degree += 1
 
-                if node == end_index:
-                    if degree < 1:
-                        return False
-                else:
-                    if degree < 2:
+                if degree < 1:
+                    return False
+                if degree == 1:
+                    degree_one_nodes += 1
+                    if degree_one_nodes > 1:
                         return False
 
             return True
 
-        def legal_moves(head: int, visited_mask: int, required_position: int, steps: int) -> list[tuple[int, int]]:
+        def legal_moves(head: int, visited_mask: int, required_position: int) -> list[tuple[int, int]]:
             candidates: list[tuple[int, int]] = []
             next_required_value = required_clue_value(required_position)
 
@@ -265,9 +263,6 @@ class ZipSolver:
 
                 clue_value = clue_value_for(neighbor)
                 if clue_value is not None and clue_value != next_required_value:
-                    continue
-
-                if neighbor == end_index and steps + 1 < total_cells:
                     continue
 
                 next_position = required_position + 1 if clue_value is not None else required_position
@@ -313,7 +308,7 @@ class ZipSolver:
                 return None
 
             if steps == total_cells:
-                if head == end_index and required_position == len(clue_order):
+                if required_position == len(clue_order):
                     return (head,)
                 failed_states.add(state_key)
                 return None
@@ -330,7 +325,7 @@ class ZipSolver:
                 failed_states.add(state_key)
                 return None
 
-            for neighbor, next_position in legal_moves(head, visited_mask, required_position, steps):
+            for neighbor, next_position in legal_moves(head, visited_mask, required_position):
                 next_visited = visited_mask | (1 << neighbor)
                 suffix = dfs(neighbor, next_visited, next_position, steps + 1)
                 if suffix is None:

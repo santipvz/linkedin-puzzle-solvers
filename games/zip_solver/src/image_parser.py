@@ -10,6 +10,7 @@ import numpy as np
 
 
 DEFAULT_BOARD_SIZE = 7
+AUTO_BOARD_SIZES = (6, 7)
 OUTER_CONTOUR_THRESHOLD = 180
 WALL_PIXEL_THRESHOLD = 75
 CLUE_COMPONENT_THRESHOLD = 70
@@ -182,12 +183,12 @@ def _get_ocr() -> _ZipClueOcr:
 
 
 class ZipImageParser:
-    def __init__(self, board_size: int = DEFAULT_BOARD_SIZE) -> None:
-        self._board_size = int(board_size)
+    def __init__(self, board_size: int | None = None) -> None:
+        self._board_size = int(board_size) if board_size is not None else None
         self._ocr = _get_ocr()
 
     @property
-    def board_size(self) -> int:
+    def board_size(self) -> int | None:
         return self._board_size
 
     def parse_image(self, image_path: str | Path) -> dict[str, Any]:
@@ -199,18 +200,31 @@ class ZipImageParser:
         board_crop, bbox = self._extract_board_crop(image)
         board_gray = cv2.cvtColor(board_crop, cv2.COLOR_BGR2GRAY)
 
-        x_lines = self._build_grid_lines(board_gray.shape[1], self._board_size)
-        y_lines = self._build_grid_lines(board_gray.shape[0], self._board_size)
+        board_size = self._board_size if self._board_size is not None else self._detect_board_size(board_gray)
 
-        blocked_h, blocked_v = self._detect_walls(board_gray, x_lines, y_lines)
-        clues, clue_entries = self._detect_clues(board_gray, x_lines, y_lines)
+        x_lines = self._build_grid_lines(board_gray.shape[1], board_size)
+        y_lines = self._build_grid_lines(board_gray.shape[0], board_size)
 
-        clue_grid = [[0 for _ in range(self._board_size)] for _ in range(self._board_size)]
+        clues, clue_entries, clue_component_mask, _ = self._detect_clues(
+            board_gray,
+            x_lines,
+            y_lines,
+            board_size=board_size,
+        )
+        blocked_h, blocked_v = self._detect_walls(
+            board_gray,
+            x_lines,
+            y_lines,
+            board_size=board_size,
+            clue_component_mask=clue_component_mask,
+        )
+
+        clue_grid = [[0 for _ in range(board_size)] for _ in range(board_size)]
         for (row, col), value in clues.items():
             clue_grid[row][col] = int(value)
 
         return {
-            "size": int(self._board_size),
+            "size": int(board_size),
             "blocked_h": blocked_h,
             "blocked_v": blocked_v,
             "clues": clue_entries,
@@ -221,6 +235,39 @@ class ZipImageParser:
                 "cols": [int(value) for value in x_lines],
             },
         }
+
+    def _detect_board_size(self, board_gray: np.ndarray) -> int:
+        best_size = DEFAULT_BOARD_SIZE
+        best_key: tuple[int, int, int, float, int] | None = None
+
+        for candidate_size in AUTO_BOARD_SIZES:
+            x_lines = self._build_grid_lines(board_gray.shape[1], candidate_size)
+            y_lines = self._build_grid_lines(board_gray.shape[0], candidate_size)
+
+            clues, _, _, alignment_score = self._detect_clues(
+                board_gray,
+                x_lines,
+                y_lines,
+                board_size=candidate_size,
+            )
+
+            clue_values = sorted(clues.values())
+            has_start = 1 in clue_values
+            contiguous = bool(clue_values) and clue_values == list(range(1, len(clue_values) + 1))
+
+            key = (
+                0 if has_start else 1,
+                0 if contiguous else 1,
+                -len(clue_values),
+                float(alignment_score),
+                abs(candidate_size - DEFAULT_BOARD_SIZE),
+            )
+
+            if best_key is None or key < best_key:
+                best_key = key
+                best_size = candidate_size
+
+        return int(best_size)
 
     def _extract_board_crop(self, image: np.ndarray) -> tuple[np.ndarray, dict[str, int]]:
         image_height, image_width = image.shape[:2]
@@ -305,8 +352,12 @@ class ZipImageParser:
         board_gray: np.ndarray,
         x_lines: list[int],
         y_lines: list[int],
+        board_size: int,
+        clue_component_mask: np.ndarray | None = None,
     ) -> tuple[list[list[bool]], list[list[bool]]]:
         wall_mask = board_gray < WALL_PIXEL_THRESHOLD
+        if clue_component_mask is not None and clue_component_mask.shape == wall_mask.shape:
+            wall_mask = np.logical_and(wall_mask, np.logical_not(clue_component_mask))
 
         x_steps = np.diff(np.array(x_lines))
         y_steps = np.diff(np.array(y_lines))
@@ -316,14 +367,14 @@ class ZipImageParser:
         probe = max(2, int(round(average_cell * 0.05)))
         ratio_threshold = 0.35
 
-        blocked_h = [[False for _ in range(self._board_size)] for _ in range(self._board_size - 1)]
-        blocked_v = [[False for _ in range(self._board_size - 1)] for _ in range(self._board_size)]
+        blocked_h = [[False for _ in range(board_size)] for _ in range(board_size - 1)]
+        blocked_v = [[False for _ in range(board_size - 1)] for _ in range(board_size)]
 
         height, width = board_gray.shape
 
-        for row in range(self._board_size - 1):
+        for row in range(board_size - 1):
             boundary_y = y_lines[row + 1]
-            for col in range(self._board_size):
+            for col in range(board_size):
                 x1 = max(0, x_lines[col] + pad)
                 x2 = min(width, x_lines[col + 1] - pad)
                 y1 = max(0, boundary_y - probe)
@@ -333,8 +384,8 @@ class ZipImageParser:
                 ratio = float(np.mean(patch)) if patch.size else 0.0
                 blocked_h[row][col] = ratio > ratio_threshold
 
-        for row in range(self._board_size):
-            for col in range(self._board_size - 1):
+        for row in range(board_size):
+            for col in range(board_size - 1):
                 boundary_x = x_lines[col + 1]
 
                 x1 = max(0, boundary_x - probe)
@@ -353,12 +404,15 @@ class ZipImageParser:
         board_gray: np.ndarray,
         x_lines: list[int],
         y_lines: list[int],
-    ) -> tuple[dict[tuple[int, int], int], list[dict[str, Any]]]:
+        board_size: int,
+    ) -> tuple[dict[tuple[int, int], int], list[dict[str, Any]], np.ndarray, float]:
         clue_mask = (board_gray < CLUE_COMPONENT_THRESHOLD).astype(np.uint8) * 255
         component_count, labels, stats, _ = cv2.connectedComponentsWithStats(clue_mask, connectivity=8)
 
         clues: dict[tuple[int, int], int] = {}
         entries_by_cell: dict[tuple[int, int], dict[str, Any]] = {}
+        clue_component_mask = np.zeros_like(clue_mask, dtype=bool)
+        offset_by_cell: dict[tuple[int, int], float] = {}
 
         x_steps = np.diff(np.array(x_lines))
         y_steps = np.diff(np.array(y_lines))
@@ -389,15 +443,26 @@ class ZipImageParser:
             center_x = x + width / 2
             center_y = y + height / 2
 
-            row = self._map_to_cell(center_y, y_lines)
-            col = self._map_to_cell(center_x, x_lines)
+            row = self._map_to_cell(center_y, y_lines, board_size)
+            col = self._map_to_cell(center_x, x_lines, board_size)
             if row is None or col is None:
                 continue
+
+            cell_width = max(1.0, float(x_lines[col + 1] - x_lines[col]))
+            cell_height = max(1.0, float(y_lines[row + 1] - y_lines[row]))
+            cell_center_x = (x_lines[col] + x_lines[col + 1]) / 2.0
+            cell_center_y = (y_lines[row] + y_lines[row + 1]) / 2.0
+            normalized_offset = (
+                abs(center_x - cell_center_x) / (cell_width / 2.0)
+                + abs(center_y - cell_center_y) / (cell_height / 2.0)
+            ) / 2.0
 
             roi = board_gray[y : y + height, x : x + width]
             prediction = self._ocr.predict(roi)
             if prediction is None:
                 continue
+
+            clue_component_mask[labels == label] = True
 
             cell = (row, col)
             current = entries_by_cell.get(cell)
@@ -405,6 +470,7 @@ class ZipImageParser:
                 continue
 
             clues[cell] = int(prediction.value)
+            offset_by_cell[cell] = float(normalized_offset)
             entries_by_cell[cell] = {
                 "row": int(row),
                 "col": int(col),
@@ -420,10 +486,15 @@ class ZipImageParser:
             }
 
         clue_entries = sorted(entries_by_cell.values(), key=lambda item: int(item["value"]))
-        return clues, clue_entries
+        alignment_score = (
+            float(sum(offset_by_cell.values()) / len(offset_by_cell))
+            if offset_by_cell
+            else float("inf")
+        )
+        return clues, clue_entries, clue_component_mask, alignment_score
 
-    def _map_to_cell(self, coordinate: float, lines: list[int]) -> int | None:
+    def _map_to_cell(self, coordinate: float, lines: list[int], board_size: int) -> int | None:
         index = int(np.searchsorted(lines, coordinate, side="right") - 1)
-        if index < 0 or index >= self._board_size:
+        if index < 0 or index >= board_size:
             return None
         return index
