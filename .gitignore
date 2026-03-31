@@ -8,3 +8,4 @@ errors/
 *.zip
 *.png
 deploy/local/.env
+datasets/

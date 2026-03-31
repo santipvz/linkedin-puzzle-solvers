@@ -12,6 +12,7 @@ This folder contains Docker deployment assets for running the solver API on your
 
 ```bash
 cp .env.example .env
+mkdir -p ../../datasets
 docker-compose up -d --build
 ```
 
@@ -19,6 +20,13 @@ docker-compose up -d --build
 
 - Service uses `restart: unless-stopped`, so Docker starts it automatically after reboot.
 - Ensure Docker itself starts on boot.
+- Board capture dataset persists on host at `datasets` via bind mount.
+
+## Dataset path config
+
+- `DATASET_CAPTURE_ENABLED`: set `0` to disable capture.
+- `DATASET_CAPTURE_HOST_DIR`: host directory for captures.
+- `DATASET_CAPTURE_CONTAINER_DIR`: container path used by API (`DATASET_CAPTURE_DIR`).
 
 ## Useful commands
 

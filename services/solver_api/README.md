@@ -34,4 +34,7 @@ curl -X POST \
 
 - The API runs each puzzle solver in an isolated subprocess worker to avoid module path collisions.
 - Solve responses are cached by image hash in-memory for faster repeated solves.
+- Board captures are saved for start-board requests only (not intermediate search attempts).
+- Capture path defaults to `datasets/<puzzle>/<YYYY-MM-DD>/` and can be changed with `DATASET_CAPTURE_DIR`.
+- Set `DATASET_CAPTURE_ENABLED=0` to disable dataset capture.
 - This service is intended for local usage from the browser extension.

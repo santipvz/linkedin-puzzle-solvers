@@ -19,6 +19,7 @@ The Queens and Tango game projects were imported from their original repositorie
 - Chrome extension with board select, auto-detect, solve, and apply.
 - One-click `Solve + Apply` flow in extension popup.
 - In-page quick solve widget with automatic game detection on LinkedIn game pages.
+- Automatic start-board dataset capture for all games.
 - Configurable apply settings (auto-close, click delays, Tango input mode).
 
 ## Quick Start

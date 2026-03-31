@@ -7,6 +7,11 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:${SOLVER_API_BIND_PORT:-18000}:8000"
+    environment:
+      - DATASET_CAPTURE_ENABLED=${DATASET_CAPTURE_ENABLED:-1}
+      - DATASET_CAPTURE_DIR=${DATASET_CAPTURE_CONTAINER_DIR:-/app/datasets}
+    volumes:
+      - ${DATASET_CAPTURE_HOST_DIR:-../../datasets}:${DATASET_CAPTURE_CONTAINER_DIR:-/app/datasets}
     healthcheck:
       test:
         [

@@ -329,7 +329,9 @@ async function solveTangoWithCandidateSearch({ normalizedSelection, screenshotDa
   for (let index = 0; index < candidates.length; index += 1) {
     const candidate = candidates[index];
     const boardImage = await cropCapturedImage(screenshotDataUrl, candidate);
-    const result = await callSolverApi(apiBaseUrl, "tango", boardImage);
+    const result = await callSolverApi(apiBaseUrl, "tango", boardImage, {
+      captureBoardStart: index === 0,
+    });
     const refinedSelection = refineSelectionWithBoardBbox(candidate, result) || candidate;
     const score = tangoAttemptScore(result, refinedSelection, normalizedSelection);
 
@@ -545,7 +547,7 @@ async function cropCapturedImage(dataUrl, selection) {
   return canvas.convertToBlob({ type: "image/png" });
 }
 
-async function callSolverApi(apiBaseUrl, puzzleType, imageBlob) {
+async function callSolverApi(apiBaseUrl, puzzleType, imageBlob, options = {}) {
   const safePuzzleType =
     puzzleType === "tango"
       ? "tango"
@@ -559,8 +561,14 @@ async function callSolverApi(apiBaseUrl, puzzleType, imageBlob) {
   const formData = new FormData();
   formData.append("image", imageBlob, `${safePuzzleType}_board.png`);
 
+  const headers = {};
+  if (options.captureBoardStart) {
+    headers["X-Board-Capture"] = "start";
+  }
+
   const response = await fetch(endpoint, {
     method: "POST",
+    headers,
     body: formData,
   });
 
@@ -599,7 +607,9 @@ async function solveBoardCore({ tabId, puzzleType, apiBaseUrl, selection }) {
     refinedSelection = normalizeSelection(tangoSolved.selection) || normalizedSelection;
   } else {
     const boardImage = await cropCapturedImage(screenshotDataUrl, normalizedSelection);
-    result = await callSolverApi(apiBaseUrl, puzzleType, boardImage);
+    result = await callSolverApi(apiBaseUrl, puzzleType, boardImage, {
+      captureBoardStart: true,
+    });
     refinedSelection = refineSelectionWithBoardBbox(normalizedSelection, result);
   }
 

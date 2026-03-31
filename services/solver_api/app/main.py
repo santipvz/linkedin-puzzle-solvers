@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import copy
+from datetime import datetime, timezone
 import hashlib
+import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -10,16 +14,21 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Header, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from PIL import Image
 
 
 APP_DIR = Path(__file__).resolve().parent
+REPO_ROOT = APP_DIR.parents[2]
 WORKERS_DIR = APP_DIR / "workers"
+DEFAULT_CAPTURE_DATASET_DIR = REPO_ROOT / "datasets"
+CAPTURE_DATASET_DIR = Path(os.getenv("DATASET_CAPTURE_DIR") or DEFAULT_CAPTURE_DATASET_DIR).expanduser()
 ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 MAX_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024
 WORKER_TIMEOUT_SECONDS = 60
 MAX_SOLVE_CACHE_ENTRIES = 96
+DATASET_CAPTURE_ENABLED = os.getenv("DATASET_CAPTURE_ENABLED", "1").strip().lower() not in {"0", "false", "no"}
 
 
 _solve_cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
@@ -70,14 +79,103 @@ def _cache_get(cache_key: str) -> dict[str, Any] | None:
         return None
 
     _solve_cache.move_to_end(cache_key)
-    return json.loads(json.dumps(cached))
+    return copy.deepcopy(cached)
 
 
 def _cache_put(cache_key: str, value: dict[str, Any]) -> None:
-    _solve_cache[cache_key] = json.loads(json.dumps(value))
+    _solve_cache[cache_key] = copy.deepcopy(value)
     _solve_cache.move_to_end(cache_key)
     while len(_solve_cache) > MAX_SOLVE_CACHE_ENTRIES:
         _solve_cache.popitem(last=False)
+
+
+def _extract_board_bbox(response: dict[str, Any]) -> dict[str, int] | None:
+    details = response.get("details") if isinstance(response, dict) else None
+    if not isinstance(details, dict):
+        return None
+
+    board_bbox = details.get("board_bbox")
+    if not isinstance(board_bbox, dict):
+        return None
+
+    try:
+        x = int(board_bbox.get("x", -1))
+        y = int(board_bbox.get("y", -1))
+        width = int(board_bbox.get("width", -1))
+        height = int(board_bbox.get("height", -1))
+    except (TypeError, ValueError):
+        return None
+
+    if x < 0 or y < 0 or width <= 0 or height <= 0:
+        return None
+
+    return {"x": x, "y": y, "width": width, "height": height}
+
+
+def _extract_board_only_image_payload(payload: bytes, response: dict[str, Any]) -> bytes:
+    board_bbox = _extract_board_bbox(response)
+    if board_bbox is None:
+        return payload
+
+    try:
+        with Image.open(io.BytesIO(payload)) as image:
+            image_width, image_height = image.size
+            x1 = max(0, min(image_width - 1, int(board_bbox["x"])))
+            y1 = max(0, min(image_height - 1, int(board_bbox["y"])))
+            x2 = max(x1 + 1, min(image_width, int(board_bbox["x"] + board_bbox["width"])))
+            y2 = max(y1 + 1, min(image_height, int(board_bbox["y"] + board_bbox["height"])))
+
+            board = image.crop((x1, y1, x2, y2))
+            output = io.BytesIO()
+            board.save(output, format="PNG")
+            return output.getvalue()
+    except Exception:
+        return payload
+
+
+def _archive_board_capture(puzzle: str, payload: bytes, response: dict[str, Any], from_cache: bool) -> None:
+    if not DATASET_CAPTURE_ENABLED:
+        return
+
+    digest = hashlib.sha256(payload).hexdigest()
+    now = datetime.now(timezone.utc)
+    day = now.strftime("%Y-%m-%d")
+
+    target_dir = CAPTURE_DATASET_DIR / puzzle / day
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    image_path = target_dir / f"{digest}.png"
+    metadata_path = target_dir / f"{digest}.json"
+
+    if not image_path.exists():
+        image_payload = _extract_board_only_image_payload(payload, response)
+        image_path.write_bytes(image_payload)
+
+    metadata: dict[str, Any] = {
+        "puzzle": puzzle,
+        "sha256": digest,
+        "captured_at": now.isoformat(),
+        "from_cache": bool(from_cache),
+        "solved": bool(response.get("solved")),
+        "error": response.get("error"),
+        "board_size": response.get("board_size"),
+        "details": response.get("details"),
+    }
+
+    if metadata_path.exists():
+        try:
+            existing = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except Exception:
+            existing = {}
+
+        seen_count = int(existing.get("seen_count") or 1)
+        metadata["first_captured_at"] = existing.get("first_captured_at") or existing.get("captured_at") or metadata["captured_at"]
+        metadata["seen_count"] = seen_count + 1
+    else:
+        metadata["first_captured_at"] = metadata["captured_at"]
+        metadata["seen_count"] = 1
+
+    metadata_path.write_text(json.dumps(metadata, ensure_ascii=True, indent=2), encoding="utf-8")
 
 
 def _write_temp_image(payload: bytes, filename: str | None) -> Path:
@@ -124,7 +222,12 @@ def _run_solver_worker(worker_filename: str, image_path: Path) -> dict[str, Any]
         raise HTTPException(status_code=500, detail=f"Worker produced invalid JSON: {sample}") from exc
 
 
-async def _solve_with_worker(worker_filename: str, image: UploadFile, puzzle_name: str) -> dict[str, Any]:
+async def _solve_with_worker(
+    worker_filename: str,
+    image: UploadFile,
+    puzzle_name: str,
+    capture_board_start: bool,
+) -> dict[str, Any]:
     if image.content_type and not image.content_type.startswith("image/"):
         raise HTTPException(status_code=415, detail="Only image uploads are supported.")
 
@@ -132,33 +235,79 @@ async def _solve_with_worker(worker_filename: str, image: UploadFile, puzzle_nam
     cache_key = _cache_key_for_upload(puzzle_name, payload)
     cached = _cache_get(cache_key)
     if cached is not None:
-        return cached
+        response = cached
+        from_cache = True
+    else:
+        temp_image_path = _write_temp_image(payload, image.filename)
+        try:
+            response = await asyncio.to_thread(_run_solver_worker, worker_filename, temp_image_path)
+        finally:
+            temp_image_path.unlink(missing_ok=True)
 
-    temp_image_path = _write_temp_image(payload, image.filename)
-    try:
-        response = await asyncio.to_thread(_run_solver_worker, worker_filename, temp_image_path)
-    finally:
-        temp_image_path.unlink(missing_ok=True)
+        _cache_put(cache_key, response)
+        from_cache = False
 
-    _cache_put(cache_key, response)
+    if capture_board_start:
+        try:
+            await asyncio.to_thread(_archive_board_capture, puzzle_name, payload, response, from_cache)
+        except Exception:
+            pass
     return response
 
 
+def _should_capture_board_start(header_value: str | None) -> bool:
+    if not header_value:
+        return False
+    return header_value.strip().lower() == "start"
+
+
 @app.post("/solve/queens")
-async def solve_queens(image: UploadFile = File(...)) -> dict[str, Any]:
-    return await _solve_with_worker("solve_queens_worker.py", image, "queens")
+async def solve_queens(
+    image: UploadFile = File(...),
+    board_capture: str | None = Header(default=None, alias="X-Board-Capture"),
+) -> dict[str, Any]:
+    return await _solve_with_worker(
+        "solve_queens_worker.py",
+        image,
+        "queens",
+        capture_board_start=_should_capture_board_start(board_capture),
+    )
 
 
 @app.post("/solve/tango")
-async def solve_tango(image: UploadFile = File(...)) -> dict[str, Any]:
-    return await _solve_with_worker("solve_tango_worker.py", image, "tango")
+async def solve_tango(
+    image: UploadFile = File(...),
+    board_capture: str | None = Header(default=None, alias="X-Board-Capture"),
+) -> dict[str, Any]:
+    return await _solve_with_worker(
+        "solve_tango_worker.py",
+        image,
+        "tango",
+        capture_board_start=_should_capture_board_start(board_capture),
+    )
 
 
 @app.post("/solve/sudoku")
-async def solve_sudoku(image: UploadFile = File(...)) -> dict[str, Any]:
-    return await _solve_with_worker("solve_sudoku_worker.py", image, "sudoku")
+async def solve_sudoku(
+    image: UploadFile = File(...),
+    board_capture: str | None = Header(default=None, alias="X-Board-Capture"),
+) -> dict[str, Any]:
+    return await _solve_with_worker(
+        "solve_sudoku_worker.py",
+        image,
+        "sudoku",
+        capture_board_start=_should_capture_board_start(board_capture),
+    )
 
 
 @app.post("/solve/zip")
-async def solve_zip(image: UploadFile = File(...)) -> dict[str, Any]:
-    return await _solve_with_worker("solve_zip_worker.py", image, "zip")
+async def solve_zip(
+    image: UploadFile = File(...),
+    board_capture: str | None = Header(default=None, alias="X-Board-Capture"),
+) -> dict[str, Any]:
+    return await _solve_with_worker(
+        "solve_zip_worker.py",
+        image,
+        "zip",
+        capture_board_start=_should_capture_board_start(board_capture),
+    )
