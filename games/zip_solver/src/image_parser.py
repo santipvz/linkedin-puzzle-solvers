@@ -31,13 +31,15 @@ class _ZipClueOcr:
     def __init__(self) -> None:
         self._templates = self._build_templates()
 
-    def predict(self, clue_roi_gray: np.ndarray) -> _OcrPrediction | None:
+    def predict(self, clue_roi_gray: np.ndarray, max_value: int | None = None) -> _OcrPrediction | None:
         normalized = self._normalize_text(clue_roi_gray)
         if normalized is None:
             return None
 
         scores: list[tuple[int, float]] = []
         for value, templates in self._templates.items():
+            if max_value is not None and value > max_value:
+                continue
             score = max(self._best_shift_iou(normalized, template) for template in templates)
             scores.append((value, float(score)))
 
@@ -150,31 +152,15 @@ class _ZipClueOcr:
         return normalized
 
     def _best_shift_iou(self, first: np.ndarray, second: np.ndarray) -> float:
-        first_mask = first > 0
-        second_mask = second > 0
+        first_u8 = np.where(first > 0, 255, 0).astype(np.uint8)
+        second_u8 = np.where(second > 0, 255, 0).astype(np.uint8)
 
-        best = 0.0
-        for shift_y in (-2, -1, 0, 1, 2):
-            for shift_x in (-2, -1, 0, 1, 2):
-                shifted = np.roll(np.roll(second_mask, shift_y, axis=0), shift_x, axis=1)
+        padded = cv2.copyMakeBorder(second_u8, 2, 2, 2, 2, cv2.BORDER_CONSTANT, value=0)
+        response = cv2.matchTemplate(padded, first_u8, cv2.TM_CCORR_NORMED)
+        if response.size == 0:
+            return 0.0
 
-                if shift_y > 0:
-                    shifted[:shift_y, :] = False
-                elif shift_y < 0:
-                    shifted[shift_y:, :] = False
-
-                if shift_x > 0:
-                    shifted[:, :shift_x] = False
-                elif shift_x < 0:
-                    shifted[:, shift_x:] = False
-
-                intersection = np.logical_and(first_mask, shifted).sum()
-                union = np.logical_or(first_mask, shifted).sum()
-                score = float(intersection / union) if union else 0.0
-                if score > best:
-                    best = score
-
-        return best
+        return float(np.max(response))
 
 
 @lru_cache(maxsize=1)
@@ -200,17 +186,25 @@ class ZipImageParser:
         board_crop, bbox = self._extract_board_crop(image)
         board_gray = cv2.cvtColor(board_crop, cv2.COLOR_BGR2GRAY)
 
-        board_size = self._board_size if self._board_size is not None else self._detect_board_size(board_gray)
-
-        x_lines = self._build_grid_lines(board_gray.shape[1], board_size)
-        y_lines = self._build_grid_lines(board_gray.shape[0], board_size)
-
-        clues, clue_entries, clue_component_mask, _ = self._detect_clues(
-            board_gray,
-            x_lines,
-            y_lines,
-            board_size=board_size,
-        )
+        if self._board_size is not None:
+            board_size = self._board_size
+            x_lines = self._build_grid_lines(board_gray.shape[1], board_size)
+            y_lines = self._build_grid_lines(board_gray.shape[0], board_size)
+            clues, clue_entries, clue_component_mask, _ = self._detect_clues(
+                board_gray,
+                x_lines,
+                y_lines,
+                board_size=board_size,
+            )
+        else:
+            (
+                board_size,
+                x_lines,
+                y_lines,
+                clues,
+                clue_entries,
+                clue_component_mask,
+            ) = self._detect_board_layout(board_gray)
         blocked_h, blocked_v = self._detect_walls(
             board_gray,
             x_lines,
@@ -236,15 +230,30 @@ class ZipImageParser:
             },
         }
 
-    def _detect_board_size(self, board_gray: np.ndarray) -> int:
+    def _detect_board_layout(
+        self,
+        board_gray: np.ndarray,
+    ) -> tuple[
+        int,
+        list[int],
+        list[int],
+        dict[tuple[int, int], int],
+        list[dict[str, Any]],
+        np.ndarray,
+    ]:
         best_size = DEFAULT_BOARD_SIZE
+        best_x_lines = self._build_grid_lines(board_gray.shape[1], best_size)
+        best_y_lines = self._build_grid_lines(board_gray.shape[0], best_size)
+        best_clues: dict[tuple[int, int], int] = {}
+        best_entries: list[dict[str, Any]] = []
+        best_component_mask = np.zeros_like(board_gray, dtype=bool)
         best_key: tuple[int, int, int, float, int] | None = None
 
         for candidate_size in AUTO_BOARD_SIZES:
             x_lines = self._build_grid_lines(board_gray.shape[1], candidate_size)
             y_lines = self._build_grid_lines(board_gray.shape[0], candidate_size)
 
-            clues, _, _, alignment_score = self._detect_clues(
+            clues, clue_entries, clue_component_mask, alignment_score = self._detect_clues(
                 board_gray,
                 x_lines,
                 y_lines,
@@ -266,8 +275,13 @@ class ZipImageParser:
             if best_key is None or key < best_key:
                 best_key = key
                 best_size = candidate_size
+                best_x_lines = x_lines
+                best_y_lines = y_lines
+                best_clues = clues
+                best_entries = clue_entries
+                best_component_mask = clue_component_mask
 
-        return int(best_size)
+        return int(best_size), best_x_lines, best_y_lines, best_clues, best_entries, best_component_mask
 
     def _extract_board_crop(self, image: np.ndarray) -> tuple[np.ndarray, dict[str, int]]:
         image_height, image_width = image.shape[:2]
@@ -458,7 +472,7 @@ class ZipImageParser:
             ) / 2.0
 
             roi = board_gray[y : y + height, x : x + width]
-            prediction = self._ocr.predict(roi)
+            prediction = self._ocr.predict(roi, max_value=board_size * board_size)
             if prediction is None:
                 continue
 

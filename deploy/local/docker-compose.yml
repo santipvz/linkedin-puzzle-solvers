@@ -2,7 +2,7 @@ services:
   solver-api:
     build:
       context: ../..
-      dockerfile: deploy/nas/Dockerfile
+      dockerfile: deploy/local/Dockerfile
     container_name: linkedin-puzzle-solver-api
     restart: unless-stopped
     ports:

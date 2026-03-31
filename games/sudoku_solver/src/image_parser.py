@@ -4,6 +4,7 @@ import glob
 import itertools
 import os
 import random
+import tempfile
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -49,7 +50,26 @@ class _MiniSudokuOcr:
         return best_digit, best_confidence, ranked
 
     def _train_model(self) -> KNeighborsClassifier:
+        features, labels = self._load_or_build_training_dataset()
+
+        model = KNeighborsClassifier(n_neighbors=3, weights="distance")
+        model.fit(np.asarray(features, dtype=np.float32), np.asarray(labels, dtype=np.int32))
+        return model
+
+    def _load_or_build_training_dataset(self) -> tuple[list[np.ndarray], list[int]]:
+        cache_path = self._dataset_cache_path()
+        if cache_path.exists():
+            try:
+                cached = np.load(cache_path)
+                cached_features = cached["features"].astype(np.float32)
+                cached_labels = cached["labels"].astype(np.int32)
+                if cached_features.ndim == 2 and len(cached_features) == len(cached_labels) and len(cached_labels) > 0:
+                    return [row for row in cached_features], [int(value) for value in cached_labels.tolist()]
+            except Exception:
+                cache_path.unlink(missing_ok=True)
+
         rng = random.Random(1337)
+        np_rng = np.random.default_rng(1337)
         features: list[np.ndarray] = []
         labels: list[int] = []
 
@@ -64,7 +84,7 @@ class _MiniSudokuOcr:
                         continue
 
                     for _ in range(7):
-                        rendered = self._render_digit_canvas(digit, font, rng)
+                        rendered = self._render_digit_canvas(digit, font, rng, np_rng)
                         normalized = _normalize_digit_mask(rendered)
                         if normalized is None:
                             continue
@@ -77,9 +97,20 @@ class _MiniSudokuOcr:
             features.extend(fallback_features)
             labels.extend(fallback_labels)
 
-        model = KNeighborsClassifier(n_neighbors=3, weights="distance")
-        model.fit(np.asarray(features, dtype=np.float32), np.asarray(labels, dtype=np.int32))
-        return model
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            np.savez_compressed(
+                cache_path,
+                features=np.asarray(features, dtype=np.float32),
+                labels=np.asarray(labels, dtype=np.int32),
+            )
+        except Exception:
+            pass
+
+        return features, labels
+
+    def _dataset_cache_path(self) -> Path:
+        return Path(tempfile.gettempdir()) / "linkedin_puzzle_solvers_sudoku_ocr_v2.npz"
 
     def _candidate_font_paths(self) -> list[str]:
         patterns = [
@@ -123,7 +154,13 @@ class _MiniSudokuOcr:
 
         return []
 
-    def _render_digit_canvas(self, digit: int, font: Any, rng: random.Random) -> np.ndarray:
+    def _render_digit_canvas(
+        self,
+        digit: int,
+        font: Any,
+        rng: random.Random,
+        np_rng: np.random.Generator,
+    ) -> np.ndarray:
         canvas = Image.new("L", (64, 64), 255)
         draw = ImageDraw.Draw(canvas)
 
@@ -144,7 +181,7 @@ class _MiniSudokuOcr:
             image = cv2.GaussianBlur(image, (3, 3), 0)
 
         if rng.random() < 0.35:
-            noise = np.random.normal(0, 6, image.shape).astype(np.int16)
+            noise = np_rng.normal(0, 6, image.shape).astype(np.int16)
             image = np.clip(image.astype(np.int16) + noise, 0, 255).astype(np.uint8)
 
         if rng.random() < 0.45:
@@ -166,10 +203,11 @@ class _MiniSudokuOcr:
 
         fallback_font = ImageFont.load_default()
         rng = random.Random(2026)
+        np_rng = np.random.default_rng(2026)
 
         for digit in range(1, BOARD_SIZE + 1):
             for _ in range(80):
-                rendered = self._render_digit_canvas(digit, fallback_font, rng)
+                rendered = self._render_digit_canvas(digit, fallback_font, rng, np_rng)
                 normalized = _normalize_digit_mask(rendered)
                 if normalized is None:
                     continue

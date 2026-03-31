@@ -47,10 +47,10 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 - `POST /solve/sudoku` (multipart form field: `image`)
 - `POST /solve/zip` (multipart form field: `image`)
 
-## NAS Deployment (Private)
+## Local Docker Deployment
 
-- Docker deployment files: `deploy/nas/docker-compose.yml`, `deploy/nas/Dockerfile`
-- Private network setup with Tailscale: `docs/nas-tailscale.md`
+- Docker deployment files: `deploy/local/docker-compose.yml`, `deploy/local/Dockerfile`
+- Auto-start on reboot via `restart: unless-stopped`
 
 ## CI and Release
 

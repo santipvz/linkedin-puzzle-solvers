@@ -57,8 +57,7 @@ Notes:
 
 `Solve` shows overlay preview. `Solve + Apply` skips preview markers and directly applies moves.
 
-You can also point `API URL` to a private NAS endpoint over Tailscale.
-See `docs/nas-tailscale.md`.
+For Docker deployment on your PC, use `http://127.0.0.1:18000` and start from `deploy/local`.
 
 ## Faster flow (in-page)
 

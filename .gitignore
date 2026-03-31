@@ -7,3 +7,4 @@ __pycache__/
 errors/
 *.zip
 *.png
+deploy/local/.env

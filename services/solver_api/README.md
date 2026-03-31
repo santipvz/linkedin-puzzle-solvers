@@ -33,4 +33,5 @@ curl -X POST \
 ## Notes
 
 - The API runs each puzzle solver in an isolated subprocess worker to avoid module path collisions.
+- Solve responses are cached by image hash in-memory for faster repeated solves.
 - This service is intended for local usage from the browser extension.
