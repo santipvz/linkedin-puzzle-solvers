@@ -10,6 +10,7 @@ class MiniSudokuSolveResult:
     board: list[list[int]] | None
     iterations: int
     error: str | None = None
+    solution_count: int = 0
 
 
 class MiniSudokuSolver:
@@ -24,7 +25,8 @@ class MiniSudokuSolver:
     def iterations(self) -> int:
         return self._iterations
 
-    def solve(self, board: Iterable[Iterable[int]]) -> MiniSudokuSolveResult:
+    def solve(self, board: Iterable[Iterable[int]], *, max_solutions: int = 1) -> MiniSudokuSolveResult:
+        max_solutions = max(1, int(max_solutions))
         working = [list(row) for row in board]
         if len(working) != self.size or any(len(row) != self.size for row in working):
             return MiniSudokuSolveResult(
@@ -32,6 +34,7 @@ class MiniSudokuSolver:
                 board=None,
                 iterations=0,
                 error=f"Expected a {self.size}x{self.size} board.",
+                solution_count=0,
             )
 
         digits = set(range(1, self.size + 1))
@@ -53,6 +56,7 @@ class MiniSudokuSolver:
                         board=None,
                         iterations=0,
                         error=f"Found invalid clue value {value} at ({row}, {col}).",
+                        solution_count=0,
                     )
 
                 box = self._box_index(row, col)
@@ -66,6 +70,7 @@ class MiniSudokuSolver:
                         board=None,
                         iterations=0,
                         error=f"Conflicting clue value {value} at ({row}, {col}).",
+                        solution_count=0,
                     )
 
                 rows_missing[row].remove(value)
@@ -73,10 +78,19 @@ class MiniSudokuSolver:
                 boxes_missing[box].remove(value)
 
         self._iterations = 0
+        solution_count = 0
+        first_solution: list[list[int]] | None = None
 
-        def backtrack() -> bool:
+        def backtrack() -> None:
+            nonlocal solution_count, first_solution
+            if solution_count >= max_solutions:
+                return
+
             if not empty_cells:
-                return True
+                solution_count += 1
+                if first_solution is None:
+                    first_solution = [list(row) for row in working]
+                return
 
             best_index = -1
             best_candidates: set[int] | None = None
@@ -84,7 +98,7 @@ class MiniSudokuSolver:
             for index, (row, col) in enumerate(empty_cells):
                 candidates = rows_missing[row] & cols_missing[col] & boxes_missing[self._box_index(row, col)]
                 if not candidates:
-                    return False
+                    return
                 if best_candidates is None or len(candidates) < len(best_candidates):
                     best_candidates = candidates
                     best_index = index
@@ -92,7 +106,7 @@ class MiniSudokuSolver:
                     break
 
             if best_candidates is None or best_index < 0:
-                return False
+                return
 
             row, col = empty_cells.pop(best_index)
             box = self._box_index(row, col)
@@ -105,24 +119,26 @@ class MiniSudokuSolver:
                 cols_missing[col].remove(value)
                 boxes_missing[box].remove(value)
 
-                if backtrack():
-                    return True
+                backtrack()
 
                 working[row][col] = 0
                 rows_missing[row].add(value)
                 cols_missing[col].add(value)
                 boxes_missing[box].add(value)
 
-            empty_cells.insert(best_index, (row, col))
-            return False
+                if solution_count >= max_solutions:
+                    break
 
-        solved = backtrack()
-        if solved:
+            empty_cells.insert(best_index, (row, col))
+
+        backtrack()
+        if first_solution is not None:
             return MiniSudokuSolveResult(
                 solved=True,
-                board=working,
+                board=first_solution,
                 iterations=self._iterations,
                 error=None,
+                solution_count=solution_count,
             )
 
         return MiniSudokuSolveResult(
@@ -130,6 +146,7 @@ class MiniSudokuSolver:
             board=None,
             iterations=self._iterations,
             error="No valid solution found.",
+            solution_count=0,
         )
 
     def _box_index(self, row: int, col: int) -> int:

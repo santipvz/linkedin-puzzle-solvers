@@ -29,13 +29,25 @@ def _is_conflicting_clue_error(error_message: str | None) -> bool:
     return error_message.startswith("Conflicting clue value")
 
 
+def _is_ambiguous_solution(result: Any) -> bool:
+    if not getattr(result, "solved", False):
+        return False
+
+    solution_count = int(getattr(result, "solution_count", 1) or 1)
+    return solution_count > 1
+
+
 def _recover_from_conflicting_clues(
     solver: Any,
     initial_board: list[list[int]],
     fixed_cells: list[dict[str, Any]],
 ) -> tuple[Any, list[list[int]], list[dict[str, Any]]]:
-    baseline_result = solver.solve(initial_board)
-    if baseline_result.solved or not _is_conflicting_clue_error(baseline_result.error):
+    baseline_result = solver.solve(initial_board, max_solutions=2)
+    if baseline_result.solved and not _is_ambiguous_solution(baseline_result):
+        return baseline_result, initial_board, []
+
+    should_attempt_recovery = _is_conflicting_clue_error(baseline_result.error) or _is_ambiguous_solution(baseline_result)
+    if not should_attempt_recovery:
         return baseline_result, initial_board, []
 
     ranked_cells = sorted(
@@ -50,38 +62,128 @@ def _recover_from_conflicting_clues(
         return baseline_result, initial_board, []
 
     suspects = ranked_cells[: min(8, len(ranked_cells))]
-    max_remove = min(3, len(suspects))
+    max_adjustments = min(3, len(suspects))
 
-    for remove_count in range(1, max_remove + 1):
-        for combo in itertools.combinations(suspects, remove_count):
-            candidate_board = _clone_board(initial_board)
-            removed_cells: list[dict[str, Any]] = []
+    best_result: Any | None = None
+    best_board: list[list[int]] | None = None
+    best_adjustments: list[dict[str, Any]] | None = None
+    best_score: tuple[float, ...] | None = None
+
+    for adjustment_count in range(1, max_adjustments + 1):
+        for combo in itertools.combinations(suspects, adjustment_count):
+            option_sets: list[list[dict[str, Any]]] = []
 
             for cell in combo:
-                row = int(cell["row"])
-                col = int(cell["col"])
-                value = int(cell["value"])
-                if row < 0 or col < 0 or row >= len(candidate_board) or col >= len(candidate_board[row]):
-                    continue
-                if int(candidate_board[row][col]) != value:
-                    continue
+                current_value = int(cell.get("value") or 0)
+                options: list[dict[str, Any]] = []
+                seen_values: set[int] = set()
 
-                candidate_board[row][col] = 0
-                removed_cells.append(
+                for candidate in cell.get("candidates", []):
+                    candidate_value = int(candidate.get("value") or 0)
+                    candidate_confidence = float(candidate.get("confidence") or 0.0)
+
+                    if candidate_value <= 0 or candidate_value > 6:
+                        continue
+                    if candidate_value == current_value:
+                        continue
+                    if candidate_value in seen_values:
+                        continue
+                    if candidate_confidence <= 0.02:
+                        continue
+
+                    seen_values.add(candidate_value)
+                    options.append(
+                        {
+                            "replacement_value": candidate_value,
+                            "replacement_confidence": candidate_confidence,
+                            "source": "ocr_candidate",
+                        }
+                    )
+
+                options.sort(key=lambda option: float(option["replacement_confidence"]), reverse=True)
+                options = options[:3]
+                options.append(
                     {
-                        "row": row,
-                        "col": col,
-                        "value": value,
-                        "confidence": float(cell.get("confidence") or 0.0),
+                        "replacement_value": 0,
+                        "replacement_confidence": 0.0,
+                        "source": "removed",
                     }
                 )
 
-            if not removed_cells:
-                continue
+                option_sets.append(options)
 
-            candidate_result = solver.solve(candidate_board)
-            if candidate_result.solved:
-                return candidate_result, candidate_board, removed_cells
+            for options_combo in itertools.product(*option_sets):
+                candidate_board = _clone_board(initial_board)
+                adjustments: list[dict[str, Any]] = []
+                valid_combo = True
+
+                for cell, option in zip(combo, options_combo):
+                    row = int(cell.get("row") or 0)
+                    col = int(cell.get("col") or 0)
+                    value = int(cell.get("value") or 0)
+
+                    if row < 0 or col < 0 or row >= len(candidate_board) or col >= len(candidate_board[row]):
+                        valid_combo = False
+                        break
+                    if int(candidate_board[row][col]) != value:
+                        valid_combo = False
+                        break
+
+                    replacement_value = int(option["replacement_value"])
+                    if replacement_value == value:
+                        continue
+
+                    candidate_board[row][col] = replacement_value
+                    adjustments.append(
+                        {
+                            "row": row,
+                            "col": col,
+                            "value": value,
+                            "confidence": float(cell.get("confidence") or 0.0),
+                            "replacement_value": replacement_value,
+                            "replacement_confidence": float(option["replacement_confidence"]),
+                            "source": str(option["source"]),
+                        }
+                    )
+
+                if not valid_combo or not adjustments:
+                    continue
+
+                candidate_result = solver.solve(candidate_board, max_solutions=2)
+                if not candidate_result.solved:
+                    continue
+
+                candidate_solution_count = int(getattr(candidate_result, "solution_count", 1) or 1)
+                unique_bonus = 1.0 if candidate_solution_count == 1 else 0.0
+                replacement_count = float(sum(1 for adjustment in adjustments if int(adjustment["replacement_value"]) != 0))
+                removal_count = float(sum(1 for adjustment in adjustments if int(adjustment["replacement_value"]) == 0))
+                confidence_sum = float(
+                    sum(
+                        float(adjustment["replacement_confidence"])
+                        for adjustment in adjustments
+                        if int(adjustment["replacement_value"]) != 0
+                    )
+                )
+
+                score = (
+                    unique_bonus,
+                    -float(len(adjustments)),
+                    replacement_count,
+                    -removal_count,
+                    confidence_sum,
+                )
+
+                if best_score is None or score > best_score:
+                    best_score = score
+                    best_result = candidate_result
+                    best_board = candidate_board
+                    best_adjustments = adjustments
+
+                if unique_bonus >= 1.0 and len(adjustments) == 1 and replacement_count == 1:
+                    return candidate_result, candidate_board, adjustments
+
+    if best_result is not None and best_board is not None and best_adjustments is not None:
+        return best_result, best_board, best_adjustments
 
     return baseline_result, initial_board, []
 
@@ -114,6 +216,9 @@ def solve(image_path: Path) -> dict[str, Any]:
         parsed["fixed_cells"],
     )
 
+    solution_count = int(getattr(solve_result, "solution_count", 1 if solve_result.solved else 0) or 0)
+    unique_solution = bool(solve_result.solved and solution_count == 1)
+
     fixed_cells_payload: list[dict[str, Any]] = []
     for cell in parsed["fixed_cells"]:
         fixed_cells_payload.append(
@@ -134,7 +239,7 @@ def solve(image_path: Path) -> dict[str, Any]:
         )
 
     moves: list[dict[str, int]] = []
-    if solve_result.solved and solve_result.board is not None:
+    if unique_solution and solve_result.board is not None:
         for row in range(len(solve_input_board)):
             for col in range(len(solve_input_board[row])):
                 if int(solve_input_board[row][col]) != 0:
@@ -147,20 +252,37 @@ def solve(image_path: Path) -> dict[str, Any]:
                     }
                 )
 
-    solution_grid = _normalize_board(solve_result.board)
+    solution_grid = _normalize_board(solve_result.board) if unique_solution else None
     ocr_stats = parsed.get("ocr") or {}
     overlay_cell_count = int(ocr_stats.get("overlay_cell_count") or 0)
-    error_message = None if solve_result.solved else solve_result.error
+    error_message = None if unique_solution else solve_result.error
 
-    if not solve_result.solved and overlay_cell_count >= 3:
+    if solve_result.solved and not unique_solution:
+        error_message = (
+            "Detected multiple valid solutions from recognized clues. "
+            "The screenshot likely missed one or more fixed numbers."
+        )
+
+    if not unique_solution and overlay_cell_count >= 3:
         error_message = (
             "Detected existing solve-overlay markers in the screenshot. "
             "Clear overlay and solve again."
         )
 
+    removed_cells = [
+        {
+            "row": int(cell["row"]),
+            "col": int(cell["col"]),
+            "value": int(cell["value"]),
+            "confidence": float(cell.get("confidence") or 0.0),
+        }
+        for cell in recovered_cells
+        if int(cell.get("replacement_value") or 0) == 0
+    ]
+
     response = {
         "puzzle": "sudoku",
-        "solved": bool(solve_result.solved),
+        "solved": unique_solution,
         "board_size": 6,
         "moves": moves,
         "solution_grid": solution_grid,
@@ -176,8 +298,11 @@ def solve(image_path: Path) -> dict[str, Any]:
             "uncertain_count": int(ocr_stats.get("uncertain_count") or 0),
             "overlay_cell_count": overlay_cell_count,
             "board_bbox": parsed.get("board_bbox"),
+            "solution_count": solution_count,
+            "unique_solution": unique_solution,
             "conflict_recovery_applied": bool(recovered_cells),
-            "removed_conflicting_cells": recovered_cells,
+            "removed_conflicting_cells": removed_cells,
+            "adjusted_conflicting_cells": recovered_cells,
         },
     }
 

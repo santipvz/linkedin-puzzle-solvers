@@ -110,7 +110,7 @@ class _MiniSudokuOcr:
         return features, labels
 
     def _dataset_cache_path(self) -> Path:
-        return Path(tempfile.gettempdir()) / "linkedin_puzzle_solvers_sudoku_ocr_v2.npz"
+        return Path(tempfile.gettempdir()) / "linkedin_puzzle_solvers_sudoku_ocr_v3.npz"
 
     def _candidate_font_paths(self) -> list[str]:
         patterns = [
@@ -657,6 +657,70 @@ class MiniSudokuImageParser:
 
         return score
 
+    def _predict_cell_digit(
+        self,
+        cell_gray: np.ndarray,
+        cell_saturation: np.ndarray,
+    ) -> tuple[int, float, list[tuple[int, float]]] | None:
+        variants: list[np.ndarray] = [cell_gray]
+
+        if cell_saturation.size:
+            saturation_boosted = np.clip(
+                cell_gray.astype(np.float32) - (cell_saturation.astype(np.float32) * 0.58),
+                0,
+                255,
+            ).astype(np.uint8)
+            variants.append(saturation_boosted)
+            variants.append(cv2.convertScaleAbs(saturation_boosted, alpha=1.2, beta=-10))
+
+        variants.append(cv2.convertScaleAbs(cell_gray, alpha=1.18, beta=-14))
+
+        primary_prediction: tuple[int, float, list[tuple[int, float]], float] | None = None
+        best_prediction: tuple[int, float, list[tuple[int, float]], float] | None = None
+
+        for index, variant in enumerate(variants):
+            normalized_digit = _normalize_digit_mask(variant)
+            if normalized_digit is None:
+                continue
+
+            value, confidence, ranked = self._ocr.predict(normalized_digit)
+            margin = float(confidence - (ranked[1][1] if len(ranked) > 1 else 0.0))
+            candidate = (int(value), float(confidence), ranked, margin)
+
+            if index == 0:
+                primary_prediction = candidate
+
+            if best_prediction is None:
+                best_prediction = candidate
+                continue
+
+            best_confidence = float(best_prediction[1])
+            best_margin = float(best_prediction[3])
+
+            if confidence > best_confidence + 1e-6:
+                best_prediction = candidate
+                continue
+
+            if abs(confidence - best_confidence) <= 1e-6 and margin > best_margin:
+                best_prediction = candidate
+
+        if best_prediction is None:
+            return None
+
+        if primary_prediction is None:
+            return best_prediction[0], best_prediction[1], best_prediction[2]
+
+        primary_confidence = float(primary_prediction[1])
+        best_confidence = float(best_prediction[1])
+
+        if primary_confidence >= OCR_STRONG_CONFIDENCE:
+            return primary_prediction[0], primary_prediction[1], primary_prediction[2]
+
+        if best_confidence < primary_confidence + 0.08:
+            return primary_prediction[0], primary_prediction[1], primary_prediction[2]
+
+        return best_prediction[0], best_prediction[1], best_prediction[2]
+
     def _parse_cells(
         self,
         board_crop: np.ndarray,
@@ -695,11 +759,12 @@ class MiniSudokuImageParser:
                     overlay_cell_count += 1
 
                 cell = gray[y1:y2, x1:x2]
-                normalized_digit = _normalize_digit_mask(cell)
-                if normalized_digit is None:
+                cell_saturation = hsv[y1:y2, x1:x2, 1]
+                prediction = self._predict_cell_digit(cell, cell_saturation)
+                if prediction is None:
                     continue
 
-                value, confidence, ranked = self._ocr.predict(normalized_digit)
+                value, confidence, ranked = prediction
                 if confidence < OCR_MIN_CONFIDENCE:
                     continue
 
