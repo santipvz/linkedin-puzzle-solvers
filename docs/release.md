@@ -10,13 +10,13 @@ This project has two deliverables:
 From repo root:
 
 ```bash
-python -m pip install -r services/solver_api/requirements.txt
-python -m compileall services/solver_api/app
-python -m compileall games/queen_solver/src
-python -m compileall games/tango_solver/src
-python -m compileall games/sudoku_solver/src
-python -m compileall games/zip_solver/src
-python scripts/smoke_check.py
+python3 -m pip install -r services/solver_api/requirements.txt
+python3 -m compileall services/solver_api/app
+python3 -m compileall games/queen_solver/src
+python3 -m compileall games/tango_solver/src
+python3 -m compileall games/sudoku_solver/src
+python3 -m compileall games/zip_solver/src
+python3 scripts/smoke_check.py
 node --check extension/background.js
 node --check extension/content.js
 node --check extension/popup.js

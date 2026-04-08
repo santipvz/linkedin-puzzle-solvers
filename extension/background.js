@@ -453,22 +453,43 @@ function tabsSendMessage(tabId, message, options = {}) {
 
 function executeContentScript(tabId, frameId = 0) {
   return new Promise((resolve, reject) => {
-    const target = Number.isInteger(frameId) ? { tabId, frameIds: [frameId] } : { tabId };
+    if (chrome.scripting && typeof chrome.scripting.executeScript === "function") {
+      const target = Number.isInteger(frameId) ? { tabId, frameIds: [frameId] } : { tabId };
 
-    chrome.scripting.executeScript(
-      {
-        target,
-        files: ["content.js"],
-      },
-      () => {
+      chrome.scripting.executeScript(
+        {
+          target,
+          files: ["content.js"],
+        },
+        () => {
+          const error = chrome.runtime.lastError;
+          if (error) {
+            reject(new Error(error.message));
+            return;
+          }
+          resolve();
+        }
+      );
+      return;
+    }
+
+    if (chrome.tabs && typeof chrome.tabs.executeScript === "function") {
+      const details = Number.isInteger(frameId)
+        ? { file: "content.js", frameId, runAt: "document_idle" }
+        : { file: "content.js", runAt: "document_idle" };
+
+      chrome.tabs.executeScript(tabId, details, () => {
         const error = chrome.runtime.lastError;
         if (error) {
           reject(new Error(error.message));
           return;
         }
         resolve();
-      }
-    );
+      });
+      return;
+    }
+
+    reject(new Error("No supported script injection API available in this browser."));
   });
 }
 

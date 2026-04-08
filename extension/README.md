@@ -1,74 +1,101 @@
-# Browser Extension (Scaffold)
+# Browser Extension
 
-Chrome extension that connects to the local solver API.
+Browser extension for solving LinkedIn daily puzzles through the local solver API.
 
-## Features in this scaffold
+## Features
 
-- Manual board region selection on the active tab
-- Auto board region detection heuristic (top page and iframe-aware)
-- Board screenshot capture and crop via extension background worker
-- Solve request to local API (`/solve/queens`, `/solve/tango`, `/solve/sudoku`, or `/solve/zip`)
-- Visual overlay for all supported puzzle types
-- Auto-apply support for Queens (2 clicks per cell)
-- Auto-apply support for Tango (1 left click for sun, 2 left clicks for moon)
-- Auto-apply support for Mini Sudoku (click cell + keyboard digit)
-- Auto-apply support for Zip (click start + arrow keys)
-- One-click `Solve + Apply` action in popup
-- Apply settings: auto-close, click delays, Tango input mode
-- In-page quick widget that auto-detects game type and runs solve+apply in one click
+- Manual board selection on the active tab.
+- Auto board detection (top page + iframe-aware).
+- Solve via API endpoints for Queens, Tango, Mini Sudoku, and Zip.
+- Overlay preview for detected moves.
+- Auto-apply support:
+  - Queens: click-based input.
+  - Tango: configurable click strategy.
+  - Mini Sudoku: strict cell-target + keyboard input.
+  - Zip: start click + arrow keys.
+- Popup actions: `Select Board`, `Auto Detect`, `Solve`, `Apply`, `Solve + Apply`.
+- In-page quick solve widget (`Solve <Game>`).
 
+## Step 1: Start the Solver API (Choose One)
 
-## Load in Chrome
+The extension needs a running API backend.
 
-1. Open `chrome://extensions`
-2. Enable `Developer mode`
-3. Click `Load unpacked`
-4. Select this folder: `extension/`
-5. Enable `Allow in incognito` if you want to test in incognito mode
+### Option A: Uvicorn (port 8000)
 
-## Load in Firefox
+```bash
+# from repo root
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r services/solver_api/requirements.txt
 
-For local development/testing:
+cd services/solver_api
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
 
-1. Open `about:debugging#/runtime/this-firefox`
-2. Click `Load Temporary Add-on`
-3. Select `extension/manifest.json`
-4. Open one of the LinkedIn puzzle pages and use the extension popup
+API URL to configure in extension:
+
+`http://127.0.0.1:8000`
+
+### Option B: Docker Compose (port 18000)
+
+```bash
+# from repo root
+cd deploy/local
+cp .env.example .env
+mkdir -p ../../datasets
+docker compose up -d --build
+```
+
+API URL to configure in extension:
+
+`http://127.0.0.1:18000`
+
+## Step 2: Load Extension in Browser
+
+### Chrome / Chromium
+
+1. Open `chrome://extensions`.
+2. Enable `Developer mode`.
+3. Click `Load unpacked`.
+4. Select the `extension/` folder.
+
+### Firefox (temporary install)
+
+1. Open `about:debugging#/runtime/this-firefox`.
+2. Click `Load Temporary Add-on`.
+3. Select `extension/manifest.json`.
 
 Notes:
 
-- Keep the local API running at `http://127.0.0.1:8000`
-- Temporary add-ons are removed when Firefox restarts
-- For persistent install/signing, package `extension/` and submit through Mozilla Add-on signing
+- Temporary Firefox add-ons are removed on browser restart.
+- For persistent Firefox distribution, package/sign the extension separately.
 
-## Usage
+## Step 3: Configure and Use
 
-1. Start the local API at `http://127.0.0.1:8000`
-2. Open one of the puzzle pages in your browser:
+1. Open one of these pages:
    - `https://www.linkedin.com/games/queens/`
    - `https://www.linkedin.com/games/tango/`
    - `https://www.linkedin.com/games/mini-sudoku/`
    - `https://www.linkedin.com/games/zip/`
-3. Click extension icon
-4. Choose puzzle type
-5. Use `Select Board` (or `Auto Detect`)
-6. Click `Solve`
-7. Click `Apply` or `Solve + Apply`
+2. Click the extension icon.
+3. Set the API URL (`8000` for Uvicorn or `18000` for Docker).
+4. Select puzzle type (or let quick widget auto-detect).
+5. Use either flow:
+   - Popup: `Select Board` / `Auto Detect` -> `Solve` -> `Apply`.
+   - Popup shortcut: `Solve + Apply`.
+   - In-page widget: click `Solve <Game>`.
 
-`Solve` shows overlay preview. `Solve + Apply` skips preview markers and directly applies moves.
+## Troubleshooting
 
-For Docker deployment on your PC, use `http://127.0.0.1:18000` and start from `deploy/local`.
+- If solve fails, check API health:
 
-## Faster flow (in-page)
+```bash
+curl http://127.0.0.1:8000/health
+# or Docker mode:
+curl http://127.0.0.1:18000/health
+```
 
-On LinkedIn Queens/Tango/Mini Sudoku/Zip pages, a small `Puzzle Quick Solve` widget appears on the page.
-Click `Solve <Game>` and the extension auto-detects the game and board, solves, and applies.
-
-After `Apply`, overlays are cleared. Popup auto-close can be toggled in settings.
-
-Tango apply strategy uses solver encoding `0 = moon`, `1 = sun`.
-
-## Notes for LinkedIn pages
-
-- The `/games/*` pages host the game inside an iframe; this extension handles frame-aware overlay and apply.
-- If auto-detection misses the board, use manual `Select Board` once and keep solving from there.
+- If quick widget does not appear, refresh the LinkedIn game page.
+- If board detection misses once, run `Select Board` manually and reuse it.
+- LinkedIn games run in an iframe; this extension includes frame-aware mapping for detection, overlay, and apply.
+- If Firefox shows `background.service_worker is currently disabled. Add background.scripts.`, remove and reload the temporary add-on from `extension/manifest.json` after pulling latest changes.
