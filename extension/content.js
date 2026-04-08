@@ -112,12 +112,14 @@ async function onQuickSolveClick() {
     quickSolveButton.disabled = true;
   }
   updateQuickSolveButtonText();
+  const previewOnly = false;
   setQuickSolveStatus("Solving and applying...");
 
   try {
     const response = await sendRuntimeMessage({
       type: "quickSolveFromPage",
       puzzleType,
+      previewOnly,
     });
 
     if (!response || !response.ok) {
@@ -126,6 +128,13 @@ async function onQuickSolveClick() {
 
     if (!response.solved) {
       setQuickSolveStatus(response.error || "No solution found.", true);
+      return;
+    }
+
+    if (response.previewed) {
+      const moves = Array.isArray(response.result?.moves) ? response.result.moves.length : 0;
+      const strategyText = response.strategy ? ` (${response.strategy})` : "";
+      setQuickSolveStatus(`Preview ready: ${moves} moves marked${strategyText}. Take a screenshot.`);
       return;
     }
 
@@ -929,16 +938,196 @@ function rightClickViewportPoint(x, y) {
   return clickViewportPoint(x, y, 2);
 }
 
+function isPointInsideSelection(x, y, selection, inset = 0) {
+  const normalized = normalizeSelection(selection);
+  if (!normalized) {
+    return false;
+  }
+
+  return (
+    x >= normalized.x + inset &&
+    x <= normalized.x + normalized.width - inset &&
+    y >= normalized.y + inset &&
+    y <= normalized.y + normalized.height - inset
+  );
+}
+
+function getElementAtViewportPoint(x, y) {
+  const safeX = Math.max(0, Math.min(window.innerWidth - 1, Number(x)));
+  const safeY = Math.max(0, Math.min(window.innerHeight - 1, Number(y)));
+
+  if (!Number.isFinite(safeX) || !Number.isFinite(safeY)) {
+    return null;
+  }
+
+  const element = document.elementFromPoint(safeX, safeY);
+  if (!element || element instanceof HTMLIFrameElement) {
+    return null;
+  }
+
+  return {
+    x: safeX,
+    y: safeY,
+    element,
+  };
+}
+
+function isLikelySudokuCellElement(element, selection, cellWidth, cellHeight) {
+  if (!(element instanceof Element)) {
+    return false;
+  }
+
+  const rect = element.getBoundingClientRect();
+  if (!rect || rect.width < 6 || rect.height < 6) {
+    return false;
+  }
+
+  const centerX = rect.left + rect.width / 2;
+  const centerY = rect.top + rect.height / 2;
+  if (!isPointInsideSelection(centerX, centerY, selection, 0)) {
+    return false;
+  }
+
+  const minWidth = Math.max(6, cellWidth * 0.22);
+  const minHeight = Math.max(6, cellHeight * 0.22);
+  const maxWidth = Math.max(cellWidth * 2.4, 18);
+  const maxHeight = Math.max(cellHeight * 2.4, 18);
+
+  if (rect.width < minWidth || rect.height < minHeight) {
+    return false;
+  }
+
+  if (rect.width > maxWidth || rect.height > maxHeight) {
+    return false;
+  }
+
+  return true;
+}
+
+function findSudokuCellElementAtPoint(x, y, selection, cellWidth, cellHeight) {
+  const point = getElementAtViewportPoint(x, y);
+  if (!point) {
+    return null;
+  }
+
+  let current = point.element;
+  for (let depth = 0; current && depth < 8; depth += 1) {
+    if (isLikelySudokuCellElement(current, selection, cellWidth, cellHeight)) {
+      return current;
+    }
+    current = current.parentElement;
+  }
+
+  return null;
+}
+
+function inferSudokuGridPositionFromCell(cellElement, selection, cellWidth, cellHeight, boardSize) {
+  if (!(cellElement instanceof Element)) {
+    return null;
+  }
+
+  const rect = cellElement.getBoundingClientRect();
+  if (!rect) {
+    return null;
+  }
+
+  const centerX = rect.left + rect.width / 2;
+  const centerY = rect.top + rect.height / 2;
+  if (!isPointInsideSelection(centerX, centerY, selection, 0)) {
+    return null;
+  }
+
+  const row = Math.floor((centerY - selection.y) / cellHeight);
+  const col = Math.floor((centerX - selection.x) / cellWidth);
+
+  if (!Number.isFinite(row) || !Number.isFinite(col)) {
+    return null;
+  }
+
+  if (row < 0 || row >= boardSize || col < 0 || col >= boardSize) {
+    return null;
+  }
+
+  return { row, col };
+}
+
+function buildSudokuPointCandidates(baseX, baseY, cellWidth, cellHeight, selection) {
+  const factors = [
+    [0, 0],
+    [0.18, 0],
+    [-0.18, 0],
+    [0, 0.18],
+    [0, -0.18],
+    [0.14, 0.14],
+    [0.14, -0.14],
+    [-0.14, 0.14],
+    [-0.14, -0.14],
+  ];
+
+  const points = [];
+  const seen = new Set();
+
+  for (const [fx, fy] of factors) {
+    const x = baseX + fx * cellWidth;
+    const y = baseY + fy * cellHeight;
+    if (!isPointInsideSelection(x, y, selection, 1)) {
+      continue;
+    }
+
+    const key = `${Math.round(x)}:${Math.round(y)}`;
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    points.push({ x, y });
+  }
+
+  if (!points.length && isPointInsideSelection(baseX, baseY, selection, 0)) {
+    points.push({ x: baseX, y: baseY });
+  }
+
+  return points;
+}
+
+function findKeyboardTarget(element) {
+  let current = element instanceof Element ? element : null;
+
+  for (let depth = 0; current && depth < 8; depth += 1) {
+    if (typeof current.dispatchEvent === "function") {
+      return current;
+    }
+    current = current.parentElement;
+  }
+
+  return null;
+}
+
+function focusKeyboardTarget(target) {
+  if (!(target instanceof HTMLElement) || typeof target.focus !== "function") {
+    return;
+  }
+
+  try {
+    target.focus({ preventScroll: true });
+  } catch (error) {
+    target.focus();
+  }
+}
+
 function dispatchKeyboardKey(key, code, keyCode, options = {}) {
   if (!key || !code || !Number.isFinite(keyCode)) {
     return false;
   }
 
   const includeKeypress = options.includeKeypress !== false;
+  const preferredTarget = options.target;
   const activeElement = document.activeElement;
 
   let target = null;
-  if (activeElement && typeof activeElement.dispatchEvent === "function") {
+  if (preferredTarget && typeof preferredTarget.dispatchEvent === "function") {
+    target = preferredTarget;
+  } else if (activeElement && typeof activeElement.dispatchEvent === "function") {
     target = activeElement;
   } else if (document.body && typeof document.body.dispatchEvent === "function") {
     target = document.body;
@@ -952,6 +1141,10 @@ function dispatchKeyboardKey(key, code, keyCode, options = {}) {
 
   if (!target) {
     return false;
+  }
+
+  if (options.focusTarget !== false) {
+    focusKeyboardTarget(target);
   }
 
   const eventTypes = includeKeypress ? ["keydown", "keypress", "keyup"] : ["keydown", "keyup"];
@@ -973,11 +1166,11 @@ function dispatchKeyboardKey(key, code, keyCode, options = {}) {
   return true;
 }
 
-function dispatchDigitKey(digitValue) {
+function dispatchDigitKey(digitValue, target = null) {
   const key = String(digitValue);
   const keyCode = key.charCodeAt(0);
   const code = `Digit${key}`;
-  return dispatchKeyboardKey(key, code, keyCode, { includeKeypress: true });
+  return dispatchKeyboardKey(key, code, keyCode, { includeKeypress: true, target });
 }
 
 function dispatchArrowKey(direction) {
@@ -1290,6 +1483,29 @@ async function applySudokuSolution(result, selection, settings) {
     return { ok: false, error: "No Sudoku solution moves are available." };
   }
 
+  const actionableMoves = moves
+    .map((move) => ({
+      row: Number(move?.row),
+      col: Number(move?.col),
+      value: Number(move?.value),
+    }))
+    .filter(
+      (move) =>
+        Number.isInteger(move.row) &&
+        Number.isInteger(move.col) &&
+        Number.isInteger(move.value) &&
+        move.row >= 0 &&
+        move.row < boardSize &&
+        move.col >= 0 &&
+        move.col < boardSize &&
+        move.value >= 1 &&
+        move.value <= boardSize
+    );
+
+  if (!actionableMoves.length) {
+    return { ok: false, error: "No valid Sudoku solution moves are available." };
+  }
+
   const selectionCandidates = buildApplySelectionCandidates("sudoku", selection);
   if (!selectionCandidates.length) {
     return { ok: false, error: "Board selection is required before applying moves." };
@@ -1299,6 +1515,7 @@ async function applySudokuSolution(result, selection, settings) {
     appliedCount: 0,
     clickCount: 0,
     keyCount: 0,
+    alignedCount: 0,
   };
 
   for (let candidateIndex = 0; candidateIndex < selectionCandidates.length; candidateIndex += 1) {
@@ -1310,65 +1527,94 @@ async function applySudokuSolution(result, selection, settings) {
     let appliedCount = 0;
     let clickCount = 0;
     let keyCount = 0;
+    let alignedCount = 0;
 
-    for (const move of moves) {
-      const row = Number(move.row);
-      const col = Number(move.col);
-      const value = Number(move.value);
+    for (const move of actionableMoves) {
+      const row = move.row;
+      const col = move.col;
+      const value = move.value;
 
-      if (!Number.isFinite(row) || !Number.isFinite(col) || !Number.isFinite(value)) {
-        continue;
-      }
-      if (value < 1 || value > boardSize) {
-        continue;
-      }
+      const baseX = candidate.x + (col + 0.5) * cellWidth;
+      const baseY = candidate.y + (row + 0.5) * cellHeight;
+      const pointCandidates = buildSudokuPointCandidates(baseX, baseY, cellWidth, cellHeight, candidate);
 
-      const x = candidate.x + (col + 0.5) * cellWidth;
-      const y = candidate.y + (row + 0.5) * cellHeight;
+      let moveApplied = false;
 
-      const clicked = leftClickViewportPoint(x, y);
-      if (!clicked) {
-        continue;
-      }
+      for (const point of pointCandidates) {
+        const cellElement = findSudokuCellElementAtPoint(point.x, point.y, candidate, cellWidth, cellHeight);
+        if (!cellElement) {
+          continue;
+        }
 
-      clickCount += 1;
-      await sleep(applySettings.interClickDelayMs);
+        const inferredPosition = inferSudokuGridPositionFromCell(cellElement, candidate, cellWidth, cellHeight, boardSize);
+        if (!inferredPosition || inferredPosition.row !== row || inferredPosition.col !== col) {
+          continue;
+        }
 
-      if (dispatchDigitKey(value)) {
-        keyCount += 1;
-        appliedCount += 1;
+        const clicked = leftClickViewportPoint(point.x, point.y);
+        if (!clicked) {
+          continue;
+        }
+
+        alignedCount += 1;
+        clickCount += 1;
+        await sleep(applySettings.interClickDelayMs);
+
+        const livePointTarget = getElementAtViewportPoint(point.x, point.y);
+        const keyboardTarget =
+          findKeyboardTarget(cellElement) || findKeyboardTarget(livePointTarget && livePointTarget.element) || null;
+
+        focusKeyboardTarget(cellElement);
+        if (dispatchDigitKey(value, keyboardTarget)) {
+          keyCount += 1;
+          appliedCount += 1;
+          moveApplied = true;
+          break;
+        }
       }
 
       await sleep(applySettings.interMoveDelayMs);
+
+      if (!moveApplied) {
+        continue;
+      }
     }
 
-    if (appliedCount > bestAttempt.appliedCount || (appliedCount === bestAttempt.appliedCount && clickCount > bestAttempt.clickCount)) {
+    if (
+      appliedCount > bestAttempt.appliedCount ||
+      (appliedCount === bestAttempt.appliedCount && alignedCount > bestAttempt.alignedCount) ||
+      (appliedCount === bestAttempt.appliedCount && alignedCount === bestAttempt.alignedCount && clickCount > bestAttempt.clickCount)
+    ) {
       bestAttempt = {
         appliedCount,
         clickCount,
         keyCount,
+        alignedCount,
       };
     }
 
-    if (appliedCount > 0) {
+    if (appliedCount === actionableMoves.length && alignedCount === actionableMoves.length) {
       return {
         ok: true,
         appliedCount,
         clickCount,
         keyCount,
         strategy:
-          candidateEntry.source === "auto-detect" ? "cell-then-keyboard:auto-detect" : "cell-then-keyboard",
+          candidateEntry.source === "auto-detect"
+            ? "strict-cell-then-keyboard:auto-detect"
+            : "strict-cell-then-keyboard",
       };
     }
   }
 
   return {
     ok: false,
-    error: `Could not dispatch Sudoku input to board cells. Tried ${selectionCandidates.length} region(s).`,
+    error: `Could not confidently apply Sudoku moves. Tried ${selectionCandidates.length} region(s).`,
     appliedCount: bestAttempt.appliedCount,
     clickCount: bestAttempt.clickCount,
     keyCount: bestAttempt.keyCount,
-    strategy: "cell-then-keyboard",
+    alignedCount: bestAttempt.alignedCount,
+    strategy: "strict-cell-then-keyboard",
   };
 }
 

@@ -186,6 +186,42 @@ function normalizeRect(rect) {
   return { left, top, width, height };
 }
 
+function normalizeViewport(viewport) {
+  if (!viewport || typeof viewport !== "object") {
+    return null;
+  }
+
+  const width = Number(viewport.width);
+  const height = Number(viewport.height);
+
+  if (!Number.isFinite(width) || !Number.isFinite(height)) {
+    return null;
+  }
+
+  if (width < 10 || height < 10) {
+    return null;
+  }
+
+  return { width, height };
+}
+
+function getFrameScale(iframeRect, frameViewport) {
+  const rect = normalizeRect(iframeRect);
+  const viewport = normalizeViewport(frameViewport);
+  if (!rect || !viewport) {
+    return { scaleX: 1, scaleY: 1 };
+  }
+
+  const scaleX = rect.width / viewport.width;
+  const scaleY = rect.height / viewport.height;
+
+  if (!Number.isFinite(scaleX) || !Number.isFinite(scaleY) || scaleX <= 0 || scaleY <= 0) {
+    return { scaleX: 1, scaleY: 1 };
+  }
+
+  return { scaleX, scaleY };
+}
+
 function normalizeSelection(selection) {
   if (!selection || typeof selection !== "object") {
     return null;
@@ -214,36 +250,43 @@ function normalizeSelection(selection) {
   };
 }
 
-function translateFrameSelectionToTab(frameSelection, iframeRect) {
+function translateFrameSelectionToTab(frameSelection, iframeRect, frameViewport) {
   const selection = normalizeSelection(frameSelection);
   const rect = normalizeRect(iframeRect);
   if (!selection || !rect) {
     return null;
   }
 
+  const { scaleX, scaleY } = getFrameScale(rect, frameViewport);
+
   return normalizeSelection({
-    x: rect.left + selection.x,
-    y: rect.top + selection.y,
-    width: selection.width,
-    height: selection.height,
+    x: rect.left + selection.x * scaleX,
+    y: rect.top + selection.y * scaleY,
+    width: selection.width * scaleX,
+    height: selection.height * scaleY,
     devicePixelRatio: selection.devicePixelRatio,
   });
 }
 
-function translateTabSelectionToFrame(tabSelection, iframeRect) {
+function translateTabSelectionToFrame(tabSelection, iframeRect, frameViewport) {
   const selection = normalizeSelection(tabSelection);
   const rect = normalizeRect(iframeRect);
   if (!selection || !rect) {
     return null;
   }
 
-  const relativeX = selection.x - rect.left;
-  const relativeY = selection.y - rect.top;
+  const viewport = normalizeViewport(frameViewport);
+  const { scaleX, scaleY } = getFrameScale(rect, viewport);
+
+  const relativeX = (selection.x - rect.left) / scaleX;
+  const relativeY = (selection.y - rect.top) / scaleY;
 
   const clampedX = Math.max(0, relativeX);
   const clampedY = Math.max(0, relativeY);
-  const maxWidth = rect.width - clampedX;
-  const maxHeight = rect.height - clampedY;
+  const frameWidth = viewport ? viewport.width : rect.width / scaleX;
+  const frameHeight = viewport ? viewport.height : rect.height / scaleY;
+  const maxWidth = frameWidth - clampedX;
+  const maxHeight = frameHeight - clampedY;
 
   if (maxWidth < 10 || maxHeight < 10) {
     return null;
@@ -252,8 +295,8 @@ function translateTabSelectionToFrame(tabSelection, iframeRect) {
   return normalizeSelection({
     x: clampedX,
     y: clampedY,
-    width: Math.min(selection.width, maxWidth),
-    height: Math.min(selection.height, maxHeight),
+    width: Math.min(selection.width / scaleX, maxWidth),
+    height: Math.min(selection.height / scaleY, maxHeight),
     devicePixelRatio: selection.devicePixelRatio,
   });
 }
@@ -282,6 +325,7 @@ function findLinkedInGameFrame(frames, puzzleType) {
 async function getGameFrameContext(tabId, puzzleType) {
   let gameFrameId = 0;
   let iframeRect = null;
+  let frameViewport = null;
 
   try {
     const frames = await webNavigationGetAllFrames(tabId);
@@ -303,7 +347,14 @@ async function getGameFrameContext(tabId, puzzleType) {
     iframeRect = normalizeRect(iframeResponse.rect);
   }
 
-  return { gameFrameId, iframeRect };
+  if (gameFrameId !== 0) {
+    const frameViewportResponse = await safeSendTabMessage(tabId, { type: "getViewportMetrics" }, { frameId: gameFrameId });
+    if (frameViewportResponse && frameViewportResponse.ok) {
+      frameViewport = normalizeViewport(frameViewportResponse.viewport || frameViewportResponse.selection);
+    }
+  }
+
+  return { gameFrameId, iframeRect, frameViewport };
 }
 
 function resolveInteractionTarget(topSelection, frameContext) {
@@ -318,7 +369,7 @@ function resolveInteractionTarget(topSelection, frameContext) {
     frameContext.gameFrameId !== 0 &&
     frameContext.iframeRect
   ) {
-    const frameSelection = translateTabSelectionToFrame(selection, frameContext.iframeRect);
+    const frameSelection = translateTabSelectionToFrame(selection, frameContext.iframeRect, frameContext.frameViewport);
     if (frameSelection) {
       return { frameId: frameContext.gameFrameId, selection: frameSelection };
     }
@@ -405,7 +456,7 @@ async function buildApplyTargets(tabId, puzzleType, topSelection, frameContext, 
 
   const mappedFrameSelection =
     frameContext && frameContext.iframeRect
-      ? translateTabSelectionToFrame(normalizedTopSelection, frameContext.iframeRect)
+      ? translateTabSelectionToFrame(normalizedTopSelection, frameContext.iframeRect, frameContext.frameViewport)
       : null;
 
   if (mappedFrameSelection) {
@@ -709,7 +760,11 @@ async function ensureBoardSelection(tabId, puzzleType, frameContext) {
     );
 
     if (frameDetected && frameDetected.selection) {
-      const topSelection = translateFrameSelectionToTab(frameDetected.selection, frameContext.iframeRect);
+      const topSelection = translateFrameSelectionToTab(
+        frameDetected.selection,
+        frameContext.iframeRect,
+        frameContext.frameViewport
+      );
       const normalizedTopSelection = maybeNormalizeSelectionForPuzzle(puzzleType, topSelection, frameContext);
       if (normalizedTopSelection) {
         const savedSelection = await setTopBoardSelection(tabId, normalizedTopSelection);
@@ -808,7 +863,11 @@ async function handleAutoDetect() {
     );
 
     if (frameResponse && frameResponse.ok && frameResponse.selection) {
-      const topSelection = translateFrameSelectionToTab(frameResponse.selection, frameContext.iframeRect);
+      const topSelection = translateFrameSelectionToTab(
+        frameResponse.selection,
+        frameContext.iframeRect,
+        frameContext.frameViewport
+      );
       const normalizedTopSelection = maybeNormalizeSelectionForPuzzle(puzzleType, topSelection, frameContext);
       const saved = await setTopBoardSelection(tab.id, normalizedTopSelection);
       if (saved) {

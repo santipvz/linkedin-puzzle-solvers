@@ -103,35 +103,78 @@ function normalizeRect(rect) {
   return { left, top, width, height };
 }
 
-function translateFrameSelectionToTab(frameSelection, iframeRect) {
+function normalizeViewport(viewport) {
+  if (!viewport || typeof viewport !== "object") {
+    return null;
+  }
+
+  const width = Number(viewport.width);
+  const height = Number(viewport.height);
+
+  if (!Number.isFinite(width) || !Number.isFinite(height)) {
+    return null;
+  }
+
+  if (width < 10 || height < 10) {
+    return null;
+  }
+
+  return { width, height };
+}
+
+function getFrameScale(iframeRect, frameViewport) {
+  const rect = normalizeRect(iframeRect);
+  const viewport = normalizeViewport(frameViewport);
+  if (!rect || !viewport) {
+    return { scaleX: 1, scaleY: 1 };
+  }
+
+  const scaleX = rect.width / viewport.width;
+  const scaleY = rect.height / viewport.height;
+
+  if (!Number.isFinite(scaleX) || !Number.isFinite(scaleY) || scaleX <= 0 || scaleY <= 0) {
+    return { scaleX: 1, scaleY: 1 };
+  }
+
+  return { scaleX, scaleY };
+}
+
+function translateFrameSelectionToTab(frameSelection, iframeRect, frameViewport) {
   const selection = normalizeSelection(frameSelection);
   const rect = normalizeRect(iframeRect);
   if (!selection || !rect) {
     return null;
   }
 
+  const { scaleX, scaleY } = getFrameScale(rect, frameViewport);
+
   return normalizeSelection({
-    x: rect.left + selection.x,
-    y: rect.top + selection.y,
-    width: selection.width,
-    height: selection.height,
+    x: rect.left + selection.x * scaleX,
+    y: rect.top + selection.y * scaleY,
+    width: selection.width * scaleX,
+    height: selection.height * scaleY,
     devicePixelRatio: selection.devicePixelRatio,
   });
 }
 
-function translateTabSelectionToFrame(tabSelection, iframeRect) {
+function translateTabSelectionToFrame(tabSelection, iframeRect, frameViewport) {
   const selection = normalizeSelection(tabSelection);
   const rect = normalizeRect(iframeRect);
   if (!selection || !rect) {
     return null;
   }
 
-  const relativeX = selection.x - rect.left;
-  const relativeY = selection.y - rect.top;
+  const viewport = normalizeViewport(frameViewport);
+  const { scaleX, scaleY } = getFrameScale(rect, viewport);
+
+  const relativeX = (selection.x - rect.left) / scaleX;
+  const relativeY = (selection.y - rect.top) / scaleY;
   const clampedX = Math.max(0, relativeX);
   const clampedY = Math.max(0, relativeY);
-  const maxWidth = rect.width - clampedX;
-  const maxHeight = rect.height - clampedY;
+  const frameWidth = viewport ? viewport.width : rect.width / scaleX;
+  const frameHeight = viewport ? viewport.height : rect.height / scaleY;
+  const maxWidth = frameWidth - clampedX;
+  const maxHeight = frameHeight - clampedY;
 
   if (maxWidth < 10 || maxHeight < 10) {
     return null;
@@ -140,8 +183,8 @@ function translateTabSelectionToFrame(tabSelection, iframeRect) {
   return normalizeSelection({
     x: clampedX,
     y: clampedY,
-    width: Math.min(selection.width, maxWidth),
-    height: Math.min(selection.height, maxHeight),
+    width: Math.min(selection.width / scaleX, maxWidth),
+    height: Math.min(selection.height / scaleY, maxHeight),
     devicePixelRatio: selection.devicePixelRatio,
   });
 }
@@ -687,6 +730,7 @@ function findLinkedInGameFrameIds(frames, puzzleType) {
 async function getGameFrameContext(tabId, puzzleType) {
   let gameFrameId = 0;
   let iframeRect = null;
+  let frameViewport = null;
 
   try {
     const frames = await webNavigationGetAllFrames(tabId);
@@ -708,7 +752,14 @@ async function getGameFrameContext(tabId, puzzleType) {
     iframeRect = normalizeRect(iframeResponse.rect);
   }
 
-  return { gameFrameId, iframeRect };
+  if (gameFrameId !== 0) {
+    const frameViewportResponse = await safeSendTabMessage(tabId, { type: "getViewportMetrics" }, { frameId: gameFrameId });
+    if (frameViewportResponse && frameViewportResponse.ok) {
+      frameViewport = normalizeViewport(frameViewportResponse.viewport || frameViewportResponse.selection);
+    }
+  }
+
+  return { gameFrameId, iframeRect, frameViewport };
 }
 
 function selectionFromTabBounds(tab) {
@@ -741,6 +792,43 @@ function selectionFromRect(rect, insetRatio = 0.04) {
     height: Math.max(10, normalizedRect.height - inset * 2),
     devicePixelRatio: 1,
   });
+}
+
+async function getTopBoardSelection(tabId) {
+  const existing = await safeSendTabMessage(tabId, { type: "getBoardSelection" }, { frameId: 0 });
+  if (!existing || !existing.selection) {
+    return null;
+  }
+  return normalizeSelection(existing.selection);
+}
+
+async function setTopBoardSelection(tabId, selection) {
+  const normalized = normalizeSelection(selection);
+  if (!normalized) {
+    return null;
+  }
+
+  const response = await safeSendTabMessage(tabId, { type: "setBoardSelection", selection: normalized }, { frameId: 0 });
+  if (!response || !response.ok) {
+    return null;
+  }
+
+  return normalizeSelection(response.selection);
+}
+
+function hasMeaningfulSelectionDelta(baseSelection, nextSelection) {
+  const base = normalizeSelection(baseSelection);
+  const next = normalizeSelection(nextSelection);
+  if (!base || !next) {
+    return false;
+  }
+
+  return (
+    Math.abs(base.x - next.x) > 2 ||
+    Math.abs(base.y - next.y) > 2 ||
+    Math.abs(base.width - next.width) > 2 ||
+    Math.abs(base.height - next.height) > 2
+  );
 }
 
 function maybeNormalizeSelectionForPuzzle(puzzleType, selection, frameRect) {
@@ -788,6 +876,27 @@ function centeredBoardSelection(baseSelection) {
   });
 }
 
+function resolveInteractionTarget(topSelection, frameContext) {
+  const selection = normalizeSelection(topSelection);
+  if (!selection) {
+    return null;
+  }
+
+  if (
+    frameContext &&
+    Number.isInteger(frameContext.gameFrameId) &&
+    frameContext.gameFrameId !== 0 &&
+    frameContext.iframeRect
+  ) {
+    const frameSelection = translateTabSelectionToFrame(selection, frameContext.iframeRect, frameContext.frameViewport);
+    if (frameSelection) {
+      return { frameId: frameContext.gameFrameId, selection: frameSelection };
+    }
+  }
+
+  return { frameId: 0, selection };
+}
+
 async function getViewportFallbackSelection(tabId, tab) {
   const viewportResponse = await safeSendTabMessage(tabId, { type: "getViewportMetrics" }, { frameId: 0 });
   if (viewportResponse && viewportResponse.ok && viewportResponse.selection) {
@@ -806,6 +915,35 @@ async function getViewportFallbackSelection(tabId, tab) {
 }
 
 async function detectSelectionForQuickSolve(tabId, puzzleType, frameContext, tab) {
+  const existing = await getTopBoardSelection(tabId);
+  if (existing) {
+    const normalizedExisting = maybeNormalizeSelectionForPuzzle(puzzleType, existing, frameContext?.iframeRect);
+    const topSelection = normalizedExisting || existing;
+
+    if (normalizedExisting && hasMeaningfulSelectionDelta(existing, normalizedExisting)) {
+      const savedSelection = await setTopBoardSelection(tabId, normalizedExisting);
+      if (savedSelection) {
+        const savedTarget = resolveInteractionTarget(savedSelection, frameContext);
+        if (savedTarget) {
+          return {
+            topSelection: savedSelection,
+            interactionFrameId: savedTarget.frameId,
+            interactionSelection: savedTarget.selection,
+          };
+        }
+      }
+    }
+
+    const existingTarget = resolveInteractionTarget(topSelection, frameContext);
+    if (existingTarget) {
+      return {
+        topSelection,
+        interactionFrameId: existingTarget.frameId,
+        interactionSelection: existingTarget.selection,
+      };
+    }
+  }
+
   if (
     frameContext &&
     Number.isInteger(frameContext.gameFrameId) &&
@@ -819,7 +957,11 @@ async function detectSelectionForQuickSolve(tabId, puzzleType, frameContext, tab
     );
 
     if (frameDetected && frameDetected.selection) {
-      const topSelection = translateFrameSelectionToTab(frameDetected.selection, frameContext.iframeRect);
+      const topSelection = translateFrameSelectionToTab(
+        frameDetected.selection,
+        frameContext.iframeRect,
+        frameContext.frameViewport
+      );
       const normalizedTopSelection = maybeNormalizeSelectionForPuzzle(
         puzzleType,
         topSelection,
@@ -827,15 +969,16 @@ async function detectSelectionForQuickSolve(tabId, puzzleType, frameContext, tab
       );
 
       if (normalizedTopSelection) {
-        const normalizedFrameSelection =
-          translateTabSelectionToFrame(normalizedTopSelection, frameContext.iframeRect) ||
-          normalizeSelection(frameDetected.selection);
-
-        return {
-          topSelection: normalizedTopSelection,
-          interactionFrameId: frameContext.gameFrameId,
-          interactionSelection: normalizedFrameSelection,
-        };
+        const savedSelection = await setTopBoardSelection(tabId, normalizedTopSelection);
+        const finalTopSelection = savedSelection || normalizedTopSelection;
+        const interactionTarget = resolveInteractionTarget(finalTopSelection, frameContext);
+        if (interactionTarget) {
+          return {
+            topSelection: finalTopSelection,
+            interactionFrameId: interactionTarget.frameId,
+            interactionSelection: interactionTarget.selection,
+          };
+        }
       }
     }
   }
@@ -844,11 +987,16 @@ async function detectSelectionForQuickSolve(tabId, puzzleType, frameContext, tab
   if (topDetected && topDetected.selection) {
     const topSelection = maybeNormalizeSelectionForPuzzle(puzzleType, topDetected.selection, frameContext?.iframeRect);
     if (topSelection) {
-      return {
-        topSelection,
-        interactionFrameId: 0,
-        interactionSelection: topSelection,
-      };
+      const savedSelection = await setTopBoardSelection(tabId, topSelection);
+      const finalTopSelection = savedSelection || topSelection;
+      const interactionTarget = resolveInteractionTarget(finalTopSelection, frameContext);
+      if (interactionTarget) {
+        return {
+          topSelection: finalTopSelection,
+          interactionFrameId: interactionTarget.frameId,
+          interactionSelection: interactionTarget.selection,
+        };
+      }
     }
   }
 
@@ -857,28 +1005,33 @@ async function detectSelectionForQuickSolve(tabId, puzzleType, frameContext, tab
     const topSelection = frameBaseSelection;
 
     if (topSelection) {
-      const hasFrameId = Number.isInteger(frameContext.gameFrameId) && frameContext.gameFrameId !== 0;
-      const frameSelection = hasFrameId
-        ? translateTabSelectionToFrame(topSelection, frameContext.iframeRect)
-        : null;
-
-      return {
-        topSelection,
-        interactionFrameId: hasFrameId && frameSelection ? frameContext.gameFrameId : 0,
-        interactionSelection: frameSelection || topSelection,
-        usedViewportFallback: true,
-      };
+      const savedSelection = await setTopBoardSelection(tabId, topSelection);
+      const finalTopSelection = savedSelection || topSelection;
+      const interactionTarget = resolveInteractionTarget(finalTopSelection, frameContext);
+      if (interactionTarget) {
+        return {
+          topSelection: finalTopSelection,
+          interactionFrameId: interactionTarget.frameId,
+          interactionSelection: interactionTarget.selection,
+          usedViewportFallback: true,
+        };
+      }
     }
   }
 
   const fallbackSelection = await getViewportFallbackSelection(tabId, tab);
   if (fallbackSelection) {
-    return {
-      topSelection: fallbackSelection,
-      interactionFrameId: 0,
-      interactionSelection: fallbackSelection,
-      usedViewportFallback: true,
-    };
+    const savedSelection = await setTopBoardSelection(tabId, fallbackSelection);
+    const finalTopSelection = savedSelection || fallbackSelection;
+    const interactionTarget = resolveInteractionTarget(finalTopSelection, frameContext);
+    if (interactionTarget) {
+      return {
+        topSelection: finalTopSelection,
+        interactionFrameId: interactionTarget.frameId,
+        interactionSelection: interactionTarget.selection,
+        usedViewportFallback: true,
+      };
+    }
   }
 
   throw new Error("Could not auto-detect board region.");
@@ -919,7 +1072,7 @@ async function buildApplyTargets(tabId, puzzleType, topSelection, frameContext, 
 
   const mappedFrameSelection =
     frameContext && frameContext.iframeRect
-      ? translateTabSelectionToFrame(normalizedTopSelection, frameContext.iframeRect)
+      ? translateTabSelectionToFrame(normalizedTopSelection, frameContext.iframeRect, frameContext.frameViewport)
       : null;
 
   if (mappedFrameSelection) {
@@ -1099,6 +1252,7 @@ async function quickSolveFromPage(message, sender) {
   }
 
   const quickSettings = await loadQuickSettings();
+  const previewOnly = Boolean(message && message.previewOnly);
   const frameContext = await getGameFrameContext(tabId, puzzleType);
   await clearOverlaysForFrameContext(tabId, frameContext);
 
@@ -1122,7 +1276,15 @@ async function quickSolveFromPage(message, sender) {
     };
   }
 
-  const applyTopSelection = normalizeSelection(solvedPayload.selection) || selectionContext.topSelection;
+  const solvedSelection = normalizeSelection(solvedPayload.selection) || selectionContext.topSelection;
+  let applyTopSelection = solvedSelection;
+  if (hasMeaningfulSelectionDelta(selectionContext.topSelection, solvedSelection)) {
+    const savedSolvedSelection = await setTopBoardSelection(tabId, solvedSelection);
+    if (savedSolvedSelection) {
+      applyTopSelection = savedSolvedSelection;
+    }
+  }
+
   let applyFrameId = selectionContext.interactionFrameId;
   let applyInteractionSelection = selectionContext.interactionSelection;
 
@@ -1132,7 +1294,11 @@ async function quickSolveFromPage(message, sender) {
     Number.isInteger(frameContext.gameFrameId) &&
     frameContext.gameFrameId !== 0
   ) {
-    const mappedFrameSelection = translateTabSelectionToFrame(applyTopSelection, frameContext.iframeRect);
+    const mappedFrameSelection = translateTabSelectionToFrame(
+      applyTopSelection,
+      frameContext.iframeRect,
+      frameContext.frameViewport
+    );
     if (mappedFrameSelection) {
       applyFrameId = frameContext.gameFrameId;
       applyInteractionSelection = mappedFrameSelection;
@@ -1153,6 +1319,54 @@ async function quickSolveFromPage(message, sender) {
       applyFrameId = 0;
       applyInteractionSelection = applyTopSelection;
     }
+  }
+
+  if (previewOnly) {
+    let renderResponse = await safeSendTabMessage(
+      tabId,
+      {
+        type: "renderSolution",
+        puzzleType,
+        result: solvedPayload.result,
+        selection: applyInteractionSelection,
+      },
+      { frameId: applyFrameId }
+    );
+
+    if ((!renderResponse || !renderResponse.ok) && applyFrameId !== 0) {
+      renderResponse = await safeSendTabMessage(
+        tabId,
+        {
+          type: "renderSolution",
+          puzzleType,
+          result: solvedPayload.result,
+          selection: applyTopSelection,
+        },
+        { frameId: 0 }
+      );
+    }
+
+    if (!renderResponse || !renderResponse.ok) {
+      return {
+        puzzleType,
+        solved: true,
+        applied: false,
+        previewed: false,
+        selection: solvedPayload.selection,
+        result: solvedPayload.result,
+        error: (renderResponse && renderResponse.error) || "Solved board but failed to render overlay preview.",
+      };
+    }
+
+    return {
+      puzzleType,
+      solved: true,
+      applied: false,
+      previewed: true,
+      selection: applyTopSelection,
+      result: solvedPayload.result,
+      strategy: "overlay-preview",
+    };
   }
 
   const applyResponse = await applySolutionForSelection(
