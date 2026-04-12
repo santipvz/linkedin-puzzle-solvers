@@ -37,6 +37,34 @@ const puzzleTypeToFrameSlug =
         return puzzleType;
       };
 
+function populatePuzzleTypeOptions() {
+  const definitions = Array.isArray(puzzleRegistry.definitions) ? puzzleRegistry.definitions : [];
+  if (!definitions.length || !puzzleTypeSelect) {
+    return;
+  }
+
+  const currentValue = puzzleTypeSelect.value;
+  puzzleTypeSelect.innerHTML = "";
+
+  for (const definition of definitions) {
+    if (!definition || typeof definition.key !== "string") {
+      continue;
+    }
+
+    const option = document.createElement("option");
+    option.value = definition.key;
+    option.textContent =
+      typeof definition.label === "string" && definition.label.trim()
+        ? definition.label.trim()
+        : definition.key;
+    puzzleTypeSelect.appendChild(option);
+  }
+
+  if (currentValue && definitions.some((definition) => definition && definition.key === currentValue)) {
+    puzzleTypeSelect.value = currentValue;
+  }
+}
+
 function storageGet(keys) {
   return new Promise((resolve, reject) => {
     chrome.storage.local.get(keys, (items) => {
@@ -836,6 +864,7 @@ solveAndApplyButton.addEventListener("click", () => runAction(handleSolveAndAppl
 applyButton.addEventListener("click", () => runAction(handleApply));
 clearOverlayButton.addEventListener("click", () => runAction(handleClearOverlay));
 
+populatePuzzleTypeOptions();
 loadPreferences().catch((error) => {
   setStatus(error.message || String(error), true);
 });
