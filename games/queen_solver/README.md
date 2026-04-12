@@ -24,25 +24,23 @@ The Queens puzzle is a constraint satisfaction problem popularized as a daily lo
 ### Installation
 
 ```bash
-# Clone and setup
-git clone https://github.com/santipvz/queen_solver
-cd queens_solver
+# From monorepo root
 python3 -m venv .venv
 source .venv/bin/activate  # Linux/Mac
-pip install -r requirements.txt
+pip install -r games/queen_solver/requirements.txt
 ```
 
 ### Basic Usage
 
 ```bash
 # Solve a puzzle
-python3 main.py path/to/your/board.png
+python3 games/queen_solver/main.py path/to/your/board.png
 
 # Custom output directory
-python3 main.py board.png --output results/
+python3 games/queen_solver/main.py board.png --output results/
 
 # Quiet mode
-python3 main.py board.png --quiet
+python3 games/queen_solver/main.py board.png --quiet
 ```
 
 ## 📸 Examples
@@ -77,13 +75,12 @@ You can test the solver with all the puzzle boards in the test directory:
 
 ```bash
 # Run tests on all board examples
-python3 -m pytest tests/ -v
+python3 -m pytest games/queen_solver/tests -v
 ```
 
 The test suite includes:
 - **Solvable puzzles** - Various board sizes and configurations
 - **Unsolvable puzzles** - Edge cases and impossible configurations
-
 
 
 
