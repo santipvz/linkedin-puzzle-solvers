@@ -1,6 +1,6 @@
 # Solver API
 
-FastAPI service that exposes solvers for Queens, Tango, Mini Sudoku, and Zip.
+FastAPI service that exposes solvers for Queens, Tango, Mini Sudoku, Zip, and Patches.
 
 ## Run Modes
 
@@ -51,6 +51,7 @@ See `deploy/local/README.md` for full operational commands.
 - `POST /solve/tango`
 - `POST /solve/sudoku`
 - `POST /solve/zip`
+- `POST /solve/patches`
 
 All solve endpoints accept multipart form data with field name `image`.
 

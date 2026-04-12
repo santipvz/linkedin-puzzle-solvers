@@ -24,6 +24,9 @@ function detectPuzzleTypeFromUrl(url) {
   if (normalized.includes("/games/zip") || normalized.includes("/games/view/zip")) {
     return "zip";
   }
+  if (normalized.includes("/games/patches") || normalized.includes("/games/view/patches")) {
+    return "patches";
+  }
   return null;
 }
 
@@ -76,6 +79,8 @@ function updateQuickSolveButtonText() {
       ? "Mini Sudoku"
       : puzzleType === "zip"
       ? "Zip"
+      : puzzleType === "patches"
+      ? "Patches"
       : "Queens";
 
   if (quickSolveBusy) {
@@ -99,7 +104,7 @@ function removeQuickSolveWidget() {
 async function onQuickSolveClick() {
   const puzzleType = detectPuzzleTypeFromPage();
   if (!puzzleType) {
-    setQuickSolveStatus("Open Queens, Tango, Mini Sudoku, or Zip page.", true);
+    setQuickSolveStatus("Open Queens, Tango, Mini Sudoku, Zip, or Patches page.", true);
     return;
   }
 
@@ -243,6 +248,8 @@ function initializeQuickSolveWidget() {
   setInterval(() => {
     if (window.location.href !== quickSolveObservedUrl) {
       quickSolveObservedUrl = window.location.href;
+      boardSelection = null;
+      clearSolutionOverlay();
     }
     syncQuickSolveWidget();
   }, 1200);
@@ -834,6 +841,109 @@ function renderZipOverlay(root, selection, result) {
   root.appendChild(endDot);
 }
 
+function buildPatchesRegionList(result) {
+  const boardSize = Number(result?.board_size);
+  const rawRegions =
+    Array.isArray(result?.regions) && result.regions.length > 0
+      ? result.regions
+      : Array.isArray(result?.moves)
+      ? result.moves
+      : [];
+
+  return rawRegions
+    .map((region) => {
+      const top = Number(region?.top ?? region?.row ?? region?.start_row);
+      const left = Number(region?.left ?? region?.col ?? region?.start_col);
+      const height = Number(region?.height ?? region?.rows ?? region?.span_rows ?? 1);
+      const width = Number(region?.width ?? region?.cols ?? region?.span_cols ?? 1);
+
+      if (
+        !Number.isInteger(top) ||
+        !Number.isInteger(left) ||
+        !Number.isInteger(height) ||
+        !Number.isInteger(width) ||
+        height < 1 ||
+        width < 1
+      ) {
+        return null;
+      }
+
+      if (boardSize > 0) {
+        if (top < 0 || left < 0 || top + height > boardSize || left + width > boardSize) {
+          return null;
+        }
+      }
+
+      return {
+        top,
+        left,
+        height,
+        width,
+        area: height * width,
+      };
+    })
+    .filter(Boolean);
+}
+
+function renderPatchesOverlay(root, selection, result) {
+  const boardSize = Number(result?.board_size);
+  if (!boardSize) {
+    return;
+  }
+
+  const regions = buildPatchesRegionList(result);
+  if (!regions.length) {
+    return;
+  }
+
+  const cellWidth = selection.width / boardSize;
+  const cellHeight = selection.height / boardSize;
+  const palette = [
+    { border: "#0f766e", fill: "rgba(15, 118, 110, 0.22)" },
+    { border: "#0ea5e9", fill: "rgba(14, 165, 233, 0.22)" },
+    { border: "#ea580c", fill: "rgba(234, 88, 12, 0.2)" },
+    { border: "#7c3aed", fill: "rgba(124, 58, 237, 0.2)" },
+    { border: "#dc2626", fill: "rgba(220, 38, 38, 0.2)" },
+    { border: "#b45309", fill: "rgba(180, 83, 9, 0.2)" },
+  ];
+
+  for (let index = 0; index < regions.length; index += 1) {
+    const region = regions[index];
+    const style = palette[index % palette.length];
+
+    const rect = document.createElement("div");
+    rect.style.position = "fixed";
+    rect.style.left = `${selection.x + region.left * cellWidth}px`;
+    rect.style.top = `${selection.y + region.top * cellHeight}px`;
+    rect.style.width = `${region.width * cellWidth}px`;
+    rect.style.height = `${region.height * cellHeight}px`;
+    rect.style.border = `3px solid ${style.border}`;
+    rect.style.borderRadius = "8px";
+    rect.style.boxSizing = "border-box";
+    rect.style.background = style.fill;
+    rect.style.pointerEvents = "none";
+    root.appendChild(rect);
+
+    const areaTag = document.createElement("div");
+    areaTag.textContent = String(region.area);
+    areaTag.style.position = "fixed";
+    areaTag.style.left = `${selection.x + (region.left + region.width / 2) * cellWidth - 9}px`;
+    areaTag.style.top = `${selection.y + (region.top + region.height / 2) * cellHeight - 9}px`;
+    areaTag.style.width = "18px";
+    areaTag.style.height = "18px";
+    areaTag.style.display = "flex";
+    areaTag.style.alignItems = "center";
+    areaTag.style.justifyContent = "center";
+    areaTag.style.borderRadius = "9px";
+    areaTag.style.font = "700 10px/1 sans-serif";
+    areaTag.style.color = "#0f172a";
+    areaTag.style.background = "rgba(255,255,255,0.72)";
+    areaTag.style.border = `1px solid ${style.border}`;
+    areaTag.style.boxSizing = "border-box";
+    root.appendChild(areaTag);
+  }
+}
+
 function renderSolutionOverlay(puzzleType, result, selection) {
   const normalized = normalizeSelection(selection || boardSelection);
   if (!normalized) {
@@ -874,47 +984,78 @@ function renderSolutionOverlay(puzzleType, result, selection) {
     return;
   }
 
+  if (puzzleType === "patches") {
+    renderPatchesOverlay(root, normalized, result);
+    return;
+  }
+
   renderQueensOverlay(root, normalized, result);
 }
 
-function clickViewportPoint(x, y, button = 0) {
-  const safeX = Math.max(0, Math.min(window.innerWidth - 1, x));
-  const safeY = Math.max(0, Math.min(window.innerHeight - 1, y));
+function dispatchMouseEventAtViewportPoint(type, x, y, button = 0, buttons = 0) {
+  const safeX = Math.max(0, Math.min(window.innerWidth - 1, Number(x)));
+  const safeY = Math.max(0, Math.min(window.innerHeight - 1, Number(y)));
   const target = document.elementFromPoint(safeX, safeY);
 
-  if (!target) {
+  if (!target || target instanceof HTMLIFrameElement) {
     return false;
   }
 
-  if (target instanceof HTMLIFrameElement) {
-    return false;
-  }
+  const event = new MouseEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+    clientX: safeX,
+    clientY: safeY,
+    button,
+    buttons,
+    view: window,
+  });
+  target.dispatchEvent(event);
+  return true;
+}
 
+function clickViewportPoint(x, y, button = 0) {
   const isRightClick = button === 2;
   const eventTypes = isRightClick
     ? ["pointerdown", "mousedown", "pointerup", "mouseup", "contextmenu"]
     : ["pointerdown", "mousedown", "pointerup", "mouseup", "click"];
-
   const buttonMask = isRightClick ? 2 : 1;
 
+  let dispatchedAny = false;
   for (const type of eventTypes) {
     const isDown = type === "pointerdown" || type === "mousedown";
     const eventButtons = isDown ? buttonMask : 0;
-
-    const event = new MouseEvent(type, {
-      bubbles: true,
-      cancelable: true,
-      composed: true,
-      clientX: safeX,
-      clientY: safeY,
-      button,
-      buttons: eventButtons,
-      view: window,
-    });
-    target.dispatchEvent(event);
+    if (dispatchMouseEventAtViewportPoint(type, x, y, button, eventButtons)) {
+      dispatchedAny = true;
+    }
   }
 
-  return true;
+  return dispatchedAny;
+}
+
+function dragViewportPoints(startX, startY, endX, endY, steps = 6) {
+  const safeSteps = Math.max(1, Math.min(12, Number(steps) || 6));
+
+  const startedPointer = dispatchMouseEventAtViewportPoint("pointerdown", startX, startY, 0, 1);
+  const startedMouse = dispatchMouseEventAtViewportPoint("mousedown", startX, startY, 0, 1);
+  if (!startedPointer && !startedMouse) {
+    return false;
+  }
+
+  for (let step = 1; step <= safeSteps; step += 1) {
+    const ratio = step / safeSteps;
+    const x = startX + (endX - startX) * ratio;
+    const y = startY + (endY - startY) * ratio;
+    dispatchMouseEventAtViewportPoint("pointermove", x, y, 0, 1);
+    dispatchMouseEventAtViewportPoint("mousemove", x, y, 0, 1);
+  }
+
+  const endedPointer = dispatchMouseEventAtViewportPoint("pointerup", endX, endY, 0, 0);
+  const endedMouse = dispatchMouseEventAtViewportPoint("mouseup", endX, endY, 0, 0);
+  dispatchMouseEventAtViewportPoint("click", endX, endY, 0, 0);
+
+  return endedPointer || endedMouse;
 }
 
 function sleep(ms) {
@@ -932,6 +1073,10 @@ const MAX_DELAY_MS = 500;
 
 function leftClickViewportPoint(x, y) {
   return clickViewportPoint(x, y, 0);
+}
+
+function leftDragViewportPoints(startX, startY, endX, endY) {
+  return dragViewportPoints(startX, startY, endX, endY, 6);
 }
 
 function rightClickViewportPoint(x, y) {
@@ -1234,9 +1379,11 @@ function buildApplySelectionCandidates(puzzleType, primarySelection) {
     candidates.push({ selection: normalized, source });
   };
 
+  const autoDetectedSelection = autoDetectBoardSelection(puzzleType);
+
   pushCandidate(primarySelection, "provided");
   pushCandidate(boardSelection, "stored");
-  pushCandidate(autoDetectBoardSelection(puzzleType), "auto-detect");
+  pushCandidate(autoDetectedSelection, "auto-detect");
 
   return candidates;
 }
@@ -1742,6 +1889,73 @@ async function applyZipSolution(result, selection, settings) {
   };
 }
 
+async function applyPatchesSolution(result, selection, settings) {
+  const applySettings = normalizeApplySettings(settings);
+  const normalized = normalizeSelection(selection || boardSelection);
+  if (!normalized) {
+    return { ok: false, error: "Board selection is required before applying moves." };
+  }
+
+  const boardSize = Number(result?.board_size);
+  if (!boardSize) {
+    return { ok: false, error: "Invalid board size in solution." };
+  }
+
+  const regions = buildPatchesRegionList(result);
+  if (!regions.length) {
+    if (result?.solved) {
+      return {
+        ok: true,
+        appliedCount: 0,
+        clickCount: 0,
+        strategy: "already-filled",
+      };
+    }
+    return { ok: false, error: "No Patches regions are available." };
+  }
+
+  const cellWidth = normalized.width / boardSize;
+  const cellHeight = normalized.height / boardSize;
+
+  let appliedCount = 0;
+  let clickCount = 0;
+
+  for (const region of regions) {
+    const startX = normalized.x + (region.left + 0.5) * cellWidth;
+    const startY = normalized.y + (region.top + 0.5) * cellHeight;
+    const endX = normalized.x + (region.left + region.width - 0.5) * cellWidth;
+    const endY = normalized.y + (region.top + region.height - 0.5) * cellHeight;
+
+    let applied = leftDragViewportPoints(startX, startY, endX, endY);
+    if (!applied) {
+      applied = leftDragViewportPoints(endX, endY, startX, startY);
+    }
+
+    if (applied) {
+      appliedCount += 1;
+      clickCount += 1;
+    }
+
+    await sleep(Math.max(35, applySettings.interMoveDelayMs));
+  }
+
+  if (appliedCount === 0) {
+    return {
+      ok: false,
+      error: "Could not dispatch Patches drag gestures to board cells.",
+      appliedCount,
+      clickCount,
+    };
+  }
+
+  return {
+    ok: true,
+    appliedCount,
+    clickCount,
+    strategy: "corner-to-corner-drag",
+  };
+}
+
 async function applySolution(puzzleType, result, selection, settings) {
   if (puzzleType === "tango") {
     return applyTangoSolution(result, selection, settings);
@@ -1753,6 +1967,10 @@ async function applySolution(puzzleType, result, selection, settings) {
 
   if (puzzleType === "zip") {
     return applyZipSolution(result, selection, settings);
+  }
+
+  if (puzzleType === "patches") {
+    return applyPatchesSolution(result, selection, settings);
   }
 
   return applyQueensSolution(result, selection, settings);

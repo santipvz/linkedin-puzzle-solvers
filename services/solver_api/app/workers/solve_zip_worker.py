@@ -42,18 +42,9 @@ def _score_clue_assignment(values: list[int], confidences: list[float], rank_pen
     return score
 
 
-def _recover_duplicate_clues(
-    clue_entries: list[dict[str, Any]],
-    board_size: int,
-    blocked_h: list[list[bool]],
-    blocked_v: list[list[bool]],
-) -> tuple[dict[tuple[int, int], int], list[dict[str, Any]]]:
-    primary = _build_primary_clues(clue_entries)
-    primary_values = list(primary.values())
-    if len(set(primary_values)) == len(primary_values):
-        return primary, []
-
+def _build_clue_options(clue_entries: list[dict[str, Any]]) -> list[list[tuple[int, float, int]]]:
     options_per_cell: list[list[tuple[int, float, int]]] = []
+
     for entry in clue_entries:
         candidates = entry.get("candidates") or []
         ranked: list[tuple[int, float, int]] = []
@@ -75,22 +66,180 @@ def _recover_duplicate_clues(
 
         options_per_cell.append(ranked)
 
+    return options_per_cell
+
+
+def _best_contiguous_assignment(
+    options_per_cell: list[list[tuple[int, float, int]]],
+    expected_values: list[int],
+) -> list[tuple[int, float, int]] | None:
+    if not options_per_cell:
+        return None
+
+    expected_set = set(expected_values)
+    cell_count = len(options_per_cell)
+
+    domains: list[list[tuple[int, float, int]]] = []
+    value_coverage = {value: 0 for value in expected_values}
+
+    def option_score(option: tuple[int, float, int]) -> float:
+        value, confidence, rank = option
+        del value
+        return float(confidence) - (float(rank) * 0.05)
+
+    for options in options_per_cell:
+        best_by_value: dict[int, tuple[int, float, int]] = {}
+        for option in options:
+            value = int(option[0])
+            if value not in expected_set:
+                continue
+
+            current = best_by_value.get(value)
+            if current is None or option_score(option) > option_score(current):
+                best_by_value[value] = option
+
+        if not best_by_value:
+            return None
+
+        domain = sorted(best_by_value.values(), key=option_score, reverse=True)
+        domains.append(domain)
+
+        for value in best_by_value:
+            value_coverage[value] += 1
+
+    if any(count == 0 for count in value_coverage.values()):
+        return None
+
+    index_order = sorted(range(cell_count), key=lambda index: len(domains[index]))
+    used_values: set[int] = set()
+    current_assignment: list[tuple[int, float, int] | None] = [None for _ in range(cell_count)]
+    best_score = float("-inf")
+    best_assignment: list[tuple[int, float, int]] | None = None
+
+    def remaining_feasible(order_position: int) -> bool:
+        remaining_values = expected_set - used_values
+        if len(remaining_values) > (cell_count - order_position):
+            return False
+
+        for value in remaining_values:
+            value_is_possible = False
+            for next_position in range(order_position, cell_count):
+                index = index_order[next_position]
+                if any(candidate[0] == value for candidate in domains[index]):
+                    value_is_possible = True
+                    break
+
+            if not value_is_possible:
+                return False
+
+        return True
+
+    def dfs(order_position: int, score: float) -> None:
+        nonlocal best_score, best_assignment
+
+        if order_position == cell_count:
+            if score <= best_score:
+                return
+
+            snapshot: list[tuple[int, float, int]] = []
+            for item in current_assignment:
+                if item is None:
+                    return
+                snapshot.append(item)
+
+            best_score = score
+            best_assignment = snapshot
+            return
+
+        index = index_order[order_position]
+        for option in domains[index]:
+            value = int(option[0])
+            if value in used_values:
+                continue
+
+            current_assignment[index] = option
+            used_values.add(value)
+
+            if remaining_feasible(order_position + 1):
+                dfs(order_position + 1, score + option_score(option))
+
+            used_values.remove(value)
+            current_assignment[index] = None
+
+    dfs(order_position=0, score=0.0)
+    return best_assignment
+
+
+def _build_recovered_payload(
+    clue_entries: list[dict[str, Any]],
+    assignment: list[tuple[int, float, int]],
+) -> tuple[dict[tuple[int, int], int], list[dict[str, Any]]]:
+    clues: dict[tuple[int, int], int] = {}
+    replaced: list[dict[str, Any]] = []
+
+    for index, (value, confidence, rank) in enumerate(assignment):
+        entry = clue_entries[index]
+        row = int(entry["row"])
+        col = int(entry["col"])
+        clues[(row, col)] = int(value)
+
+        original_value = int(entry["value"])
+        if value == original_value:
+            continue
+
+        replaced.append(
+            {
+                "row": row,
+                "col": col,
+                "from": original_value,
+                "to": int(value),
+                "confidence": float(confidence),
+                "candidate_rank": int(rank),
+            }
+        )
+
+    return clues, replaced
+
+
+def _recover_duplicate_clues(
+    clue_entries: list[dict[str, Any]],
+    board_size: int,
+    blocked_h: list[list[bool]],
+    blocked_v: list[list[bool]],
+) -> tuple[dict[tuple[int, int], int], list[dict[str, Any]]]:
+    primary = _build_primary_clues(clue_entries)
+    if not clue_entries:
+        return primary, []
+
+    primary_values = [int(entry["value"]) for entry in clue_entries]
+    has_duplicate = len(set(primary_values)) != len(primary_values)
+    expected_values = list(range(1, len(clue_entries) + 1))
+    is_contiguous = sorted(primary_values) == expected_values
+
+    if not has_duplicate and is_contiguous:
+        return primary, []
+
+    options_per_cell = _build_clue_options(clue_entries)
+
     solver = None
     best_payload: tuple[float, dict[tuple[int, int], int], list[dict[str, Any]]] | None = None
 
-    for combo in itertools.product(*options_per_cell):
-        values = [value for value, _, _ in combo]
-        if len(set(values)) != len(values):
-            continue
+    def consider_assignment(assignment: list[tuple[int, float, int]]) -> None:
+        nonlocal solver, best_payload
 
-        confidences = [confidence for _, confidence, _ in combo]
-        rank_penalty = float(sum(rank for _, _, rank in combo)) * 0.05
+        values = [int(value) for value, _, _ in assignment]
+        if len(set(values)) != len(values):
+            return
+        if 1 not in values:
+            return
+
+        clues, replaced = _build_recovered_payload(clue_entries, assignment)
+        confidences = [float(confidence) for _, confidence, _ in assignment]
+        rank_penalty = float(sum(rank for _, _, rank in assignment)) * 0.05
         score = _score_clue_assignment(values, confidences, rank_penalty)
 
-        clues = {
-            (int(clue_entries[index]["row"]), int(clue_entries[index]["col"])): int(value)
-            for index, (value, _, _) in enumerate(combo)
-        }
+        if sorted(values) == expected_values:
+            score += 0.25
 
         if solver is None:
             from src.zip_solver import ZipSolver
@@ -99,28 +248,22 @@ def _recover_duplicate_clues(
 
         solve_result = solver.solve(size=board_size, blocked_h=blocked_h, blocked_v=blocked_v, clues=clues)
         if not solve_result.solved:
-            continue
-
-        replaced: list[dict[str, Any]] = []
-        for index, (value, confidence, rank) in enumerate(combo):
-            original = clue_entries[index]
-            original_value = int(original["value"])
-            if value == original_value:
-                continue
-
-            replaced.append(
-                {
-                    "row": int(original["row"]),
-                    "col": int(original["col"]),
-                    "from": original_value,
-                    "to": int(value),
-                    "confidence": float(confidence),
-                    "candidate_rank": int(rank),
-                }
-            )
+            return
 
         if best_payload is None or score > best_payload[0]:
             best_payload = (score, clues, replaced)
+
+    if not is_contiguous:
+        contiguous_assignment = _best_contiguous_assignment(
+            options_per_cell=options_per_cell,
+            expected_values=expected_values,
+        )
+        if contiguous_assignment is not None:
+            consider_assignment(contiguous_assignment)
+
+    if has_duplicate:
+        for combo in itertools.product(*options_per_cell):
+            consider_assignment(list(combo))
 
     if best_payload is None:
         return primary, []

@@ -37,7 +37,7 @@ _solve_cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
 app = FastAPI(
     title="LinkedIn Puzzle Solver API",
     version="0.1.0",
-    description="Local API wrapper for Queens, Tango, Mini Sudoku, and Zip image solvers.",
+    description="Local API wrapper for Queens, Tango, Mini Sudoku, Zip, and Patches image solvers.",
 )
 
 app.add_middleware(
@@ -309,5 +309,18 @@ async def solve_zip(
         "solve_zip_worker.py",
         image,
         "zip",
+        capture_board_start=_should_capture_board_start(board_capture),
+    )
+
+
+@app.post("/solve/patches")
+async def solve_patches(
+    image: UploadFile = File(...),
+    board_capture: str | None = Header(default=None, alias="X-Board-Capture"),
+) -> dict[str, Any]:
+    return await _solve_with_worker(
+        "solve_patches_worker.py",
+        image,
+        "patches",
         capture_board_start=_should_capture_board_start(board_capture),
     )

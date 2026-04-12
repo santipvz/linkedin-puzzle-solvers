@@ -17,6 +17,9 @@ function normalizeApiBase(value) {
 }
 
 function sanitizePuzzleType(value) {
+  if (value === "patches") {
+    return "patches";
+  }
   if (value === "zip") {
     return "zip";
   }
@@ -49,6 +52,9 @@ function detectPuzzleTypeFromUrl(url) {
   }
   if (normalized.includes("/games/zip") || normalized.includes("/games/view/zip")) {
     return "zip";
+  }
+  if (normalized.includes("/games/patches") || normalized.includes("/games/view/patches")) {
+    return "patches";
   }
   return null;
 }
@@ -110,6 +116,7 @@ function normalizeViewport(viewport) {
 
   const width = Number(viewport.width);
   const height = Number(viewport.height);
+  const devicePixelRatio = Number(viewport.devicePixelRatio);
 
   if (!Number.isFinite(width) || !Number.isFinite(height)) {
     return null;
@@ -119,7 +126,11 @@ function normalizeViewport(viewport) {
     return null;
   }
 
-  return { width, height };
+  return {
+    width,
+    height,
+    devicePixelRatio: Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : undefined,
+  };
 }
 
 function getFrameScale(iframeRect, frameViewport) {
@@ -619,6 +630,8 @@ async function callSolverApi(apiBaseUrl, puzzleType, imageBlob, options = {}) {
       ? "sudoku"
       : puzzleType === "zip"
       ? "zip"
+      : puzzleType === "patches"
+      ? "patches"
       : "queens";
   const endpoint = `${normalizeApiBase(apiBaseUrl)}/solve/${safePuzzleType}`;
 
@@ -681,13 +694,15 @@ async function solveBoardCore({ tabId, puzzleType, apiBaseUrl, selection }) {
     result,
     selection: refinedSelection,
     puzzleType:
-      puzzleType === "tango"
-        ? "tango"
-        : puzzleType === "sudoku"
-        ? "sudoku"
-        : puzzleType === "zip"
-        ? "zip"
-        : "queens",
+    puzzleType === "tango"
+      ? "tango"
+      : puzzleType === "sudoku"
+      ? "sudoku"
+      : puzzleType === "zip"
+      ? "zip"
+      : puzzleType === "patches"
+      ? "patches"
+      : "queens",
   };
 }
 
@@ -752,6 +767,7 @@ async function getGameFrameContext(tabId, puzzleType) {
   let gameFrameId = 0;
   let iframeRect = null;
   let frameViewport = null;
+  let topViewport = null;
 
   try {
     const frames = await webNavigationGetAllFrames(tabId);
@@ -773,6 +789,11 @@ async function getGameFrameContext(tabId, puzzleType) {
     iframeRect = normalizeRect(iframeResponse.rect);
   }
 
+  const topViewportResponse = await safeSendTabMessage(tabId, { type: "getViewportMetrics" }, { frameId: 0 });
+  if (topViewportResponse && topViewportResponse.ok) {
+    topViewport = normalizeViewport(topViewportResponse.viewport || topViewportResponse.selection);
+  }
+
   if (gameFrameId !== 0) {
     const frameViewportResponse = await safeSendTabMessage(tabId, { type: "getViewportMetrics" }, { frameId: gameFrameId });
     if (frameViewportResponse && frameViewportResponse.ok) {
@@ -780,7 +801,7 @@ async function getGameFrameContext(tabId, puzzleType) {
     }
   }
 
-  return { gameFrameId, iframeRect, frameViewport };
+  return { gameFrameId, iframeRect, frameViewport, topViewport };
 }
 
 function selectionFromTabBounds(tab) {
@@ -799,7 +820,7 @@ function selectionFromTabBounds(tab) {
   });
 }
 
-function selectionFromRect(rect, insetRatio = 0.04) {
+function selectionFromRect(rect, insetRatio = 0.04, devicePixelRatio = 1) {
   const normalizedRect = normalizeRect(rect);
   if (!normalizedRect) {
     return null;
@@ -811,7 +832,7 @@ function selectionFromRect(rect, insetRatio = 0.04) {
     y: normalizedRect.top + inset,
     width: Math.max(10, normalizedRect.width - inset * 2),
     height: Math.max(10, normalizedRect.height - inset * 2),
-    devicePixelRatio: 1,
+    devicePixelRatio,
   });
 }
 
@@ -862,7 +883,7 @@ function maybeNormalizeSelectionForPuzzle(puzzleType, selection, frameRect) {
     return normalized;
   }
 
-  const frameSelection = selectionFromRect(frameRect, 0);
+  const frameSelection = selectionFromRect(frameRect, 0, normalized.devicePixelRatio || 1);
   if (!frameSelection) {
     return normalized;
   }
@@ -937,6 +958,7 @@ async function getViewportFallbackSelection(tabId, tab) {
 
 async function detectSelectionForQuickSolve(tabId, puzzleType, frameContext, tab) {
   const existing = await getTopBoardSelection(tabId);
+
   if (existing) {
     const normalizedExisting = maybeNormalizeSelectionForPuzzle(puzzleType, existing, frameContext?.iframeRect);
     const topSelection = normalizedExisting || existing;
@@ -1021,8 +1043,14 @@ async function detectSelectionForQuickSolve(tabId, puzzleType, frameContext, tab
     }
   }
 
+  const fallbackDevicePixelRatio =
+    frameContext?.topViewport?.devicePixelRatio ||
+    frameContext?.frameViewport?.devicePixelRatio ||
+    existing?.devicePixelRatio ||
+    1;
+
   if (frameContext && frameContext.iframeRect) {
-    const frameBaseSelection = selectionFromRect(frameContext.iframeRect, 0.04);
+    const frameBaseSelection = selectionFromRect(frameContext.iframeRect, 0.04, fallbackDevicePixelRatio);
     const topSelection = frameBaseSelection;
 
     if (topSelection) {
@@ -1116,6 +1144,22 @@ async function buildApplyTargets(tabId, puzzleType, topSelection, frameContext, 
   return targets;
 }
 
+function shouldRetrySudokuApplyWithoutSelection(response) {
+  if (!response) {
+    return true;
+  }
+
+  if (response.ok) {
+    return false;
+  }
+
+  const appliedCount = Number(response.appliedCount) || 0;
+  const clickCount = Number(response.clickCount) || 0;
+  const keyCount = Number(response.keyCount) || 0;
+
+  return appliedCount === 0 && clickCount === 0 && keyCount === 0;
+}
+
 async function applySolutionForSelection(
   tabId,
   puzzleType,
@@ -1157,8 +1201,11 @@ async function applySolutionForSelection(
       { frameId: target.frameId }
     );
 
-    if ((!response || !response.ok) && puzzleType === "sudoku") {
-      response = await safeSendTabMessage(
+    const shouldRetryWithoutSelection =
+      puzzleType === "sudoku" && shouldRetrySudokuApplyWithoutSelection(response);
+
+    if (shouldRetryWithoutSelection) {
+      const fallbackResponse = await safeSendTabMessage(
         tabId,
         {
           ...messagePayloadBase,
@@ -1166,6 +1213,12 @@ async function applySolutionForSelection(
         },
         { frameId: target.frameId }
       );
+
+      if (fallbackResponse && fallbackResponse.ok) {
+        response = fallbackResponse;
+      } else if (!response) {
+        response = fallbackResponse;
+      }
     }
 
     if (response && response.ok) {
@@ -1173,7 +1226,7 @@ async function applySolutionForSelection(
     }
   }
 
-  if ((!response || !response.ok) && puzzleType === "sudoku") {
+  if ((!response || !response.ok) && puzzleType === "sudoku" && shouldRetrySudokuApplyWithoutSelection(response)) {
     const attemptedFrameIds = new Set(applyTargets.map((target) => target.frameId));
     const fallbackFrameIds = [];
     const seenFallbackFrameIds = new Set();
@@ -1202,7 +1255,7 @@ async function applySolutionForSelection(
     }
 
     for (const frameId of fallbackFrameIds) {
-      response = await safeSendTabMessage(
+      const fallbackResponse = await safeSendTabMessage(
         tabId,
         {
           ...messagePayloadBase,
@@ -1211,8 +1264,13 @@ async function applySolutionForSelection(
         { frameId }
       );
 
-      if (response && response.ok) {
+      if (fallbackResponse && fallbackResponse.ok) {
+        response = fallbackResponse;
         break;
+      }
+
+      if (!response) {
+        response = fallbackResponse;
       }
     }
   }
@@ -1269,7 +1327,7 @@ async function quickSolveFromPage(message, sender) {
   const puzzleType = requestedPuzzleType || detectedPuzzleType;
 
   if (!puzzleType) {
-    throw new Error("Open LinkedIn Queens, Tango, Mini Sudoku, or Zip page first.");
+    throw new Error("Open LinkedIn Queens, Tango, Mini Sudoku, Zip, or Patches page first.");
   }
 
   const quickSettings = await loadQuickSettings();

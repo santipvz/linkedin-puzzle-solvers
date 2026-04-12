@@ -8,6 +8,7 @@ Monorepo for computer vision solvers and browser automation for LinkedIn daily p
 - `games/tango_solver`: Tango solver.
 - `games/sudoku_solver`: Mini Sudoku solver.
 - `games/zip_solver`: Zip solver.
+- `games/patches_solver`: Patches solver.
 - `services/solver_api`: FastAPI service exposing all puzzle solvers.
 - `extension`: browser extension (board detection, solve, overlay, and apply).
 - `deploy/local`: Docker deployment for running the API as a persistent local service.
@@ -111,6 +112,7 @@ Supported game URLs:
 - `https://www.linkedin.com/games/tango/`
 - `https://www.linkedin.com/games/mini-sudoku/`
 - `https://www.linkedin.com/games/zip/`
+- `https://www.linkedin.com/games/patches/`
 
 ## API Endpoints
 
@@ -119,6 +121,7 @@ Supported game URLs:
 - `POST /solve/tango` (multipart field `image`)
 - `POST /solve/sudoku` (multipart field `image`)
 - `POST /solve/zip` (multipart field `image`)
+- `POST /solve/patches` (multipart field `image`)
 
 ## Common Maintenance Commands
 

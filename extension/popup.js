@@ -1027,6 +1027,22 @@ function buildApplyStatusText(response) {
   return `${appliedText}${clickText}${keyText}${strategyText}`;
 }
 
+function shouldRetrySudokuApplyWithoutSelection(response) {
+  if (!response) {
+    return true;
+  }
+
+  if (response.ok) {
+    return false;
+  }
+
+  const appliedCount = Number(response.appliedCount) || 0;
+  const clickCount = Number(response.clickCount) || 0;
+  const keyCount = Number(response.keyCount) || 0;
+
+  return appliedCount === 0 && clickCount === 0 && keyCount === 0;
+}
+
 async function applyPayloadToTab(tab, payload, frameContext) {
   const topSelection = normalizeSelection(payload.selection);
   if (!topSelection) {
@@ -1063,8 +1079,11 @@ async function applyPayloadToTab(tab, payload, frameContext) {
       { frameId: target.frameId }
     );
 
-    if ((!response || !response.ok) && payload.puzzleType === "sudoku") {
-      response = await safeSendTabMessage(
+    const shouldRetryWithoutSelection =
+      payload.puzzleType === "sudoku" && shouldRetrySudokuApplyWithoutSelection(response);
+
+    if (shouldRetryWithoutSelection) {
+      const fallbackResponse = await safeSendTabMessage(
         tab.id,
         {
           ...messagePayloadBase,
@@ -1072,6 +1091,12 @@ async function applyPayloadToTab(tab, payload, frameContext) {
         },
         { frameId: target.frameId }
       );
+
+      if (fallbackResponse && fallbackResponse.ok) {
+        response = fallbackResponse;
+      } else if (!response) {
+        response = fallbackResponse;
+      }
     }
 
     if (response && response.ok) {
@@ -1079,7 +1104,11 @@ async function applyPayloadToTab(tab, payload, frameContext) {
     }
   }
 
-  if ((!response || !response.ok) && payload.puzzleType === "sudoku") {
+  if (
+    (!response || !response.ok) &&
+    payload.puzzleType === "sudoku" &&
+    shouldRetrySudokuApplyWithoutSelection(response)
+  ) {
     const attemptedFrameIds = new Set(applyTargets.map((target) => target.frameId));
     const fallbackFrameIds = [];
     const seenFallbackFrameIds = new Set();
@@ -1108,7 +1137,7 @@ async function applyPayloadToTab(tab, payload, frameContext) {
     }
 
     for (const frameId of fallbackFrameIds) {
-      response = await safeSendTabMessage(
+      const fallbackResponse = await safeSendTabMessage(
         tab.id,
         {
           ...messagePayloadBase,
@@ -1117,8 +1146,13 @@ async function applyPayloadToTab(tab, payload, frameContext) {
         { frameId }
       );
 
-      if (response && response.ok) {
+      if (fallbackResponse && fallbackResponse.ok) {
+        response = fallbackResponse;
         break;
+      }
+
+      if (!response) {
+        response = fallbackResponse;
       }
     }
   }
