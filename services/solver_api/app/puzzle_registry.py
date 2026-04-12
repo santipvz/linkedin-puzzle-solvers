@@ -10,10 +10,17 @@ class PuzzleDefinition:
     sample_image: str
     expected_board_size: int
     sample_required: bool = True
+    smoke_samples: tuple[str, ...] = ()
 
     @property
     def endpoint_path(self) -> str:
         return f"/solve/{self.key}"
+
+    @property
+    def all_smoke_samples(self) -> tuple[str, ...]:
+        if self.smoke_samples:
+            return self.smoke_samples
+        return (self.sample_image,)
 
 
 PUZZLE_DEFINITIONS: tuple[PuzzleDefinition, ...] = (
@@ -51,6 +58,11 @@ PUZZLE_DEFINITIONS: tuple[PuzzleDefinition, ...] = (
         sample_image="games/patches_solver/examples/sample1.png",
         expected_board_size=6,
         sample_required=False,
+        smoke_samples=(
+            "games/patches_solver/examples/sample1.png",
+            "games/patches_solver/examples/sample2.png",
+            "games/patches_solver/examples/sample3.png",
+        ),
     ),
 )
 
