@@ -12,9 +12,9 @@ import cv2
 import numpy as np
 
 try:
-    from .common import ensure_sys_path, game_root_for_worker, run_worker_cli
+    from .common import activate_game_import_context, game_root_for_worker, run_worker_cli
 except ImportError:
-    from common import ensure_sys_path, game_root_for_worker, run_worker_cli
+    from common import activate_game_import_context, game_root_for_worker, run_worker_cli
 
 
 MIN_BOARD_AREA_RATIO = 0.08
@@ -413,7 +413,7 @@ def solve(image_path: Path) -> dict[str, Any]:
             "error": "Queens project folder not found.",
         }
 
-    ensure_sys_path(game_root)
+    activate_game_import_context(game_root)
 
     queens_module = importlib.import_module(".".join(["src", "queens_solver"]))
     queens_solver_class = getattr(queens_module, "QueensSolver")

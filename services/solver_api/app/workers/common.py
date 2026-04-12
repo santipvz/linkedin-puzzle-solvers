@@ -20,6 +20,14 @@ def ensure_sys_path(path: Path) -> None:
         sys.path.insert(0, path_str)
 
 
+def activate_game_import_context(game_root: Path) -> None:
+    for module_name in list(sys.modules):
+        if module_name == "src" or module_name.startswith("src."):
+            del sys.modules[module_name]
+
+    ensure_sys_path(game_root)
+
+
 def run_worker_cli(
     argv: list[str],
     solve_fn: Callable[[Path], dict[str, Any]],

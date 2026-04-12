@@ -8,9 +8,9 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from .common import ensure_sys_path, game_root_for_worker, run_worker_cli
+    from .common import activate_game_import_context, game_root_for_worker, run_worker_cli
 except ImportError:
-    from common import ensure_sys_path, game_root_for_worker, run_worker_cli
+    from common import activate_game_import_context, game_root_for_worker, run_worker_cli
 
 
 def _build_primary_clues(clue_entries: list[dict[str, Any]]) -> dict[tuple[int, int], int]:
@@ -280,7 +280,7 @@ def solve(image_path: Path) -> dict[str, Any]:
             "error": "Zip project folder not found.",
         }
 
-    ensure_sys_path(game_root)
+    activate_game_import_context(game_root)
 
     from src.image_parser import ZipImageParser
     from src.zip_solver import ZipSolver

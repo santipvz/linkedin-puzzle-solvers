@@ -76,19 +76,6 @@ function tabsQuery(queryInfo) {
   });
 }
 
-function tabsGet(tabId) {
-  return new Promise((resolve, reject) => {
-    chrome.tabs.get(tabId, (tab) => {
-      const error = chrome.runtime.lastError;
-      if (error) {
-        reject(new Error(error.message));
-        return;
-      }
-      resolve(tab);
-    });
-  });
-}
-
 function sendTabMessage(tabId, message, options = {}) {
   return new Promise((resolve, reject) => {
     chrome.tabs.sendMessage(tabId, message, options, (response) => {
@@ -279,39 +266,6 @@ function translateFrameSelectionToTab(frameSelection, iframeRect, frameViewport)
   });
 }
 
-function translateTabSelectionToFrame(tabSelection, iframeRect, frameViewport) {
-  const selection = normalizeSelection(tabSelection);
-  const rect = normalizeRect(iframeRect);
-  if (!selection || !rect) {
-    return null;
-  }
-
-  const viewport = normalizeViewport(frameViewport);
-  const { scaleX, scaleY } = getFrameScale(rect, viewport);
-
-  const relativeX = (selection.x - rect.left) / scaleX;
-  const relativeY = (selection.y - rect.top) / scaleY;
-
-  const clampedX = Math.max(0, relativeX);
-  const clampedY = Math.max(0, relativeY);
-  const frameWidth = viewport ? viewport.width : rect.width / scaleX;
-  const frameHeight = viewport ? viewport.height : rect.height / scaleY;
-  const maxWidth = frameWidth - clampedX;
-  const maxHeight = frameHeight - clampedY;
-
-  if (maxWidth < 10 || maxHeight < 10) {
-    return null;
-  }
-
-  return normalizeSelection({
-    x: clampedX,
-    y: clampedY,
-    width: Math.min(selection.width / scaleX, maxWidth),
-    height: Math.min(selection.height / scaleY, maxHeight),
-    devicePixelRatio: selection.devicePixelRatio,
-  });
-}
-
 function findLinkedInGameFrame(frames, puzzleType) {
   if (!Array.isArray(frames) || !frames.length) {
     return null;
@@ -359,143 +313,6 @@ async function getGameFrameContext(tabId, puzzleType) {
   }
 
   return { gameFrameId, iframeRect, frameViewport };
-}
-
-function resolveInteractionTarget(topSelection, frameContext) {
-  const selection = normalizeSelection(topSelection);
-  if (!selection) {
-    return null;
-  }
-
-  if (
-    frameContext &&
-    Number.isInteger(frameContext.gameFrameId) &&
-    frameContext.gameFrameId !== 0 &&
-    frameContext.iframeRect
-  ) {
-    const frameSelection = translateTabSelectionToFrame(selection, frameContext.iframeRect, frameContext.frameViewport);
-    if (frameSelection) {
-      return { frameId: frameContext.gameFrameId, selection: frameSelection };
-    }
-  }
-
-  return { frameId: 0, selection };
-}
-
-function findLinkedInGameFrameIds(frames, puzzleType) {
-  if (!Array.isArray(frames) || !frames.length) {
-    return [];
-  }
-
-  const ids = [];
-  const seen = new Set();
-
-  const pushFrameId = (frame) => {
-    if (!frame || !Number.isInteger(frame.frameId) || frame.frameId === 0) {
-      return;
-    }
-    if (seen.has(frame.frameId)) {
-      return;
-    }
-    seen.add(frame.frameId);
-    ids.push(frame.frameId);
-  };
-
-  const exactNeedle = `/games/view/${puzzleTypeToFrameSlug(puzzleType)}`;
-  for (const frame of frames) {
-    if (typeof frame.url === "string" && frame.url.includes(exactNeedle)) {
-      pushFrameId(frame);
-    }
-  }
-
-  for (const frame of frames) {
-    if (typeof frame.url === "string" && frame.url.includes("/games/view")) {
-      pushFrameId(frame);
-    }
-  }
-
-  for (const frame of frames) {
-    if (typeof frame.url === "string" && frame.url.includes("linkedin.com")) {
-      pushFrameId(frame);
-    }
-  }
-
-  return ids;
-}
-
-async function buildApplyTargets(tabId, puzzleType, topSelection, frameContext, interactionTarget) {
-  const normalizedTopSelection = normalizeSelection(topSelection);
-  if (!normalizedTopSelection) {
-    return [];
-  }
-
-  const targets = [];
-  const seen = new Set();
-
-  const pushTarget = (frameId, selection) => {
-    if (!Number.isInteger(frameId)) {
-      return;
-    }
-
-    const normalizedSelection = normalizeSelection(selection);
-    if (!normalizedSelection) {
-      return;
-    }
-
-    const key = `${frameId}:${Math.round(normalizedSelection.x)}:${Math.round(normalizedSelection.y)}:${Math.round(
-      normalizedSelection.width
-    )}:${Math.round(normalizedSelection.height)}`;
-
-    if (seen.has(key)) {
-      return;
-    }
-
-    seen.add(key);
-    targets.push({ frameId, selection: normalizedSelection });
-  };
-
-  if (interactionTarget) {
-    pushTarget(interactionTarget.frameId, interactionTarget.selection);
-  }
-
-  const mappedFrameSelection =
-    frameContext && frameContext.iframeRect
-      ? translateTabSelectionToFrame(normalizedTopSelection, frameContext.iframeRect, frameContext.frameViewport)
-      : null;
-
-  if (mappedFrameSelection) {
-    if (frameContext && Number.isInteger(frameContext.gameFrameId) && frameContext.gameFrameId !== 0) {
-      pushTarget(frameContext.gameFrameId, mappedFrameSelection);
-    }
-
-    try {
-      const frames = await webNavigationGetAllFrames(tabId);
-      const frameIds = findLinkedInGameFrameIds(frames, puzzleType);
-      for (const frameId of frameIds) {
-        pushTarget(frameId, mappedFrameSelection);
-      }
-    } catch (error) {
-      // Ignore frame enumeration failures and fall back to top frame.
-    }
-  }
-
-  pushTarget(0, normalizedTopSelection);
-  return targets;
-}
-
-function hasMeaningfulSelectionDelta(baseSelection, nextSelection) {
-  const base = normalizeSelection(baseSelection);
-  const next = normalizeSelection(nextSelection);
-  if (!base || !next) {
-    return false;
-  }
-
-  return (
-    Math.abs(base.x - next.x) > 2 ||
-    Math.abs(base.y - next.y) > 2 ||
-    Math.abs(base.width - next.width) > 2 ||
-    Math.abs(base.height - next.height) > 2
-  );
 }
 
 async function getActiveTab() {
@@ -616,14 +433,6 @@ async function loadPreferences() {
   tangoApplyModeSelect.value = normalizeTangoApplyMode(stored[STORAGE_TANGO_APPLY_MODE_KEY]);
 }
 
-async function getTopBoardSelection(tabId) {
-  const existing = await safeSendTabMessage(tabId, { type: "getBoardSelection" }, { frameId: 0 });
-  if (!existing || !existing.selection) {
-    return null;
-  }
-  return normalizeSelection(existing.selection);
-}
-
 function selectionFromTabBounds(tab) {
   const width = Number(tab && tab.width);
   const height = Number(tab && tab.height);
@@ -737,87 +546,6 @@ async function setTopBoardSelection(tabId, selection) {
   return normalizeSelection(response.selection);
 }
 
-async function ensureBoardSelection(tabId, puzzleType, frameContext) {
-  const existing = await getTopBoardSelection(tabId);
-  if (existing) {
-    const normalizedExisting = maybeNormalizeSelectionForPuzzle(puzzleType, existing, frameContext);
-    if (normalizedExisting && hasMeaningfulSelectionDelta(existing, normalizedExisting)) {
-      const savedNormalized = await setTopBoardSelection(tabId, normalizedExisting);
-      if (savedNormalized) {
-        setStatus("Adjusted board region for Tango grid.");
-        return savedNormalized;
-      }
-    }
-    return normalizedExisting || existing;
-  }
-
-  if (
-    frameContext &&
-    Number.isInteger(frameContext.gameFrameId) &&
-    frameContext.gameFrameId !== 0 &&
-    frameContext.iframeRect
-  ) {
-    const frameDetected = await safeSendTabMessage(
-      tabId,
-      { type: "autoDetectBoard", puzzleType },
-      { frameId: frameContext.gameFrameId }
-    );
-
-    if (frameDetected && frameDetected.selection) {
-      const topSelection = translateFrameSelectionToTab(
-        frameDetected.selection,
-        frameContext.iframeRect,
-        frameContext.frameViewport
-      );
-      const normalizedTopSelection = maybeNormalizeSelectionForPuzzle(puzzleType, topSelection, frameContext);
-      if (normalizedTopSelection) {
-        const savedSelection = await setTopBoardSelection(tabId, normalizedTopSelection);
-        if (savedSelection) {
-          setStatus("Board auto-detected inside game frame.");
-          return savedSelection;
-        }
-      }
-    }
-  }
-
-  const topDetected = await safeSendTabMessage(
-    tabId,
-    { type: "autoDetectBoard", puzzleType },
-    { frameId: 0 }
-  );
-
-  if (topDetected && topDetected.selection) {
-    const normalizedTopSelection = maybeNormalizeSelectionForPuzzle(puzzleType, topDetected.selection, frameContext);
-    if (normalizedTopSelection) {
-      setStatus("Board auto-detected.");
-      return normalizedTopSelection;
-    }
-  }
-
-  const frameBaseSelection = selectionFromRect(frameContext && frameContext.iframeRect, 0.04);
-  const frameFallbackSelection = frameBaseSelection;
-
-  if (frameFallbackSelection) {
-    const savedSelection = await setTopBoardSelection(tabId, frameFallbackSelection);
-    if (savedSelection) {
-      setStatus("Board auto-detect missed; using game-frame fallback.");
-      return savedSelection;
-    }
-  }
-
-  const tab = await tabsGet(tabId);
-  const fallbackSelection = await getViewportFallbackSelection(tab);
-  if (fallbackSelection) {
-    const savedSelection = await setTopBoardSelection(tabId, fallbackSelection);
-    if (savedSelection) {
-      setStatus("Board auto-detect missed; using viewport fallback.");
-      return savedSelection;
-    }
-  }
-
-  throw new Error("No board region selected. Use Select Board first.");
-}
-
 function setBusy(isBusy) {
   selectBoardButton.disabled = isBusy;
   autoDetectButton.disabled = isBusy;
@@ -925,87 +653,52 @@ async function handleAutoDetect() {
 }
 
 async function solveForTab(tab, options = {}) {
-  const renderSolution = options.renderSolution !== false;
+  const previewOnly = options.previewOnly !== false;
   const puzzleType = puzzleTypeSelect.value;
-  const apiBaseUrl = apiUrlInput.value.trim() || DEFAULT_API_URL;
-
-  const frameContext = await getGameFrameContext(tab.id, puzzleType);
-  await clearOverlaysForFrameContext(tab.id, frameContext);
-  const topSelection = await ensureBoardSelection(tab.id, puzzleType, frameContext);
-
   const solveResponse = await sendRuntimeMessage({
-    type: "solveBoard",
+    type: "quickSolveFromPage",
     tabId: tab.id,
     puzzleType,
-    apiBaseUrl,
-    selection: topSelection,
+    previewOnly,
   });
 
   if (!solveResponse || !solveResponse.ok) {
     throw new Error((solveResponse && solveResponse.error) || "Solver request failed.");
   }
 
-  const solveSelection = normalizeSelection(solveResponse.selection) || topSelection;
-  if (hasMeaningfulSelectionDelta(topSelection, solveSelection)) {
-    await setTopBoardSelection(tab.id, solveSelection);
-  }
-
-  if (renderSolution) {
-    const interactionTarget = resolveInteractionTarget(solveSelection, frameContext);
-    if (!interactionTarget) {
-      throw new Error("Could not map board selection for rendering.");
-    }
-
-    let renderResponse = await safeSendTabMessage(
-      tab.id,
-      {
-        type: "renderSolution",
-        puzzleType: solveResponse.puzzleType,
-        result: solveResponse.result,
-        selection: interactionTarget.selection,
-      },
-      { frameId: interactionTarget.frameId }
-    );
-
-    if ((!renderResponse || !renderResponse.ok) && interactionTarget.frameId !== 0) {
-      renderResponse = await safeSendTabMessage(
-        tab.id,
-        {
-          type: "renderSolution",
-          puzzleType: solveResponse.puzzleType,
-          result: solveResponse.result,
-          selection: solveSelection,
-        },
-        { frameId: 0 }
-      );
-    }
-
-    if (!renderResponse || !renderResponse.ok) {
-      throw new Error((renderResponse && renderResponse.error) || "Failed to render solution overlay.");
-    }
-  }
+  const solveSelection = normalizeSelection(solveResponse.selection);
 
   const payload = {
-    puzzleType: solveResponse.puzzleType,
-    result: solveResponse.result,
+    puzzleType: solveResponse.puzzleType || puzzleType,
+    result: solveResponse.result || null,
     selection: solveSelection,
   };
 
-  await storageSet({
-    [selectionStorageKey(tab.id)]: payload,
-  });
-
-  setResult(summarizeResult(solveResponse.puzzleType, solveResponse.result));
-  if (solveResponse.result.solved) {
-    setStatus(renderSolution ? "Solved and overlay rendered." : "Solved.");
-  } else {
-    setStatus("No solution found.", true);
+  if (payload.result && solveSelection) {
+    await storageSet({
+      [selectionStorageKey(tab.id)]: payload,
+    });
   }
 
-  return {
-    ...payload,
-    frameContext,
-  };
+  setResult(summarizeResult(payload.puzzleType, payload.result));
+
+  if (solveResponse.solved) {
+    if (previewOnly) {
+      if (solveResponse.previewed) {
+        setStatus("Solved and overlay rendered.");
+      } else {
+        setStatus(solveResponse.error || "Solved board but failed to render overlay preview.", true);
+      }
+    } else if (solveResponse.applied) {
+      setStatus(buildApplyStatusText(solveResponse));
+    } else {
+      setStatus(solveResponse.error || "Solved board but failed to apply moves.", true);
+    }
+  } else {
+    setStatus(solveResponse.error || "No solution found.", true);
+  }
+
+  return { ...payload, ...solveResponse };
 }
 
 function buildApplyStatusText(response) {
@@ -1031,141 +724,24 @@ function buildApplyStatusText(response) {
   return `${appliedText}${clickText}${keyText}${strategyText}`;
 }
 
-function shouldRetrySudokuApplyWithoutSelection(response) {
-  if (!response) {
-    return true;
-  }
-
-  if (response.ok) {
-    return false;
-  }
-
-  const appliedCount = Number(response.appliedCount) || 0;
-  const clickCount = Number(response.clickCount) || 0;
-  const keyCount = Number(response.keyCount) || 0;
-
-  return appliedCount === 0 && clickCount === 0 && keyCount === 0;
-}
-
-async function applyPayloadToTab(tab, payload, frameContext) {
-  const topSelection = normalizeSelection(payload.selection);
-  if (!topSelection) {
-    throw new Error("Could not map board selection for applying moves.");
-  }
-
-  const interactionTarget = resolveInteractionTarget(topSelection, frameContext);
-  const applyTargets = await buildApplyTargets(tab.id, payload.puzzleType, topSelection, frameContext, interactionTarget);
-
-  if (!applyTargets.length) {
-    throw new Error("Could not map board selection for applying moves.");
-  }
-
+async function applyCachedPayloadForTab(tab, payload) {
   const applySettings = getApplySettingsFromUi();
-  const messagePayloadBase = {
-    type: "applySolution",
+  const response = await sendRuntimeMessage({
+    type: "applySolvedPayload",
+    tabId: tab.id,
     puzzleType: payload.puzzleType,
     result: payload.result,
+    selection: payload.selection,
     settings: {
       interClickDelayMs: applySettings.interClickDelayMs,
       interMoveDelayMs: applySettings.interMoveDelayMs,
       tangoApplyMode: applySettings.tangoApplyMode,
     },
-  };
-
-  let response = null;
-  for (const target of applyTargets) {
-    response = await safeSendTabMessage(
-      tab.id,
-      {
-        ...messagePayloadBase,
-        selection: target.selection,
-      },
-      { frameId: target.frameId }
-    );
-
-    const shouldRetryWithoutSelection =
-      payload.puzzleType === "sudoku" && shouldRetrySudokuApplyWithoutSelection(response);
-
-    if (shouldRetryWithoutSelection) {
-      const fallbackResponse = await safeSendTabMessage(
-        tab.id,
-        {
-          ...messagePayloadBase,
-          selection: null,
-        },
-        { frameId: target.frameId }
-      );
-
-      if (fallbackResponse && fallbackResponse.ok) {
-        response = fallbackResponse;
-      } else if (!response) {
-        response = fallbackResponse;
-      }
-    }
-
-    if (response && response.ok) {
-      break;
-    }
-  }
-
-  if (
-    (!response || !response.ok) &&
-    payload.puzzleType === "sudoku" &&
-    shouldRetrySudokuApplyWithoutSelection(response)
-  ) {
-    const attemptedFrameIds = new Set(applyTargets.map((target) => target.frameId));
-    const fallbackFrameIds = [];
-    const seenFallbackFrameIds = new Set();
-
-    const pushFallbackFrameId = (frameId) => {
-      if (!Number.isInteger(frameId) || frameId === 0) {
-        return;
-      }
-      if (attemptedFrameIds.has(frameId) || seenFallbackFrameIds.has(frameId)) {
-        return;
-      }
-      seenFallbackFrameIds.add(frameId);
-      fallbackFrameIds.push(frameId);
-    };
-
-    pushFallbackFrameId(frameContext && frameContext.gameFrameId);
-
-    try {
-      const frames = await webNavigationGetAllFrames(tab.id);
-      const frameIds = findLinkedInGameFrameIds(frames, payload.puzzleType);
-      for (const frameId of frameIds) {
-        pushFallbackFrameId(frameId);
-      }
-    } catch (error) {
-      // Ignore frame enumeration failures and keep the latest apply response.
-    }
-
-    for (const frameId of fallbackFrameIds) {
-      const fallbackResponse = await safeSendTabMessage(
-        tab.id,
-        {
-          ...messagePayloadBase,
-          selection: null,
-        },
-        { frameId }
-      );
-
-      if (fallbackResponse && fallbackResponse.ok) {
-        response = fallbackResponse;
-        break;
-      }
-
-      if (!response) {
-        response = fallbackResponse;
-      }
-    }
-  }
+  });
 
   if (!response || !response.ok) {
     throw new Error((response && response.error) || "Failed to apply moves.");
   }
-
-  await clearOverlaysForFrameContext(tab.id, frameContext);
 
   const statusText = buildApplyStatusText(response);
   if (applySettings.autoCloseAfterApply) {
@@ -1176,6 +752,8 @@ async function applyPayloadToTab(tab, payload, frameContext) {
   } else {
     setStatus(statusText);
   }
+
+  return response;
 }
 
 async function handleSolve() {
@@ -1199,19 +777,32 @@ async function handleApply() {
     selection: cached.selection,
   };
 
-  const frameContext = await getGameFrameContext(tab.id, payload.puzzleType);
-  await applyPayloadToTab(tab, payload, frameContext);
+  await applyCachedPayloadForTab(tab, payload);
 }
 
 async function handleSolveAndApply() {
   const tab = await getActiveTab();
-  const solvedPayload = await solveForTab(tab, { renderSolution: false });
+  const solvedPayload = await solveForTab(tab, { previewOnly: false });
 
-  if (!solvedPayload.result || !solvedPayload.result.solved) {
+  if (!solvedPayload.solved || !solvedPayload.applied || !solvedPayload.result || !solvedPayload.selection) {
     return;
   }
 
-  await applyPayloadToTab(tab, solvedPayload, solvedPayload.frameContext);
+  await storageSet({
+    [selectionStorageKey(tab.id)]: {
+      puzzleType: solvedPayload.puzzleType,
+      result: solvedPayload.result,
+      selection: solvedPayload.selection,
+    },
+  });
+
+  const applySettings = getApplySettingsFromUi();
+  if (applySettings.autoCloseAfterApply) {
+    setStatus(`${buildApplyStatusText(solvedPayload)} Closing...`);
+    setTimeout(() => {
+      window.close();
+    }, 420);
+  }
 }
 
 async function handleClearOverlay() {

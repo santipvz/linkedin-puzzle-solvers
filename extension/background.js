@@ -1334,7 +1334,9 @@ async function solveBoardRequest(message) {
 }
 
 async function quickSolveFromPage(message, sender) {
-  const tabId = sender && sender.tab && Number.isInteger(sender.tab.id) ? sender.tab.id : null;
+  const senderTabId = sender && sender.tab && Number.isInteger(sender.tab.id) ? sender.tab.id : null;
+  const messageTabId = Number.isInteger(message && message.tabId) ? message.tabId : null;
+  const tabId = senderTabId !== null ? senderTabId : messageTabId;
   if (tabId === null) {
     throw new Error("Could not resolve active game tab.");
   }
@@ -1505,6 +1507,120 @@ async function quickSolveFromPage(message, sender) {
   };
 }
 
+function normalizeApplySettings(settings, fallbackSettings) {
+  const raw = settings && typeof settings === "object" ? settings : fallbackSettings;
+  const source = raw && typeof raw === "object" ? raw : {};
+
+  return {
+    interClickDelayMs: normalizeDelay(source.interClickDelayMs, DEFAULT_INTER_CLICK_DELAY_MS),
+    interMoveDelayMs: normalizeDelay(source.interMoveDelayMs, DEFAULT_INTER_MOVE_DELAY_MS),
+    tangoApplyMode: normalizeTangoApplyMode(source.tangoApplyMode || DEFAULT_TANGO_APPLY_MODE),
+  };
+}
+
+async function applySolvedPayload(message, sender) {
+  const senderTabId = sender && sender.tab && Number.isInteger(sender.tab.id) ? sender.tab.id : null;
+  const messageTabId = Number.isInteger(message && message.tabId) ? message.tabId : null;
+  const tabId = senderTabId !== null ? senderTabId : messageTabId;
+  if (tabId === null) {
+    throw new Error("Could not resolve target tab.");
+  }
+
+  const tab = await tabsGet(tabId);
+  const requestedPuzzleType = sanitizePuzzleType(message.puzzleType);
+  const detectedPuzzleType = detectPuzzleTypeFromUrl(tab.url);
+  const puzzleType = requestedPuzzleType || detectedPuzzleType;
+  if (!puzzleType) {
+    throw new Error("Open LinkedIn Queens, Tango, Mini Sudoku, Zip, or Patches page first.");
+  }
+
+  if (!message || !message.result || typeof message.result !== "object") {
+    throw new Error("No solved payload provided. Solve first.");
+  }
+
+  if (!message.result.solved) {
+    throw new Error("Cached payload is not solved. Solve first.");
+  }
+
+  const quickSettings = await loadQuickSettings();
+  const applySettings = normalizeApplySettings(message.settings, quickSettings.applySettings);
+
+  const frameContext = await getGameFrameContext(tabId, puzzleType);
+  let topSelection = maybeNormalizeSelectionForPuzzle(puzzleType, message.selection, frameContext && frameContext.iframeRect);
+  let interactionTarget = topSelection ? resolveInteractionTarget(topSelection, frameContext) : null;
+
+  if (!topSelection) {
+    const existing = await getTopBoardSelection(tabId);
+    const normalizedExisting = maybeNormalizeSelectionForPuzzle(puzzleType, existing, frameContext && frameContext.iframeRect);
+    topSelection = normalizedExisting || existing;
+    interactionTarget = topSelection ? resolveInteractionTarget(topSelection, frameContext) : null;
+  }
+
+  if (!topSelection || !interactionTarget) {
+    const selectionContext = await detectSelectionForQuickSolve(tabId, puzzleType, frameContext, tab);
+    topSelection = selectionContext.topSelection;
+    interactionTarget = {
+      frameId: selectionContext.interactionFrameId,
+      selection: selectionContext.interactionSelection,
+    };
+  }
+
+  if (!topSelection) {
+    throw new Error("Board selection is required before applying moves.");
+  }
+
+  const savedTopSelection = await setTopBoardSelection(tabId, topSelection);
+  if (savedTopSelection) {
+    topSelection = savedTopSelection;
+  }
+
+  if (!interactionTarget || !normalizeSelection(interactionTarget.selection)) {
+    interactionTarget = resolveInteractionTarget(topSelection, frameContext) || {
+      frameId: 0,
+      selection: topSelection,
+    };
+  }
+
+  const applyResponse = await applySolutionForSelection(
+    tabId,
+    puzzleType,
+    message.result,
+    interactionTarget.frameId,
+    interactionTarget.selection,
+    topSelection,
+    frameContext,
+    applySettings
+  );
+
+  if (!applyResponse || !applyResponse.ok) {
+    return {
+      puzzleType,
+      applied: false,
+      selection: topSelection,
+      error:
+        applyResponse && applyResponse.error
+          ? applyResponse.error
+          : "Solved board but failed to apply moves.",
+      appliedCount: Number(applyResponse && applyResponse.appliedCount) || 0,
+      clickCount: Number(applyResponse && applyResponse.clickCount) || 0,
+      keyCount: Number(applyResponse && applyResponse.keyCount) || 0,
+      strategy: (applyResponse && applyResponse.strategy) || null,
+    };
+  }
+
+  await clearOverlaysForFrameContext(tabId, frameContext);
+
+  return {
+    puzzleType,
+    applied: true,
+    selection: topSelection,
+    appliedCount: Number(applyResponse.appliedCount) || 0,
+    clickCount: Number(applyResponse.clickCount) || 0,
+    keyCount: Number(applyResponse.keyCount) || 0,
+    strategy: applyResponse.strategy || null,
+  };
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || !message.type) {
     return;
@@ -1524,6 +1640,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "quickSolveFromPage") {
     quickSolveFromPage(message, sender)
+      .then((payload) => {
+        sendResponse({ ok: true, ...payload });
+      })
+      .catch((error) => {
+        sendResponse({ ok: false, error: error.message || String(error) });
+      });
+
+    return true;
+  }
+
+  if (message.type === "applySolvedPayload") {
+    applySolvedPayload(message, sender)
       .then((payload) => {
         sendResponse({ ok: true, ...payload });
       })
