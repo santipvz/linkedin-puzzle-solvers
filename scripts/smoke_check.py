@@ -8,6 +8,13 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from services.solver_api.app.puzzle_registry import PUZZLE_DEFINITIONS
+
+
+WORKERS_DIR = REPO_ROOT / "services" / "solver_api" / "app" / "workers"
 
 
 def run_worker(worker_path: Path, image_path: Path, puzzle_name: str, expected_board_size: int) -> None:
@@ -57,40 +64,24 @@ def run_worker(worker_path: Path, image_path: Path, puzzle_name: str, expected_b
 
 
 def main() -> int:
-    queens_worker = REPO_ROOT / "services" / "solver_api" / "app" / "workers" / "solve_queens_worker.py"
-    queens_sample = REPO_ROOT / "games" / "queen_solver" / "examples" / "sample1.png"
+    for definition in PUZZLE_DEFINITIONS:
+        worker_path = WORKERS_DIR / definition.worker_filename
+        sample_path = REPO_ROOT / definition.sample_image
 
-    tango_worker = REPO_ROOT / "services" / "solver_api" / "app" / "workers" / "solve_tango_worker.py"
-    tango_sample = REPO_ROOT / "games" / "tango_solver" / "examples" / "sample1.png"
+        if not sample_path.exists():
+            message = (
+                f"[skip] {definition.worker_filename}: sample image not found at {definition.sample_image}"
+            )
+            if definition.sample_required:
+                raise RuntimeError(message)
+            print(message)
+            continue
 
-    sudoku_worker = REPO_ROOT / "services" / "solver_api" / "app" / "workers" / "solve_sudoku_worker.py"
-    sudoku_sample = REPO_ROOT / "games" / "sudoku_solver" / "examples" / "sample1.png"
-
-    zip_worker = REPO_ROOT / "services" / "solver_api" / "app" / "workers" / "solve_zip_worker.py"
-    zip_sample = REPO_ROOT / "games" / "zip_solver" / "examples" / "sample1.png"
-
-    patches_worker = REPO_ROOT / "services" / "solver_api" / "app" / "workers" / "solve_patches_worker.py"
-    patches_sample = REPO_ROOT / "games" / "patches_solver" / "examples" / "sample1.png"
-
-    run_worker(queens_worker, queens_sample, "queens", expected_board_size=9)
-    run_worker(tango_worker, tango_sample, "tango", expected_board_size=6)
-
-    if sudoku_sample.exists():
-        run_worker(sudoku_worker, sudoku_sample, "sudoku", expected_board_size=6)
-    else:
-        print("[skip] solve_sudoku_worker.py: sample image not found at games/sudoku_solver/examples/sample1.png")
-
-    if zip_sample.exists():
-        run_worker(zip_worker, zip_sample, "zip", expected_board_size=7)
-    else:
-        print("[skip] solve_zip_worker.py: sample image not found at games/zip_solver/examples/sample1.png")
-
-    if patches_sample.exists():
-        run_worker(patches_worker, patches_sample, "patches", expected_board_size=6)
-    else:
-        print(
-            "[skip] solve_patches_worker.py: sample image not found at "
-            "games/patches_solver/examples/sample1.png"
+        run_worker(
+            worker_path=worker_path,
+            image_path=sample_path,
+            puzzle_name=definition.key,
+            expected_board_size=int(definition.expected_board_size),
         )
 
     return 0
