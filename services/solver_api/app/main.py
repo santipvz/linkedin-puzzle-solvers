@@ -31,6 +31,20 @@ MAX_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024
 WORKER_TIMEOUT_SECONDS = 60
 MAX_SOLVE_CACHE_ENTRIES = 96
 DATASET_CAPTURE_ENABLED = os.getenv("DATASET_CAPTURE_ENABLED", "1").strip().lower() not in {"0", "false", "no"}
+CORS_ALLOW_ORIGINS_RAW = os.getenv("CORS_ALLOW_ORIGINS", "*")
+CORS_ALLOW_ORIGIN_REGEX = (os.getenv("CORS_ALLOW_ORIGIN_REGEX") or "").strip() or None
+
+
+def _parse_cors_origins(raw_value: str) -> list[str]:
+    values = [part.strip() for part in str(raw_value).split(",") if part.strip()]
+    if not values:
+        return ["*"]
+    if "*" in values:
+        return ["*"]
+    return values
+
+
+CORS_ALLOW_ORIGINS = _parse_cors_origins(CORS_ALLOW_ORIGINS_RAW)
 
 
 _solve_cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
@@ -44,7 +58,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ALLOW_ORIGINS,
+    allow_origin_regex=None if CORS_ALLOW_ORIGINS == ["*"] else CORS_ALLOW_ORIGIN_REGEX,
     allow_methods=["*"],
     allow_headers=["*"],
 )

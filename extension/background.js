@@ -1081,6 +1081,7 @@ async function detectSelectionForQuickSolve(tabId, puzzleType, frameContext, tab
           interactionFrameId: interactionTarget.frameId,
           interactionSelection: interactionTarget.selection,
           usedViewportFallback: true,
+          fallbackSource: "frame",
         };
       }
     }
@@ -1097,6 +1098,7 @@ async function detectSelectionForQuickSolve(tabId, puzzleType, frameContext, tab
         interactionFrameId: interactionTarget.frameId,
         interactionSelection: interactionTarget.selection,
         usedViewportFallback: true,
+        fallbackSource: "viewport",
       };
     }
   }
@@ -1333,18 +1335,26 @@ async function solveBoardRequest(message) {
   });
 }
 
-async function quickSolveFromPage(message, sender) {
+function resolveMessageTabId(message, sender) {
   const senderTabId = sender && sender.tab && Number.isInteger(sender.tab.id) ? sender.tab.id : null;
   const messageTabId = Number.isInteger(message && message.tabId) ? message.tabId : null;
-  const tabId = senderTabId !== null ? senderTabId : messageTabId;
+  return senderTabId !== null ? senderTabId : messageTabId;
+}
+
+function resolvePuzzleTypeForTab(requestedPuzzleType, tabUrl) {
+  const requested = sanitizePuzzleType(requestedPuzzleType);
+  const detected = detectPuzzleTypeFromUrl(tabUrl);
+  return requested || detected;
+}
+
+async function quickSolveFromPage(message, sender) {
+  const tabId = resolveMessageTabId(message, sender);
   if (tabId === null) {
     throw new Error("Could not resolve active game tab.");
   }
 
   const tab = await tabsGet(tabId);
-  const requestedPuzzleType = sanitizePuzzleType(message.puzzleType);
-  const detectedPuzzleType = detectPuzzleTypeFromUrl(tab.url);
-  const puzzleType = requestedPuzzleType || detectedPuzzleType;
+  const puzzleType = resolvePuzzleTypeForTab(message.puzzleType, tab.url);
 
   if (!puzzleType) {
     throw new Error("Open LinkedIn Queens, Tango, Mini Sudoku, Zip, or Patches page first.");
@@ -1507,6 +1517,54 @@ async function quickSolveFromPage(message, sender) {
   };
 }
 
+async function autoDetectBoardSelection(message, sender) {
+  const tabId = resolveMessageTabId(message, sender);
+  if (tabId === null) {
+    throw new Error("Could not resolve active game tab.");
+  }
+
+  const tab = await tabsGet(tabId);
+  const puzzleType = resolvePuzzleTypeForTab(message.puzzleType, tab.url);
+  if (!puzzleType) {
+    throw new Error("Open LinkedIn Queens, Tango, Mini Sudoku, Zip, or Patches page first.");
+  }
+
+  const frameContext = await getGameFrameContext(tabId, puzzleType);
+  const selectionContext = await detectSelectionForQuickSolve(tabId, puzzleType, frameContext, tab);
+
+  let status = "Board auto-detected.";
+  if (selectionContext && selectionContext.fallbackSource === "viewport") {
+    status = "Board auto-detect missed; using viewport fallback.";
+  } else if (selectionContext && selectionContext.fallbackSource === "frame") {
+    status = "Board auto-detect missed; using game-frame fallback.";
+  }
+
+  return {
+    puzzleType,
+    selection: selectionContext.topSelection,
+    interactionFrameId: selectionContext.interactionFrameId,
+    interactionSelection: selectionContext.interactionSelection,
+    status,
+  };
+}
+
+async function clearOverlaysForTab(message, sender) {
+  const tabId = resolveMessageTabId(message, sender);
+  if (tabId === null) {
+    throw new Error("Could not resolve active game tab.");
+  }
+
+  const tab = await tabsGet(tabId);
+  const puzzleType = resolvePuzzleTypeForTab(message.puzzleType, tab.url) || "queens";
+  const frameContext = await getGameFrameContext(tabId, puzzleType);
+  await clearOverlaysForFrameContext(tabId, frameContext);
+
+  return {
+    puzzleType,
+    cleared: true,
+  };
+}
+
 function normalizeApplySettings(settings, fallbackSettings) {
   const raw = settings && typeof settings === "object" ? settings : fallbackSettings;
   const source = raw && typeof raw === "object" ? raw : {};
@@ -1519,17 +1577,13 @@ function normalizeApplySettings(settings, fallbackSettings) {
 }
 
 async function applySolvedPayload(message, sender) {
-  const senderTabId = sender && sender.tab && Number.isInteger(sender.tab.id) ? sender.tab.id : null;
-  const messageTabId = Number.isInteger(message && message.tabId) ? message.tabId : null;
-  const tabId = senderTabId !== null ? senderTabId : messageTabId;
+  const tabId = resolveMessageTabId(message, sender);
   if (tabId === null) {
     throw new Error("Could not resolve target tab.");
   }
 
   const tab = await tabsGet(tabId);
-  const requestedPuzzleType = sanitizePuzzleType(message.puzzleType);
-  const detectedPuzzleType = detectPuzzleTypeFromUrl(tab.url);
-  const puzzleType = requestedPuzzleType || detectedPuzzleType;
+  const puzzleType = resolvePuzzleTypeForTab(message.puzzleType, tab.url);
   if (!puzzleType) {
     throw new Error("Open LinkedIn Queens, Tango, Mini Sudoku, Zip, or Patches page first.");
   }
@@ -1640,6 +1694,30 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "quickSolveFromPage") {
     quickSolveFromPage(message, sender)
+      .then((payload) => {
+        sendResponse({ ok: true, ...payload });
+      })
+      .catch((error) => {
+        sendResponse({ ok: false, error: error.message || String(error) });
+      });
+
+    return true;
+  }
+
+  if (message.type === "autoDetectBoardSelection") {
+    autoDetectBoardSelection(message, sender)
+      .then((payload) => {
+        sendResponse({ ok: true, ...payload });
+      })
+      .catch((error) => {
+        sendResponse({ ok: false, error: error.message || String(error) });
+      });
+
+    return true;
+  }
+
+  if (message.type === "clearOverlaysForTab") {
+    clearOverlaysForTab(message, sender)
       .then((payload) => {
         sendResponse({ ok: true, ...payload });
       })

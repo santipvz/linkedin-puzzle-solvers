@@ -8,8 +8,7 @@
     "http://127.0.0.1/*",
     "http://localhost/*",
     "https://www.linkedin.com/*",
-    "https://*.linkedin.com/*",
-    "<all_urls>"
+    "https://*.linkedin.com/*"
   ],
   "background": {
     "service_worker": "background.js",

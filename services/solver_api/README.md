@@ -72,3 +72,4 @@ If running in Docker mode, change port `8000` -> `18000`.
 - Dataset capture is enabled for start-board requests by default.
 - Default capture path: `datasets/<puzzle>/<YYYY-MM-DD>/`.
 - Disable capture with `DATASET_CAPTURE_ENABLED=0`.
+- CORS defaults to `*`; override with `CORS_ALLOW_ORIGINS` (comma-separated) and optional `CORS_ALLOW_ORIGIN_REGEX`.
