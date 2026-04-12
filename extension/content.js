@@ -6,29 +6,62 @@ let quickSolveStatus = null;
 let quickSolveBusy = false;
 let quickSolveObservedUrl = "";
 
-function detectPuzzleTypeFromUrl(url) {
-  if (!url || typeof url !== "string") {
-    return null;
-  }
+const puzzleRegistry = globalThis.PuzzleRegistry || {};
+const detectPuzzleTypeFromUrl =
+  typeof puzzleRegistry.detectPuzzleTypeFromUrl === "function"
+    ? puzzleRegistry.detectPuzzleTypeFromUrl
+    : function fallbackDetectPuzzleTypeFromUrl(url) {
+        if (!url || typeof url !== "string") {
+          return null;
+        }
 
-  const normalized = url.toLowerCase();
-  if (normalized.includes("/games/queens") || normalized.includes("/games/view/queens")) {
-    return "queens";
-  }
-  if (normalized.includes("/games/tango") || normalized.includes("/games/view/tango")) {
-    return "tango";
-  }
-  if (normalized.includes("/games/mini-sudoku") || normalized.includes("/games/view/mini-sudoku")) {
-    return "sudoku";
-  }
-  if (normalized.includes("/games/zip") || normalized.includes("/games/view/zip")) {
-    return "zip";
-  }
-  if (normalized.includes("/games/patches") || normalized.includes("/games/view/patches")) {
-    return "patches";
-  }
-  return null;
-}
+        const normalized = url.toLowerCase();
+        if (normalized.includes("/games/queens") || normalized.includes("/games/view/queens")) {
+          return "queens";
+        }
+        if (normalized.includes("/games/tango") || normalized.includes("/games/view/tango")) {
+          return "tango";
+        }
+        if (normalized.includes("/games/mini-sudoku") || normalized.includes("/games/view/mini-sudoku")) {
+          return "sudoku";
+        }
+        if (normalized.includes("/games/zip") || normalized.includes("/games/view/zip")) {
+          return "zip";
+        }
+        if (normalized.includes("/games/patches") || normalized.includes("/games/view/patches")) {
+          return "patches";
+        }
+        return null;
+      };
+
+const puzzleTypeToLabel =
+  typeof puzzleRegistry.puzzleTypeToLabel === "function"
+    ? puzzleRegistry.puzzleTypeToLabel
+    : function fallbackPuzzleTypeToLabel(puzzleType) {
+        if (puzzleType === "tango") {
+          return "Tango";
+        }
+        if (puzzleType === "sudoku") {
+          return "Mini Sudoku";
+        }
+        if (puzzleType === "zip") {
+          return "Zip";
+        }
+        if (puzzleType === "patches") {
+          return "Patches";
+        }
+        return "Queens";
+      };
+
+const puzzleTypeToFrameSlug =
+  typeof puzzleRegistry.puzzleTypeToFrameSlug === "function"
+    ? puzzleRegistry.puzzleTypeToFrameSlug
+    : function fallbackPuzzleTypeToFrameSlug(puzzleType) {
+        if (puzzleType === "sudoku") {
+          return "mini-sudoku";
+        }
+        return puzzleType;
+      };
 
 function detectPuzzleTypeFromPage() {
   const fromLocation = detectPuzzleTypeFromUrl(window.location.href);
@@ -72,16 +105,7 @@ function updateQuickSolveButtonText() {
   }
 
   const puzzleType = detectPuzzleTypeFromPage();
-  const puzzleLabel =
-    puzzleType === "tango"
-      ? "Tango"
-      : puzzleType === "sudoku"
-      ? "Mini Sudoku"
-      : puzzleType === "zip"
-      ? "Zip"
-      : puzzleType === "patches"
-      ? "Patches"
-      : "Queens";
+  const puzzleLabel = puzzleTypeToLabel(puzzleType);
 
   if (quickSolveBusy) {
     quickSolveButton.textContent = `Solving ${puzzleLabel}...`;
@@ -302,13 +326,6 @@ function isRectVisible(rect) {
   }
 
   return true;
-}
-
-function puzzleTypeToFrameSlug(puzzleType) {
-  if (puzzleType === "sudoku") {
-    return "mini-sudoku";
-  }
-  return puzzleType;
 }
 
 function detectLinkedInGameIframe(puzzleType) {

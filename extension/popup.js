@@ -26,6 +26,17 @@ const tangoApplyModeSelect = document.getElementById("tangoApplyMode");
 const resultBox = document.getElementById("result");
 const statusBox = document.getElementById("status");
 
+const puzzleRegistry = globalThis.PuzzleRegistry || {};
+const puzzleTypeToFrameSlug =
+  typeof puzzleRegistry.puzzleTypeToFrameSlug === "function"
+    ? puzzleRegistry.puzzleTypeToFrameSlug
+    : function fallbackPuzzleTypeToFrameSlug(puzzleType) {
+        if (puzzleType === "sudoku") {
+          return "mini-sudoku";
+        }
+        return puzzleType;
+      };
+
 function storageGet(keys) {
   return new Promise((resolve, reject) => {
     chrome.storage.local.get(keys, (items) => {
@@ -299,13 +310,6 @@ function translateTabSelectionToFrame(tabSelection, iframeRect, frameViewport) {
     height: Math.min(selection.height / scaleY, maxHeight),
     devicePixelRatio: selection.devicePixelRatio,
   });
-}
-
-function puzzleTypeToFrameSlug(puzzleType) {
-  if (puzzleType === "sudoku") {
-    return "mini-sudoku";
-  }
-  return puzzleType;
 }
 
 function findLinkedInGameFrame(frames, puzzleType) {

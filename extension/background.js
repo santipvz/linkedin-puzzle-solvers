@@ -1,3 +1,11 @@
+if (typeof importScripts === "function") {
+  try {
+    importScripts("puzzle_registry.js");
+  } catch (error) {
+    void error;
+  }
+}
+
 const DEFAULT_API_BASE = "http://127.0.0.1:8000";
 const DEFAULT_INTER_CLICK_DELAY_MS = 45;
 const DEFAULT_INTER_MOVE_DELAY_MS = 40;
@@ -8,62 +16,72 @@ const STORAGE_INTER_CLICK_DELAY_KEY = "solver_inter_click_delay_ms";
 const STORAGE_INTER_MOVE_DELAY_KEY = "solver_inter_move_delay_ms";
 const STORAGE_TANGO_APPLY_MODE_KEY = "solver_tango_apply_mode";
 
+const puzzleRegistry = globalThis.PuzzleRegistry || {};
+const sanitizePuzzleType =
+  typeof puzzleRegistry.sanitizePuzzleType === "function"
+    ? puzzleRegistry.sanitizePuzzleType
+    : function fallbackSanitizePuzzleType(value) {
+        if (value === "patches") {
+          return "patches";
+        }
+        if (value === "zip") {
+          return "zip";
+        }
+        if (value === "sudoku") {
+          return "sudoku";
+        }
+        if (value === "tango") {
+          return "tango";
+        }
+        if (value === "queens") {
+          return "queens";
+        }
+        return null;
+      };
+
+const detectPuzzleTypeFromUrl =
+  typeof puzzleRegistry.detectPuzzleTypeFromUrl === "function"
+    ? puzzleRegistry.detectPuzzleTypeFromUrl
+    : function fallbackDetectPuzzleTypeFromUrl(url) {
+        if (!url || typeof url !== "string") {
+          return null;
+        }
+
+        const normalized = url.toLowerCase();
+        if (normalized.includes("/games/queens") || normalized.includes("/games/view/queens")) {
+          return "queens";
+        }
+        if (normalized.includes("/games/tango") || normalized.includes("/games/view/tango")) {
+          return "tango";
+        }
+        if (normalized.includes("/games/mini-sudoku") || normalized.includes("/games/view/mini-sudoku")) {
+          return "sudoku";
+        }
+        if (normalized.includes("/games/zip") || normalized.includes("/games/view/zip")) {
+          return "zip";
+        }
+        if (normalized.includes("/games/patches") || normalized.includes("/games/view/patches")) {
+          return "patches";
+        }
+        return null;
+      };
+
+const puzzleTypeToFrameSlug =
+  typeof puzzleRegistry.puzzleTypeToFrameSlug === "function"
+    ? puzzleRegistry.puzzleTypeToFrameSlug
+    : function fallbackPuzzleTypeToFrameSlug(puzzleType) {
+        if (puzzleType === "sudoku") {
+          return "mini-sudoku";
+        }
+        return puzzleType;
+      };
+
 function normalizeApiBase(value) {
   if (!value || typeof value !== "string") {
     return DEFAULT_API_BASE;
   }
 
   return value.trim().replace(/\/+$/, "") || DEFAULT_API_BASE;
-}
-
-function sanitizePuzzleType(value) {
-  if (value === "patches") {
-    return "patches";
-  }
-  if (value === "zip") {
-    return "zip";
-  }
-  if (value === "sudoku") {
-    return "sudoku";
-  }
-  if (value === "tango") {
-    return "tango";
-  }
-  if (value === "queens") {
-    return "queens";
-  }
-  return null;
-}
-
-function detectPuzzleTypeFromUrl(url) {
-  if (!url || typeof url !== "string") {
-    return null;
-  }
-
-  const normalized = url.toLowerCase();
-  if (normalized.includes("/games/queens") || normalized.includes("/games/view/queens")) {
-    return "queens";
-  }
-  if (normalized.includes("/games/tango") || normalized.includes("/games/view/tango")) {
-    return "tango";
-  }
-  if (normalized.includes("/games/mini-sudoku") || normalized.includes("/games/view/mini-sudoku")) {
-    return "sudoku";
-  }
-  if (normalized.includes("/games/zip") || normalized.includes("/games/view/zip")) {
-    return "zip";
-  }
-  if (normalized.includes("/games/patches") || normalized.includes("/games/view/patches")) {
-    return "patches";
-  }
-  return null;
-}
-
-function puzzleTypeToFrameSlug(puzzleType) {
-  if (puzzleType === "sudoku") {
-    return "mini-sudoku";
-  }
-  return puzzleType;
 }
 
 function normalizeSelection(selection) {

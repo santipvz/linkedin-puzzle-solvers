@@ -22,7 +22,7 @@
   "content_scripts": [
     {
       "matches": ["https://linkedin.com/*", "https://*.linkedin.com/*"],
-      "js": ["content.js"],
+      "js": ["puzzle_registry.js", "content.js"],
       "run_at": "document_idle",
       "all_frames": true
     }
