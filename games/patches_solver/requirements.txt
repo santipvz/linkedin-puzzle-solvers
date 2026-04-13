@@ -1,2 +1,4 @@
 opencv-python==4.11.0.86
 numpy==1.26.4
+pillow==11.1.0
+scikit-learn==1.6.1

@@ -24,3 +24,9 @@ Available board captures:
 - `games/patches_solver/examples/sample1.png`
 - `games/patches_solver/examples/sample2.png`
 - `games/patches_solver/examples/sample3.png`
+
+## Tests
+
+```bash
+python3 -m unittest discover -s games/patches_solver/tests -p "test_*.py"
+```

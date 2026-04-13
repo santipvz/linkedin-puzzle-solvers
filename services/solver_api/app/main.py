@@ -18,6 +18,8 @@ from fastapi import FastAPI, File, HTTPException, Header, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 
+from .puzzle_registry import PUZZLE_DEFINITIONS, get_puzzle_definition
+
 
 APP_DIR = Path(__file__).resolve().parent
 REPO_ROOT = APP_DIR.parents[2]
@@ -29,6 +31,20 @@ MAX_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024
 WORKER_TIMEOUT_SECONDS = 60
 MAX_SOLVE_CACHE_ENTRIES = 96
 DATASET_CAPTURE_ENABLED = os.getenv("DATASET_CAPTURE_ENABLED", "1").strip().lower() not in {"0", "false", "no"}
+CORS_ALLOW_ORIGINS_RAW = os.getenv("CORS_ALLOW_ORIGINS", "*")
+CORS_ALLOW_ORIGIN_REGEX = (os.getenv("CORS_ALLOW_ORIGIN_REGEX") or "").strip() or None
+
+
+def _parse_cors_origins(raw_value: str) -> list[str]:
+    values = [part.strip() for part in str(raw_value).split(",") if part.strip()]
+    if not values:
+        return ["*"]
+    if "*" in values:
+        return ["*"]
+    return values
+
+
+CORS_ALLOW_ORIGINS = _parse_cors_origins(CORS_ALLOW_ORIGINS_RAW)
 
 
 _solve_cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
@@ -42,7 +58,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ALLOW_ORIGINS,
+    allow_origin_regex=None if CORS_ALLOW_ORIGINS == ["*"] else CORS_ALLOW_ORIGIN_REGEX,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -261,66 +278,26 @@ def _should_capture_board_start(header_value: str | None) -> bool:
     return header_value.strip().lower() == "start"
 
 
-@app.post("/solve/queens")
-async def solve_queens(
-    image: UploadFile = File(...),
-    board_capture: str | None = Header(default=None, alias="X-Board-Capture"),
-) -> dict[str, Any]:
-    return await _solve_with_worker(
-        "solve_queens_worker.py",
-        image,
-        "queens",
-        capture_board_start=_should_capture_board_start(board_capture),
-    )
+def _build_solve_handler(puzzle_key: str):
+    definition = get_puzzle_definition(puzzle_key)
+
+    async def solve_handler(
+        image: UploadFile = File(...),
+        board_capture: str | None = Header(default=None, alias="X-Board-Capture"),
+    ) -> dict[str, Any]:
+        return await _solve_with_worker(
+            definition.worker_filename,
+            image,
+            definition.key,
+            capture_board_start=_should_capture_board_start(board_capture),
+        )
+
+    solve_handler.__name__ = f"solve_{definition.key}"
+    return solve_handler
 
 
-@app.post("/solve/tango")
-async def solve_tango(
-    image: UploadFile = File(...),
-    board_capture: str | None = Header(default=None, alias="X-Board-Capture"),
-) -> dict[str, Any]:
-    return await _solve_with_worker(
-        "solve_tango_worker.py",
-        image,
-        "tango",
-        capture_board_start=_should_capture_board_start(board_capture),
-    )
-
-
-@app.post("/solve/sudoku")
-async def solve_sudoku(
-    image: UploadFile = File(...),
-    board_capture: str | None = Header(default=None, alias="X-Board-Capture"),
-) -> dict[str, Any]:
-    return await _solve_with_worker(
-        "solve_sudoku_worker.py",
-        image,
-        "sudoku",
-        capture_board_start=_should_capture_board_start(board_capture),
-    )
-
-
-@app.post("/solve/zip")
-async def solve_zip(
-    image: UploadFile = File(...),
-    board_capture: str | None = Header(default=None, alias="X-Board-Capture"),
-) -> dict[str, Any]:
-    return await _solve_with_worker(
-        "solve_zip_worker.py",
-        image,
-        "zip",
-        capture_board_start=_should_capture_board_start(board_capture),
-    )
-
-
-@app.post("/solve/patches")
-async def solve_patches(
-    image: UploadFile = File(...),
-    board_capture: str | None = Header(default=None, alias="X-Board-Capture"),
-) -> dict[str, Any]:
-    return await _solve_with_worker(
-        "solve_patches_worker.py",
-        image,
-        "patches",
-        capture_board_start=_should_capture_board_start(board_capture),
-    )
+for puzzle_definition in PUZZLE_DEFINITIONS:
+    app.post(
+        puzzle_definition.endpoint_path,
+        name=f"solve_{puzzle_definition.key}",
+    )(_build_solve_handler(puzzle_definition.key))

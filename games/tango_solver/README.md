@@ -19,38 +19,34 @@ Tango is a LinkedIn logic puzzle where you fill a 6x6 grid with moon (🌙) and 
 
 ## 🚀 Installation & Usage
 
-1. **Clone the repository:**
+1. **Install dependencies (from monorepo root):**
 ```bash
-git clone git@github.com:santipvz/tango_solver.git
-cd tango_solver
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r games/tango_solver/requirements.txt
 ```
 
-2. **Install dependencies:**
+2. **Solve a puzzle:**
 ```bash
-pip install -r requirements.txt
-```
-
-3. **Solve a puzzle:**
-```bash
-python3 main.py examples/sample1.png
+python3 games/tango_solver/main.py games/tango_solver/examples/sample1.png
 ```
 
 **Use your own puzzle image:**
 ```bash
-python3 main.py path/to/your/puzzle.png
+python3 games/tango_solver/main.py path/to/your/puzzle.png
 ```
 
 ### Options
 
 ```bash
-python3 main.py examples/sample1.png --verbose   # Detailed output
-python3 main.py examples/sample1.png --gif       # Generate GIF animation (⚠️ much slower)
-python3 main.py examples/sample1.png --quiet     # Minimal output
+python3 games/tango_solver/main.py games/tango_solver/examples/sample1.png --verbose   # Detailed output
+python3 games/tango_solver/main.py games/tango_solver/examples/sample1.png --gif       # Generate GIF animation (⚠️ much slower)
+python3 games/tango_solver/main.py games/tango_solver/examples/sample1.png --quiet     # Minimal output
 ```
 
 **Example:**
 ```bash
-python3 main.py examples/sample5.png --verbose
+python3 games/tango_solver/main.py games/tango_solver/examples/sample5.png --verbose
 ```
 ![TEST](assets/test.gif)
 
@@ -60,10 +56,10 @@ You can generate an animated GIF showing how the backtracking algorithm explores
 
 ```bash
 # Generate GIF with default settings (1 ms default speed)
-python3 main.py examples/sample1.png --gif
+python3 games/tango_solver/main.py games/tango_solver/examples/sample1.png --gif
 
 # Custom GIF speed and output filename
-python3 main.py examples/sample1.png --gif --speed 500 --output my_solution.gif
+python3 games/tango_solver/main.py games/tango_solver/examples/sample1.png --gif --speed 500 --output my_solution.gif
 ```
 
 ⚠️ **Warning**: Generating the GIF animation significantly slows down the solving process as it captures and saves each step of the backtracking algorithm.
@@ -76,6 +72,8 @@ The GIF visualization shows:
 - Orange cells: piece type 1
 
 ### Tests & Debugging
+
+Run these commands from `games/tango_solver`:
 
 ```bash
 python3 -m tests.test_runner           # Run all tests
@@ -100,7 +98,7 @@ python3 -m tests.test_constraint_debug
 
 Debug constraint detection on a specific image with visual output:
 ```bash
-python3 -m tests.test_constraint_debug.py examples/sample6.png
+python3 -m tests.test_constraint_debug examples/sample6.png
 ```
 
 This will show you exactly how the system detects and classifies each constraint, with visual comparisons between the detected regions and the templates used for matching.

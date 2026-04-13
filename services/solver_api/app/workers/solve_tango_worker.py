@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import contextlib
 import io
-import json
 import sys
 from pathlib import Path
 from typing import Any
 
-
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[4]
+try:
+    from .common import activate_game_import_context, game_root_for_worker, run_worker_cli
+except ImportError:
+    from common import activate_game_import_context, game_root_for_worker, run_worker_cli
 
 
 def _normalize_board(board: list[list[Any]]) -> list[list[int]]:
@@ -75,7 +75,7 @@ def _board_bbox_from_grid_coords(grid_coords: Any) -> dict[str, int] | None:
 
 
 def solve(image_path: Path) -> dict[str, Any]:
-    game_root = _repo_root() / "games" / "tango_solver"
+    game_root = game_root_for_worker(__file__, "tango_solver")
     if not game_root.exists():
         return {
             "puzzle": "tango",
@@ -83,7 +83,7 @@ def solve(image_path: Path) -> dict[str, Any]:
             "error": "Tango project folder not found.",
         }
 
-    sys.path.insert(0, str(game_root))
+    activate_game_import_context(game_root)
 
     from src.image_parser import TangoImageParser
     from src.tango_solver import TangoSolver
@@ -180,23 +180,12 @@ def solve(image_path: Path) -> dict[str, Any]:
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
-        print("Usage: solve_tango_worker.py <image_path>", file=sys.stderr)
-        return 1
-
-    image_path = Path(sys.argv[1]).resolve()
-    if not image_path.exists():
-        print(f"Image file not found: {image_path}", file=sys.stderr)
-        return 1
-
-    try:
-        result = solve(image_path)
-    except Exception as exc:
-        print(f"Tango worker crashed: {exc}", file=sys.stderr)
-        return 1
-
-    print(json.dumps(result))
-    return 0
+    return run_worker_cli(
+        argv=sys.argv,
+        solve_fn=solve,
+        worker_script="solve_tango_worker.py",
+        worker_label="Tango",
+    )
 
 
 if __name__ == "__main__":

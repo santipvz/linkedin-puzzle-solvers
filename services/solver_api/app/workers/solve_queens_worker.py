@@ -3,7 +3,6 @@ from __future__ import annotations
 import contextlib
 import importlib
 import io
-import json
 import sys
 import tempfile
 from pathlib import Path
@@ -12,13 +11,14 @@ from typing import Any, Sequence
 import cv2
 import numpy as np
 
+try:
+    from .common import activate_game_import_context, game_root_for_worker, run_worker_cli
+except ImportError:
+    from common import activate_game_import_context, game_root_for_worker, run_worker_cli
+
 
 MIN_BOARD_AREA_RATIO = 0.08
 DARK_PIXEL_THRESHOLD = 72
-
-
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[4]
 
 
 def _serialize_solution_grid(solution: Any) -> list[list[int]]:
@@ -405,7 +405,7 @@ def _select_best_attempt(attempts: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def solve(image_path: Path) -> dict[str, Any]:
-    game_root = _repo_root() / "games" / "queen_solver"
+    game_root = game_root_for_worker(__file__, "queen_solver")
     if not game_root.exists():
         return {
             "puzzle": "queens",
@@ -413,7 +413,7 @@ def solve(image_path: Path) -> dict[str, Any]:
             "error": "Queens project folder not found.",
         }
 
-    sys.path.insert(0, str(game_root))
+    activate_game_import_context(game_root)
 
     queens_module = importlib.import_module(".".join(["src", "queens_solver"]))
     queens_solver_class = getattr(queens_module, "QueensSolver")
@@ -493,23 +493,12 @@ def solve(image_path: Path) -> dict[str, Any]:
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
-        print("Usage: solve_queens_worker.py <image_path>", file=sys.stderr)
-        return 1
-
-    image_path = Path(sys.argv[1]).resolve()
-    if not image_path.exists():
-        print(f"Image file not found: {image_path}", file=sys.stderr)
-        return 1
-
-    try:
-        result = solve(image_path)
-    except Exception as exc:
-        print(f"Queens worker crashed: {exc}", file=sys.stderr)
-        return 1
-
-    print(json.dumps(result))
-    return 0
+    return run_worker_cli(
+        argv=sys.argv,
+        solve_fn=solve,
+        worker_script="solve_queens_worker.py",
+        worker_label="Queens",
+    )
 
 
 if __name__ == "__main__":

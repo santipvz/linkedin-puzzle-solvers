@@ -32,7 +32,10 @@ jobs:
           python -m compileall games/patches_solver/src
 
       - name: Run solver smoke checks
-        run: python scripts/smoke_check.py
+        run: |
+          python scripts/check_puzzle_registry_sync.py
+          python -m unittest discover -s services/solver_api/tests -p "test_*.py"
+          python scripts/smoke_check.py
 
       - name: Set up Node.js
         uses: actions/setup-node@v4

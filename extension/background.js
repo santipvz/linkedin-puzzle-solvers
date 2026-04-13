@@ -1,3 +1,11 @@
+if (typeof importScripts === "function") {
+  try {
+    importScripts("puzzle_registry.js");
+  } catch (error) {
+    void error;
+  }
+}
+
 const DEFAULT_API_BASE = "http://127.0.0.1:8000";
 const DEFAULT_INTER_CLICK_DELAY_MS = 45;
 const DEFAULT_INTER_MOVE_DELAY_MS = 40;
@@ -8,62 +16,72 @@ const STORAGE_INTER_CLICK_DELAY_KEY = "solver_inter_click_delay_ms";
 const STORAGE_INTER_MOVE_DELAY_KEY = "solver_inter_move_delay_ms";
 const STORAGE_TANGO_APPLY_MODE_KEY = "solver_tango_apply_mode";
 
+const puzzleRegistry = globalThis.PuzzleRegistry || {};
+const sanitizePuzzleType =
+  typeof puzzleRegistry.sanitizePuzzleType === "function"
+    ? puzzleRegistry.sanitizePuzzleType
+    : function fallbackSanitizePuzzleType(value) {
+        if (value === "patches") {
+          return "patches";
+        }
+        if (value === "zip") {
+          return "zip";
+        }
+        if (value === "sudoku") {
+          return "sudoku";
+        }
+        if (value === "tango") {
+          return "tango";
+        }
+        if (value === "queens") {
+          return "queens";
+        }
+        return null;
+      };
+
+const detectPuzzleTypeFromUrl =
+  typeof puzzleRegistry.detectPuzzleTypeFromUrl === "function"
+    ? puzzleRegistry.detectPuzzleTypeFromUrl
+    : function fallbackDetectPuzzleTypeFromUrl(url) {
+        if (!url || typeof url !== "string") {
+          return null;
+        }
+
+        const normalized = url.toLowerCase();
+        if (normalized.includes("/games/queens") || normalized.includes("/games/view/queens")) {
+          return "queens";
+        }
+        if (normalized.includes("/games/tango") || normalized.includes("/games/view/tango")) {
+          return "tango";
+        }
+        if (normalized.includes("/games/mini-sudoku") || normalized.includes("/games/view/mini-sudoku")) {
+          return "sudoku";
+        }
+        if (normalized.includes("/games/zip") || normalized.includes("/games/view/zip")) {
+          return "zip";
+        }
+        if (normalized.includes("/games/patches") || normalized.includes("/games/view/patches")) {
+          return "patches";
+        }
+        return null;
+      };
+
+const puzzleTypeToFrameSlug =
+  typeof puzzleRegistry.puzzleTypeToFrameSlug === "function"
+    ? puzzleRegistry.puzzleTypeToFrameSlug
+    : function fallbackPuzzleTypeToFrameSlug(puzzleType) {
+        if (puzzleType === "sudoku") {
+          return "mini-sudoku";
+        }
+        return puzzleType;
+      };
+
 function normalizeApiBase(value) {
   if (!value || typeof value !== "string") {
     return DEFAULT_API_BASE;
   }
 
   return value.trim().replace(/\/+$/, "") || DEFAULT_API_BASE;
-}
-
-function sanitizePuzzleType(value) {
-  if (value === "patches") {
-    return "patches";
-  }
-  if (value === "zip") {
-    return "zip";
-  }
-  if (value === "sudoku") {
-    return "sudoku";
-  }
-  if (value === "tango") {
-    return "tango";
-  }
-  if (value === "queens") {
-    return "queens";
-  }
-  return null;
-}
-
-function detectPuzzleTypeFromUrl(url) {
-  if (!url || typeof url !== "string") {
-    return null;
-  }
-
-  const normalized = url.toLowerCase();
-  if (normalized.includes("/games/queens") || normalized.includes("/games/view/queens")) {
-    return "queens";
-  }
-  if (normalized.includes("/games/tango") || normalized.includes("/games/view/tango")) {
-    return "tango";
-  }
-  if (normalized.includes("/games/mini-sudoku") || normalized.includes("/games/view/mini-sudoku")) {
-    return "sudoku";
-  }
-  if (normalized.includes("/games/zip") || normalized.includes("/games/view/zip")) {
-    return "zip";
-  }
-  if (normalized.includes("/games/patches") || normalized.includes("/games/view/patches")) {
-    return "patches";
-  }
-  return null;
-}
-
-function puzzleTypeToFrameSlug(puzzleType) {
-  if (puzzleType === "sudoku") {
-    return "mini-sudoku";
-  }
-  return puzzleType;
 }
 
 function normalizeSelection(selection) {
@@ -1063,6 +1081,7 @@ async function detectSelectionForQuickSolve(tabId, puzzleType, frameContext, tab
           interactionFrameId: interactionTarget.frameId,
           interactionSelection: interactionTarget.selection,
           usedViewportFallback: true,
+          fallbackSource: "frame",
         };
       }
     }
@@ -1079,6 +1098,7 @@ async function detectSelectionForQuickSolve(tabId, puzzleType, frameContext, tab
         interactionFrameId: interactionTarget.frameId,
         interactionSelection: interactionTarget.selection,
         usedViewportFallback: true,
+        fallbackSource: "viewport",
       };
     }
   }
@@ -1315,16 +1335,26 @@ async function solveBoardRequest(message) {
   });
 }
 
+function resolveMessageTabId(message, sender) {
+  const senderTabId = sender && sender.tab && Number.isInteger(sender.tab.id) ? sender.tab.id : null;
+  const messageTabId = Number.isInteger(message && message.tabId) ? message.tabId : null;
+  return senderTabId !== null ? senderTabId : messageTabId;
+}
+
+function resolvePuzzleTypeForTab(requestedPuzzleType, tabUrl) {
+  const requested = sanitizePuzzleType(requestedPuzzleType);
+  const detected = detectPuzzleTypeFromUrl(tabUrl);
+  return requested || detected;
+}
+
 async function quickSolveFromPage(message, sender) {
-  const tabId = sender && sender.tab && Number.isInteger(sender.tab.id) ? sender.tab.id : null;
+  const tabId = resolveMessageTabId(message, sender);
   if (tabId === null) {
     throw new Error("Could not resolve active game tab.");
   }
 
   const tab = await tabsGet(tabId);
-  const requestedPuzzleType = sanitizePuzzleType(message.puzzleType);
-  const detectedPuzzleType = detectPuzzleTypeFromUrl(tab.url);
-  const puzzleType = requestedPuzzleType || detectedPuzzleType;
+  const puzzleType = resolvePuzzleTypeForTab(message.puzzleType, tab.url);
 
   if (!puzzleType) {
     throw new Error("Open LinkedIn Queens, Tango, Mini Sudoku, Zip, or Patches page first.");
@@ -1487,6 +1517,164 @@ async function quickSolveFromPage(message, sender) {
   };
 }
 
+async function autoDetectBoardSelection(message, sender) {
+  const tabId = resolveMessageTabId(message, sender);
+  if (tabId === null) {
+    throw new Error("Could not resolve active game tab.");
+  }
+
+  const tab = await tabsGet(tabId);
+  const puzzleType = resolvePuzzleTypeForTab(message.puzzleType, tab.url);
+  if (!puzzleType) {
+    throw new Error("Open LinkedIn Queens, Tango, Mini Sudoku, Zip, or Patches page first.");
+  }
+
+  const frameContext = await getGameFrameContext(tabId, puzzleType);
+  const selectionContext = await detectSelectionForQuickSolve(tabId, puzzleType, frameContext, tab);
+
+  let status = "Board auto-detected.";
+  if (selectionContext && selectionContext.fallbackSource === "viewport") {
+    status = "Board auto-detect missed; using viewport fallback.";
+  } else if (selectionContext && selectionContext.fallbackSource === "frame") {
+    status = "Board auto-detect missed; using game-frame fallback.";
+  }
+
+  return {
+    puzzleType,
+    selection: selectionContext.topSelection,
+    interactionFrameId: selectionContext.interactionFrameId,
+    interactionSelection: selectionContext.interactionSelection,
+    status,
+  };
+}
+
+async function clearOverlaysForTab(message, sender) {
+  const tabId = resolveMessageTabId(message, sender);
+  if (tabId === null) {
+    throw new Error("Could not resolve active game tab.");
+  }
+
+  const tab = await tabsGet(tabId);
+  const puzzleType = resolvePuzzleTypeForTab(message.puzzleType, tab.url) || "queens";
+  const frameContext = await getGameFrameContext(tabId, puzzleType);
+  await clearOverlaysForFrameContext(tabId, frameContext);
+
+  return {
+    puzzleType,
+    cleared: true,
+  };
+}
+
+function normalizeApplySettings(settings, fallbackSettings) {
+  const raw = settings && typeof settings === "object" ? settings : fallbackSettings;
+  const source = raw && typeof raw === "object" ? raw : {};
+
+  return {
+    interClickDelayMs: normalizeDelay(source.interClickDelayMs, DEFAULT_INTER_CLICK_DELAY_MS),
+    interMoveDelayMs: normalizeDelay(source.interMoveDelayMs, DEFAULT_INTER_MOVE_DELAY_MS),
+    tangoApplyMode: normalizeTangoApplyMode(source.tangoApplyMode || DEFAULT_TANGO_APPLY_MODE),
+  };
+}
+
+async function applySolvedPayload(message, sender) {
+  const tabId = resolveMessageTabId(message, sender);
+  if (tabId === null) {
+    throw new Error("Could not resolve target tab.");
+  }
+
+  const tab = await tabsGet(tabId);
+  const puzzleType = resolvePuzzleTypeForTab(message.puzzleType, tab.url);
+  if (!puzzleType) {
+    throw new Error("Open LinkedIn Queens, Tango, Mini Sudoku, Zip, or Patches page first.");
+  }
+
+  if (!message || !message.result || typeof message.result !== "object") {
+    throw new Error("No solved payload provided. Solve first.");
+  }
+
+  if (!message.result.solved) {
+    throw new Error("Cached payload is not solved. Solve first.");
+  }
+
+  const quickSettings = await loadQuickSettings();
+  const applySettings = normalizeApplySettings(message.settings, quickSettings.applySettings);
+
+  const frameContext = await getGameFrameContext(tabId, puzzleType);
+  let topSelection = maybeNormalizeSelectionForPuzzle(puzzleType, message.selection, frameContext && frameContext.iframeRect);
+  let interactionTarget = topSelection ? resolveInteractionTarget(topSelection, frameContext) : null;
+
+  if (!topSelection) {
+    const existing = await getTopBoardSelection(tabId);
+    const normalizedExisting = maybeNormalizeSelectionForPuzzle(puzzleType, existing, frameContext && frameContext.iframeRect);
+    topSelection = normalizedExisting || existing;
+    interactionTarget = topSelection ? resolveInteractionTarget(topSelection, frameContext) : null;
+  }
+
+  if (!topSelection || !interactionTarget) {
+    const selectionContext = await detectSelectionForQuickSolve(tabId, puzzleType, frameContext, tab);
+    topSelection = selectionContext.topSelection;
+    interactionTarget = {
+      frameId: selectionContext.interactionFrameId,
+      selection: selectionContext.interactionSelection,
+    };
+  }
+
+  if (!topSelection) {
+    throw new Error("Board selection is required before applying moves.");
+  }
+
+  const savedTopSelection = await setTopBoardSelection(tabId, topSelection);
+  if (savedTopSelection) {
+    topSelection = savedTopSelection;
+  }
+
+  if (!interactionTarget || !normalizeSelection(interactionTarget.selection)) {
+    interactionTarget = resolveInteractionTarget(topSelection, frameContext) || {
+      frameId: 0,
+      selection: topSelection,
+    };
+  }
+
+  const applyResponse = await applySolutionForSelection(
+    tabId,
+    puzzleType,
+    message.result,
+    interactionTarget.frameId,
+    interactionTarget.selection,
+    topSelection,
+    frameContext,
+    applySettings
+  );
+
+  if (!applyResponse || !applyResponse.ok) {
+    return {
+      puzzleType,
+      applied: false,
+      selection: topSelection,
+      error:
+        applyResponse && applyResponse.error
+          ? applyResponse.error
+          : "Solved board but failed to apply moves.",
+      appliedCount: Number(applyResponse && applyResponse.appliedCount) || 0,
+      clickCount: Number(applyResponse && applyResponse.clickCount) || 0,
+      keyCount: Number(applyResponse && applyResponse.keyCount) || 0,
+      strategy: (applyResponse && applyResponse.strategy) || null,
+    };
+  }
+
+  await clearOverlaysForFrameContext(tabId, frameContext);
+
+  return {
+    puzzleType,
+    applied: true,
+    selection: topSelection,
+    appliedCount: Number(applyResponse.appliedCount) || 0,
+    clickCount: Number(applyResponse.clickCount) || 0,
+    keyCount: Number(applyResponse.keyCount) || 0,
+    strategy: applyResponse.strategy || null,
+  };
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || !message.type) {
     return;
@@ -1506,6 +1694,42 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "quickSolveFromPage") {
     quickSolveFromPage(message, sender)
+      .then((payload) => {
+        sendResponse({ ok: true, ...payload });
+      })
+      .catch((error) => {
+        sendResponse({ ok: false, error: error.message || String(error) });
+      });
+
+    return true;
+  }
+
+  if (message.type === "autoDetectBoardSelection") {
+    autoDetectBoardSelection(message, sender)
+      .then((payload) => {
+        sendResponse({ ok: true, ...payload });
+      })
+      .catch((error) => {
+        sendResponse({ ok: false, error: error.message || String(error) });
+      });
+
+    return true;
+  }
+
+  if (message.type === "clearOverlaysForTab") {
+    clearOverlaysForTab(message, sender)
+      .then((payload) => {
+        sendResponse({ ok: true, ...payload });
+      })
+      .catch((error) => {
+        sendResponse({ ok: false, error: error.message || String(error) });
+      });
+
+    return true;
+  }
+
+  if (message.type === "applySolvedPayload") {
+    applySolvedPayload(message, sender)
       .then((payload) => {
         sendResponse({ ok: true, ...payload });
       })
