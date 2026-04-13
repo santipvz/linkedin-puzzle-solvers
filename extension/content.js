@@ -1402,6 +1402,38 @@ function buildApplySelectionCandidates(puzzleType, primarySelection) {
   pushCandidate(boardSelection, "stored");
   pushCandidate(autoDetectedSelection, "auto-detect");
 
+  if (puzzleType === "sudoku" && candidates.length > 0) {
+    const seedCandidates = [...candidates];
+    for (const entry of seedCandidates) {
+      const base = entry.selection;
+      const deltaX = Math.max(1, base.width * 0.0125);
+      const deltaY = Math.max(1, base.height * 0.0125);
+
+      // Minor insets/outsets make the apply logic more tolerant to thin board borders.
+      pushCandidate(
+        {
+          x: base.x + deltaX,
+          y: base.y + deltaY,
+          width: base.width - deltaX * 2,
+          height: base.height - deltaY * 2,
+          devicePixelRatio: base.devicePixelRatio,
+        },
+        `${entry.source}:inset`
+      );
+
+      pushCandidate(
+        {
+          x: base.x - deltaX,
+          y: base.y - deltaY,
+          width: base.width + deltaX * 2,
+          height: base.height + deltaY * 2,
+          devicePixelRatio: base.devicePixelRatio,
+        },
+        `${entry.source}:outset`
+      );
+    }
+  }
+
   return candidates;
 }
 
@@ -1680,6 +1712,7 @@ async function applySudokuSolution(result, selection, settings) {
     clickCount: 0,
     keyCount: 0,
     alignedCount: 0,
+    relaxedCount: 0,
   };
 
   for (let candidateIndex = 0; candidateIndex < selectionCandidates.length; candidateIndex += 1) {
@@ -1692,6 +1725,7 @@ async function applySudokuSolution(result, selection, settings) {
     let clickCount = 0;
     let keyCount = 0;
     let alignedCount = 0;
+    let relaxedCount = 0;
 
     for (const move of actionableMoves) {
       const row = move.row;
@@ -1703,6 +1737,7 @@ async function applySudokuSolution(result, selection, settings) {
       const pointCandidates = buildSudokuPointCandidates(baseX, baseY, cellWidth, cellHeight, candidate);
 
       let moveApplied = false;
+      let strictMatchesForMove = 0;
 
       for (const point of pointCandidates) {
         const cellElement = findSudokuCellElementAtPoint(point.x, point.y, candidate, cellWidth, cellHeight);
@@ -1714,6 +1749,8 @@ async function applySudokuSolution(result, selection, settings) {
         if (!inferredPosition || inferredPosition.row !== row || inferredPosition.col !== col) {
           continue;
         }
+
+        strictMatchesForMove += 1;
 
         const clicked = leftClickViewportPoint(point.x, point.y);
         if (!clicked) {
@@ -1737,6 +1774,28 @@ async function applySudokuSolution(result, selection, settings) {
         }
       }
 
+      if (!moveApplied && (strictMatchesForMove === 0 || alignedCount === 0)) {
+        for (const point of pointCandidates) {
+          const clicked = leftClickViewportPoint(point.x, point.y);
+          if (!clicked) {
+            continue;
+          }
+
+          clickCount += 1;
+          await sleep(applySettings.interClickDelayMs);
+
+          const livePointTarget = getElementAtViewportPoint(point.x, point.y);
+          const keyboardTarget = findKeyboardTarget(livePointTarget && livePointTarget.element) || null;
+          if (dispatchDigitKey(value, keyboardTarget)) {
+            keyCount += 1;
+            appliedCount += 1;
+            relaxedCount += 1;
+            moveApplied = true;
+            break;
+          }
+        }
+      }
+
       await sleep(applySettings.interMoveDelayMs);
 
       if (!moveApplied) {
@@ -1754,19 +1813,39 @@ async function applySudokuSolution(result, selection, settings) {
         clickCount,
         keyCount,
         alignedCount,
+        relaxedCount,
       };
     }
 
-    if (appliedCount === actionableMoves.length && alignedCount === actionableMoves.length) {
+    if (appliedCount === actionableMoves.length) {
+      const strategyBase =
+        candidateEntry.source === "auto-detect"
+          ? ":auto-detect"
+          : "";
+
+      if (alignedCount === actionableMoves.length) {
+        return {
+          ok: true,
+          appliedCount,
+          clickCount,
+          keyCount,
+          alignedCount,
+          relaxedCount,
+          strategy: `strict-cell-then-keyboard${strategyBase}`,
+        };
+      }
+
       return {
         ok: true,
         appliedCount,
         clickCount,
         keyCount,
+        alignedCount,
+        relaxedCount,
         strategy:
-          candidateEntry.source === "auto-detect"
-            ? "strict-cell-then-keyboard:auto-detect"
-            : "strict-cell-then-keyboard",
+          alignedCount > 0
+            ? `strict-cell-then-keyboard+relaxed-fallback${strategyBase}`
+            : `relaxed-click-then-keyboard${strategyBase}`,
       };
     }
   }
@@ -1778,7 +1857,8 @@ async function applySudokuSolution(result, selection, settings) {
     clickCount: bestAttempt.clickCount,
     keyCount: bestAttempt.keyCount,
     alignedCount: bestAttempt.alignedCount,
-    strategy: "strict-cell-then-keyboard",
+    relaxedCount: bestAttempt.relaxedCount,
+    strategy: "strict-cell-then-keyboard+relaxed-fallback",
   };
 }
 

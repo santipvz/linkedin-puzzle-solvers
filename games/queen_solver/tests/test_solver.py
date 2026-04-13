@@ -11,10 +11,14 @@ import sys
 import time
 import glob
 
+import numpy as np
+
 # Add src directory to Python path
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from src.queens_solver import QueensSolver
+from src.core.models import Region
+from src.solver.queens_solver import BacktrackingQueensSolver
 
 
 class TestQueensSolver:
@@ -35,6 +39,20 @@ class TestQueensSolver:
             unsolvable_boards = glob.glob(os.path.join(unsolvable_dir, "*.png"))
             for board_path in unsolvable_boards:
                 assert self._test_single_board(board_path, expected_solvable=False)
+
+    def test_prevalidation_allows_single_cell_column_mix(self):
+        """Regression: conservative pre-validation must avoid false negatives."""
+        solver = BacktrackingQueensSolver()
+        color = np.array([0, 0, 0], dtype=np.uint8)
+
+        regions = {
+            1: Region(id=1, positions=[(0, 0)], color=color, size=0),
+            2: Region(id=2, positions=[(1, 0), (1, 1)], color=color, size=0),
+            3: Region(id=3, positions=[(2, 2), (2, 3)], color=color, size=0),
+            4: Region(id=4, positions=[(3, 2), (3, 3)], color=color, size=0),
+        }
+
+        assert solver._pre_validate_solvability(4, regions) is True
 
     def _test_single_board(self, board_path: str, expected_solvable: bool = True) -> bool:
         """

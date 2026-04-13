@@ -68,10 +68,9 @@ class BacktrackingQueensSolver(PuzzleSolver):
             if region.size == 0:
                 return False
 
-        # Check for impossible column/row conflicts
-        # If multiple regions share the same column/row and one is single-cell,
-        # it may create impossible situations
-        return self._validate_region_conflicts(regions)
+        # Keep pre-validation conservative to avoid false negatives.
+        # Detailed feasibility should be decided by backtracking.
+        return True
 
     def _validate_region_conflicts(self, regions: dict[int, Region]) -> bool:
         column_regions = {}

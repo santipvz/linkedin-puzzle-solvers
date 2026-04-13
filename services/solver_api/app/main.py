@@ -106,6 +106,26 @@ def _cache_put(cache_key: str, value: dict[str, Any]) -> None:
         _solve_cache.popitem(last=False)
 
 
+def _should_recompute_cached_response(puzzle_name: str, cached: dict[str, Any]) -> bool:
+    if puzzle_name != "queens" or not isinstance(cached, dict):
+        return False
+
+    if bool(cached.get("solved")):
+        return False
+
+    error_text = str(cached.get("error") or "").lower()
+    if "cannot have a valid solution" not in error_text:
+        return False
+
+    details = cached.get("details") if isinstance(cached.get("details"), dict) else {}
+    iterations = int(details.get("iterations") or 0)
+    board_size = int(cached.get("board_size") or 0)
+    regions_detected = int(details.get("regions_detected") or 0)
+
+    # Old queens pre-validation false negatives fail before backtracking starts.
+    return iterations == 0 and board_size > 0 and regions_detected == board_size
+
+
 def _extract_board_bbox(response: dict[str, Any]) -> dict[str, int] | None:
     details = response.get("details") if isinstance(response, dict) else None
     if not isinstance(details, dict):
@@ -251,7 +271,7 @@ async def _solve_with_worker(
     payload = await _read_upload_bytes(image)
     cache_key = _cache_key_for_upload(puzzle_name, payload)
     cached = _cache_get(cache_key)
-    if cached is not None:
+    if cached is not None and not _should_recompute_cached_response(puzzle_name, cached):
         response = cached
         from_cache = True
     else:
