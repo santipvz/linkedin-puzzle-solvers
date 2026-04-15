@@ -8,7 +8,7 @@ import tempfile
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import TypedDict
 
 import cv2
 import numpy as np
@@ -21,6 +21,48 @@ GRID_LINE_COUNT = BOARD_SIZE + 1
 OCR_INPUT_SIZE = 28
 OCR_MIN_CONFIDENCE = 0.52
 OCR_STRONG_CONFIDENCE = 0.78
+
+
+class _DigitCandidate(TypedDict):
+    value: int
+    confidence: float
+
+
+class _FixedCell(TypedDict):
+    row: int
+    col: int
+    value: int
+    confidence: float
+    overlay_ratio: float
+    candidates: list[_DigitCandidate]
+
+
+class _OcrStats(TypedDict):
+    fixed_count: int
+    avg_confidence: float
+    min_confidence: float
+    uncertain_count: int
+    overlay_cell_count: int
+
+
+class _GridLinesPayload(TypedDict):
+    rows: list[int]
+    cols: list[int]
+
+
+class _BoardBBoxPayload(TypedDict):
+    x: int
+    y: int
+    width: int
+    height: int
+
+
+class _ParsedSudokuBoard(TypedDict):
+    board: list[list[int]]
+    fixed_cells: list[_FixedCell]
+    ocr: _OcrStats
+    board_bbox: _BoardBBoxPayload
+    grid_lines: _GridLinesPayload
 
 
 @dataclass(slots=True)
@@ -65,7 +107,7 @@ class _MiniSudokuOcr:
                 cached_labels = cached["labels"].astype(np.int32)
                 if cached_features.ndim == 2 and len(cached_features) == len(cached_labels) and len(cached_labels) > 0:
                     return [row for row in cached_features], [int(value) for value in cached_labels.tolist()]
-            except Exception:
+            except (OSError, ValueError, KeyError, EOFError):
                 cache_path.unlink(missing_ok=True)
 
         rng = random.Random(1337)
@@ -104,7 +146,7 @@ class _MiniSudokuOcr:
                 features=np.asarray(features, dtype=np.float32),
                 labels=np.asarray(labels, dtype=np.int32),
             )
-        except Exception:
+        except OSError:
             pass
 
         return features, labels
@@ -157,7 +199,7 @@ class _MiniSudokuOcr:
     def _render_digit_canvas(
         self,
         digit: int,
-        font: Any,
+        font: ImageFont.ImageFont,
         rng: random.Random,
         np_rng: np.random.Generator,
     ) -> np.ndarray:
@@ -226,7 +268,7 @@ class MiniSudokuImageParser:
     def __init__(self) -> None:
         self._ocr = _get_ocr_model()
 
-    def parse_image(self, image_path: str | Path) -> dict[str, Any]:
+    def parse_image(self, image_path: str | Path) -> _ParsedSudokuBoard:
         path = Path(image_path)
         image = cv2.imread(str(path))
         if image is None:
@@ -726,7 +768,7 @@ class MiniSudokuImageParser:
         board_crop: np.ndarray,
         row_lines: list[int],
         col_lines: list[int],
-    ) -> tuple[list[list[int]], list[dict[str, Any]], dict[str, float | int]]:
+    ) -> tuple[list[list[int]], list[_FixedCell], _OcrStats]:
         gray = cv2.cvtColor(board_crop, cv2.COLOR_BGR2GRAY)
         hsv = cv2.cvtColor(board_crop, cv2.COLOR_BGR2HSV)
         orange_mask = cv2.inRange(
@@ -736,7 +778,7 @@ class MiniSudokuImageParser:
         )
 
         board = [[0 for _ in range(BOARD_SIZE)] for _ in range(BOARD_SIZE)]
-        fixed_cells: list[dict[str, Any]] = []
+        fixed_cells: list[_FixedCell] = []
         confidences: list[float] = []
         uncertain_count = 0
         overlay_cell_count = 0
@@ -790,7 +832,7 @@ class MiniSudokuImageParser:
         avg_confidence = float(np.mean(confidences)) if confidences else 0.0
         min_confidence = float(np.min(confidences)) if confidences else 0.0
 
-        ocr_stats: dict[str, float | int] = {
+        ocr_stats: _OcrStats = {
             "fixed_count": int(len(fixed_cells)),
             "avg_confidence": avg_confidence,
             "min_confidence": min_confidence,

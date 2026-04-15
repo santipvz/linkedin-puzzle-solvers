@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 
 from .puzzle_registry import PUZZLE_DEFINITIONS, get_puzzle_definition
+from .workers.common import BoardBBox, JsonDict
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -47,7 +48,7 @@ def _parse_cors_origins(raw_value: str) -> list[str]:
 CORS_ALLOW_ORIGINS = _parse_cors_origins(CORS_ALLOW_ORIGINS_RAW)
 
 
-_solve_cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
+_solve_cache: OrderedDict[str, JsonDict] = OrderedDict()
 
 
 app = FastAPI(
@@ -90,7 +91,7 @@ def _cache_key_for_upload(puzzle: str, payload: bytes) -> str:
     return f"{puzzle}:{digest}"
 
 
-def _cache_get(cache_key: str) -> dict[str, Any] | None:
+def _cache_get(cache_key: str) -> JsonDict | None:
     cached = _solve_cache.get(cache_key)
     if cached is None:
         return None
@@ -99,14 +100,14 @@ def _cache_get(cache_key: str) -> dict[str, Any] | None:
     return copy.deepcopy(cached)
 
 
-def _cache_put(cache_key: str, value: dict[str, Any]) -> None:
+def _cache_put(cache_key: str, value: JsonDict) -> None:
     _solve_cache[cache_key] = copy.deepcopy(value)
     _solve_cache.move_to_end(cache_key)
     while len(_solve_cache) > MAX_SOLVE_CACHE_ENTRIES:
         _solve_cache.popitem(last=False)
 
 
-def _should_recompute_cached_response(puzzle_name: str, cached: dict[str, Any]) -> bool:
+def _should_recompute_cached_response(puzzle_name: str, cached: JsonDict) -> bool:
     if puzzle_name != "queens" or not isinstance(cached, dict):
         return False
 
@@ -126,7 +127,7 @@ def _should_recompute_cached_response(puzzle_name: str, cached: dict[str, Any]) 
     return iterations == 0 and board_size > 0 and regions_detected == board_size
 
 
-def _extract_board_bbox(response: dict[str, Any]) -> dict[str, int] | None:
+def _extract_board_bbox(response: JsonDict) -> BoardBBox | None:
     details = response.get("details") if isinstance(response, dict) else None
     if not isinstance(details, dict):
         return None
@@ -149,7 +150,7 @@ def _extract_board_bbox(response: dict[str, Any]) -> dict[str, int] | None:
     return {"x": x, "y": y, "width": width, "height": height}
 
 
-def _extract_board_only_image_payload(payload: bytes, response: dict[str, Any]) -> bytes:
+def _extract_board_only_image_payload(payload: bytes, response: JsonDict) -> bytes:
     board_bbox = _extract_board_bbox(response)
     if board_bbox is None:
         return payload
@@ -166,11 +167,11 @@ def _extract_board_only_image_payload(payload: bytes, response: dict[str, Any]) 
             output = io.BytesIO()
             board.save(output, format="PNG")
             return output.getvalue()
-    except Exception:
+    except (OSError, ValueError):
         return payload
 
 
-def _archive_board_capture(puzzle: str, payload: bytes, response: dict[str, Any], from_cache: bool) -> None:
+def _archive_board_capture(puzzle: str, payload: bytes, response: JsonDict, from_cache: bool) -> None:
     if not DATASET_CAPTURE_ENABLED:
         return
 
@@ -202,7 +203,7 @@ def _archive_board_capture(puzzle: str, payload: bytes, response: dict[str, Any]
     if metadata_path.exists():
         try:
             existing = json.loads(metadata_path.read_text(encoding="utf-8"))
-        except Exception:
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
             existing = {}
 
         seen_count = int(existing.get("seen_count") or 1)
@@ -229,7 +230,7 @@ def _write_temp_image(payload: bytes, filename: str | None) -> Path:
     return Path(handle.name)
 
 
-def _run_solver_worker(worker_filename: str, image_path: Path) -> dict[str, Any]:
+def _run_solver_worker(worker_filename: str, image_path: Path) -> JsonDict:
     worker_path = WORKERS_DIR / worker_filename
     if not worker_path.exists():
         raise HTTPException(status_code=500, detail=f"Worker not found: {worker_filename}")
@@ -264,7 +265,7 @@ async def _solve_with_worker(
     image: UploadFile,
     puzzle_name: str,
     capture_board_start: bool,
-) -> dict[str, Any]:
+) -> JsonDict:
     if image.content_type and not image.content_type.startswith("image/"):
         raise HTTPException(status_code=415, detail="Only image uploads are supported.")
 
@@ -287,8 +288,8 @@ async def _solve_with_worker(
     if capture_board_start:
         try:
             await asyncio.to_thread(_archive_board_capture, puzzle_name, payload, response, from_cache)
-        except Exception:
-            pass
+        except (OSError, ValueError, TypeError) as exc:
+            print(f"Board capture archive skipped: {exc}", file=sys.stderr)
     return response
 
 
@@ -304,7 +305,7 @@ def _build_solve_handler(puzzle_key: str):
     async def solve_handler(
         image: UploadFile = File(...),
         board_capture: str | None = Header(default=None, alias="X-Board-Capture"),
-    ) -> dict[str, Any]:
+    ) -> JsonDict:
         return await _solve_with_worker(
             definition.worker_filename,
             image,

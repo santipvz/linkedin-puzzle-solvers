@@ -5,12 +5,98 @@ import io
 import itertools
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Protocol, TypedDict
 
 try:
-    from .common import activate_game_import_context, game_root_for_worker, run_worker_cli
+    from .common import JsonDict, activate_game_import_context, attach_captured_logs, game_root_for_worker, run_worker_cli
 except ImportError:
-    from common import activate_game_import_context, game_root_for_worker, run_worker_cli
+    from common import JsonDict, activate_game_import_context, attach_captured_logs, game_root_for_worker, run_worker_cli
+
+
+class _PatchesClueCandidate(TypedDict):
+    value: int
+    confidence: float
+
+
+class _ParsedPatchesClue(TypedDict):
+    row: int
+    col: int
+    shape: str
+    value: int | None
+    confidence: float
+    candidates: list[_PatchesClueCandidate]
+    badge_ratio: float
+    badge_fill: float
+
+
+_RecoveredClueChange = TypedDict(
+    "_RecoveredClueChange",
+    {
+        "row": int,
+        "col": int,
+        "from": int | None,
+        "to": int | None,
+        "confidence": float,
+        "candidate_rank": int,
+    },
+)
+
+
+class _GridLinesPayload(TypedDict):
+    rows: list[int]
+    cols: list[int]
+
+
+class _BoardBBoxPayload(TypedDict):
+    x: int
+    y: int
+    width: int
+    height: int
+
+
+class _ParsedPatchesBoard(TypedDict):
+    board_size: int
+    clues: list[_ParsedPatchesClue]
+    clue_grid: list[list[int | None]]
+    board_bbox: _BoardBBoxPayload
+    grid_lines: _GridLinesPayload
+
+
+class _RegionLike(Protocol):
+    top: int
+    left: int
+    height: int
+    width: int
+    area: int
+    clue_row: int
+    clue_col: int
+
+
+class _SolveResultLike(Protocol):
+    solved: bool
+    regions: list[_RegionLike] | None
+    iterations: int
+    error: str | None
+    relaxed_square_clues: int
+
+
+class _SolverLike(Protocol):
+    def solve(self, board_size: int, clues: list[object]) -> _SolveResultLike: ...
+
+
+class _ParserLike(Protocol):
+    def __init__(self, board_size: int) -> None: ...
+
+    def parse_image(self, image_path: str) -> _ParsedPatchesBoard: ...
+
+
+class _AttemptPayload(TypedDict):
+    parsed: _ParsedPatchesBoard
+    solve_result: _SolveResultLike
+    recovered_clues: list[_RecoveredClueChange]
+    recovery_attempts: int
+    score: float
+    board_size: int
 
 
 def _build_solution_grid(board_size: int, regions: list[dict[str, int]]) -> list[list[int]]:
@@ -26,7 +112,7 @@ def _build_solution_grid(board_size: int, regions: list[dict[str, int]]) -> list
     return grid
 
 
-def _build_solver_clues(parsed_clues: list[dict[str, Any]], value_overrides: dict[int, int | None] | None = None) -> list[Any]:
+def _build_solver_clues(parsed_clues: list[_ParsedPatchesClue], value_overrides: dict[int, int | None] | None = None) -> list[object]:
     from src.patches_solver import PatchesClue
 
     overrides = value_overrides or {}
@@ -44,7 +130,7 @@ def _build_solver_clues(parsed_clues: list[dict[str, Any]], value_overrides: dic
     return clues
 
 
-def _build_value_options(clue: dict[str, Any], board_size: int) -> list[tuple[int | None, float, int]]:
+def _build_value_options(clue: _ParsedPatchesClue, board_size: int) -> list[tuple[int | None, float, int]]:
     max_value = board_size * board_size
     options: list[tuple[int | None, float, int]] = []
     seen: set[int | None] = set()
@@ -71,11 +157,11 @@ def _build_value_options(clue: dict[str, Any], board_size: int) -> list[tuple[in
 
 
 def _recover_with_ocr_candidates(
-    solver: Any,
-    parsed_clues: list[dict[str, Any]],
+    solver: _SolverLike,
+    parsed_clues: list[_ParsedPatchesClue],
     board_size: int,
-    base_result: Any,
-) -> tuple[Any, list[dict[str, Any]], int]:
+    base_result: _SolveResultLike,
+) -> tuple[_SolveResultLike, list[_RecoveredClueChange], int]:
     option_lists = [_build_value_options(clue, board_size) for clue in parsed_clues]
     combination_count = 1
     for options in option_lists:
@@ -112,7 +198,7 @@ def _recover_with_ocr_candidates(
         if not solve_result.solved:
             continue
 
-        replaced: list[dict[str, Any]] = []
+        replaced: list[_RecoveredClueChange] = []
         for index, selected in enumerate(assignment):
             selected_value, selected_confidence, selected_rank = selected
             original = parsed_clues[index].get("value")
@@ -138,9 +224,9 @@ def _recover_with_ocr_candidates(
 def _attempt_solve_for_board_size(
     image_path: Path,
     board_size: int,
-    parser_cls: Any,
-    solver_cls: Any,
-) -> dict[str, Any]:
+    parser_cls: type[_ParserLike],
+    solver_cls: type[_SolverLike],
+) -> _AttemptPayload:
     parser = parser_cls(board_size=board_size)
     parsed = parser.parse_image(str(image_path))
 
@@ -148,7 +234,7 @@ def _attempt_solve_for_board_size(
     clues = _build_solver_clues(parsed["clues"])
     solve_result = solver.solve(board_size=int(parsed["board_size"]), clues=clues)
 
-    recovered_clues: list[dict[str, Any]] = []
+    recovered_clues: list[_RecoveredClueChange] = []
     recovery_attempts = 0
     if not solve_result.solved:
         solve_result, recovered_clues, recovery_attempts = _recover_with_ocr_candidates(
@@ -182,7 +268,7 @@ def _attempt_solve_for_board_size(
     }
 
 
-def solve(image_path: Path) -> dict[str, Any]:
+def solve(image_path: Path) -> JsonDict:
     game_root = game_root_for_worker(__file__, "patches_solver")
     if not game_root.exists():
         return {
@@ -199,7 +285,7 @@ def solve(image_path: Path) -> dict[str, Any]:
     captured_logs = io.StringIO()
 
     with contextlib.redirect_stdout(captured_logs), contextlib.redirect_stderr(captured_logs):
-        attempts: list[dict[str, Any]] = []
+        attempts: list[_AttemptPayload] = []
         for candidate_size in (6, 7, 8, 9):
             try:
                 attempt = _attempt_solve_for_board_size(
@@ -269,9 +355,7 @@ def solve(image_path: Path) -> dict[str, Any]:
         },
     }
 
-    logs_value = captured_logs.getvalue().strip()
-    if logs_value:
-        response["logs"] = logs_value[:1200]
+    attach_captured_logs(response, captured_logs)
 
     return response
 

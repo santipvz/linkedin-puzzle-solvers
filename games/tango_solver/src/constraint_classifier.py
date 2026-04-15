@@ -9,9 +9,6 @@ class ConstraintClassifier:
     found in border regions between board cells.
     """
 
-    def __init__(self):
-        pass
-
     def classify_constraint(self, image: np.ndarray) -> Optional[str]:
         if len(image.shape) == 3:
             target_color = np.array([140, 114, 76])

@@ -4,9 +4,6 @@ import numpy as np
 
 
 class PieceDetector:
-    def __init__(self):
-        pass
-
     def detect_piece(self, cell_img: np.ndarray) -> Dict[str, Any]:
 
         hsv = cv2.cvtColor(cell_img, cv2.COLOR_RGB2HSV)

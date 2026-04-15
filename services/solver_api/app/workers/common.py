@@ -3,7 +3,30 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable, Protocol, TypeAlias, TypedDict
+
+
+JsonValue: TypeAlias = (
+    str
+    | int
+    | float
+    | bool
+    | None
+    | list["JsonValue"]
+    | dict[str, "JsonValue"]
+)
+JsonDict: TypeAlias = dict[str, JsonValue]
+
+
+class _CapturedLogStream(Protocol):
+    def getvalue(self) -> str: ...
+
+
+class BoardBBox(TypedDict):
+    x: int
+    y: int
+    width: int
+    height: int
 
 
 def repo_root_for_worker(worker_file: str | Path) -> Path:
@@ -16,8 +39,9 @@ def game_root_for_worker(worker_file: str | Path, game_folder: str) -> Path:
 
 def ensure_sys_path(path: Path) -> None:
     path_str = str(path)
-    if path_str not in sys.path:
-        sys.path.insert(0, path_str)
+    if path_str in sys.path:
+        sys.path.remove(path_str)
+    sys.path.insert(0, path_str)
 
 
 def activate_game_import_context(game_root: Path) -> None:
@@ -30,7 +54,7 @@ def activate_game_import_context(game_root: Path) -> None:
 
 def run_worker_cli(
     argv: list[str],
-    solve_fn: Callable[[Path], dict[str, Any]],
+    solve_fn: Callable[[Path], JsonDict],
     worker_script: str,
     worker_label: str,
 ) -> int:
@@ -51,3 +75,9 @@ def run_worker_cli(
 
     print(json.dumps(result))
     return 0
+
+
+def attach_captured_logs(response: JsonDict, captured_logs: _CapturedLogStream, max_chars: int = 1200) -> None:
+    logs_value = str(captured_logs.getvalue()).strip()
+    if logs_value:
+        response["logs"] = logs_value[:max_chars]

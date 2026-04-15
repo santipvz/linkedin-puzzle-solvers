@@ -2,10 +2,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from math import isqrt
-from typing import Any, Iterable
+from typing import Iterable, TypedDict
 
 
 VALID_SHAPES = {"any", "square", "wide", "tall"}
+
+
+class PatchesClueInput(TypedDict, total=False):
+    row: int
+    col: int
+    shape: str
+    area: int | None
+    value: int | None
 
 
 @dataclass(slots=True)
@@ -54,7 +62,7 @@ class PatchesSolver:
     def iterations(self) -> int:
         return self._iterations
 
-    def solve(self, board_size: int, clues: Iterable[PatchesClue | dict[str, Any]]) -> PatchesSolveResult:
+    def solve(self, board_size: int, clues: Iterable[PatchesClue | PatchesClueInput]) -> PatchesSolveResult:
         normalized_size = int(board_size)
         normalized_clues, error = self._normalize_clues(clues)
         if error:
@@ -313,7 +321,7 @@ class PatchesSolver:
 
     def _normalize_clues(
         self,
-        clues: Iterable[PatchesClue | dict[str, Any]],
+        clues: Iterable[PatchesClue | PatchesClueInput],
     ) -> tuple[list[PatchesClue], str | None]:
         normalized: list[PatchesClue] = []
 

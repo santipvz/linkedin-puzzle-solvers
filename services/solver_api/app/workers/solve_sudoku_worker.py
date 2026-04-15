@@ -5,15 +5,57 @@ import io
 import itertools
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Protocol, TypedDict
 
 try:
-    from .common import activate_game_import_context, game_root_for_worker, run_worker_cli
+    from .common import JsonDict, activate_game_import_context, attach_captured_logs, game_root_for_worker, run_worker_cli
 except ImportError:
-    from common import activate_game_import_context, game_root_for_worker, run_worker_cli
+    from common import JsonDict, activate_game_import_context, attach_captured_logs, game_root_for_worker, run_worker_cli
 
 
-def _normalize_board(board: list[list[Any]] | None) -> list[list[int]] | None:
+class _SudokuCandidate(TypedDict):
+    value: int
+    confidence: float
+
+
+class _FixedCellPayload(TypedDict):
+    row: int
+    col: int
+    value: int
+    confidence: float
+    overlay_ratio: float
+    candidates: list[_SudokuCandidate]
+
+
+class _RecoveredCellChange(TypedDict):
+    row: int
+    col: int
+    value: int
+    confidence: float
+    replacement_value: int
+    replacement_confidence: float
+    source: str
+
+
+class _RecoveryOption(TypedDict):
+    replacement_value: int
+    replacement_confidence: float
+    source: str
+
+
+class _SudokuSolveResultLike(Protocol):
+    solved: bool
+    solution_count: int
+    error: str | None
+    board: list[list[int]] | None
+    iterations: int
+
+
+class _SudokuSolverLike(Protocol):
+    def solve(self, board: list[list[int]], max_solutions: int = 1) -> _SudokuSolveResultLike: ...
+
+
+def _normalize_board(board: list[list[object]] | None) -> list[list[int]] | None:
     if board is None:
         return None
     return [[int(value) for value in row] for row in board]
@@ -29,7 +71,7 @@ def _is_conflicting_clue_error(error_message: str | None) -> bool:
     return error_message.startswith("Conflicting clue value")
 
 
-def _is_ambiguous_solution(result: Any) -> bool:
+def _is_ambiguous_solution(result: _SudokuSolveResultLike) -> bool:
     if not getattr(result, "solved", False):
         return False
 
@@ -38,10 +80,10 @@ def _is_ambiguous_solution(result: Any) -> bool:
 
 
 def _recover_from_conflicting_clues(
-    solver: Any,
+    solver: _SudokuSolverLike,
     initial_board: list[list[int]],
-    fixed_cells: list[dict[str, Any]],
-) -> tuple[Any, list[list[int]], list[dict[str, Any]]]:
+    fixed_cells: list[_FixedCellPayload],
+) -> tuple[_SudokuSolveResultLike, list[list[int]], list[_RecoveredCellChange]]:
     baseline_result = solver.solve(initial_board, max_solutions=2)
     if baseline_result.solved and not _is_ambiguous_solution(baseline_result):
         return baseline_result, initial_board, []
@@ -64,18 +106,18 @@ def _recover_from_conflicting_clues(
     suspects = ranked_cells[: min(8, len(ranked_cells))]
     max_adjustments = min(3, len(suspects))
 
-    best_result: Any | None = None
+    best_result: _SudokuSolveResultLike | None = None
     best_board: list[list[int]] | None = None
-    best_adjustments: list[dict[str, Any]] | None = None
+    best_adjustments: list[_RecoveredCellChange] | None = None
     best_score: tuple[float, ...] | None = None
 
     for adjustment_count in range(1, max_adjustments + 1):
         for combo in itertools.combinations(suspects, adjustment_count):
-            option_sets: list[list[dict[str, Any]]] = []
+            option_sets: list[list[_RecoveryOption]] = []
 
             for cell in combo:
                 current_value = int(cell.get("value") or 0)
-                options: list[dict[str, Any]] = []
+                options: list[_RecoveryOption] = []
                 seen_values: set[int] = set()
 
                 for candidate in cell.get("candidates", []):
@@ -114,7 +156,7 @@ def _recover_from_conflicting_clues(
 
             for options_combo in itertools.product(*option_sets):
                 candidate_board = _clone_board(initial_board)
-                adjustments: list[dict[str, Any]] = []
+                adjustments: list[_RecoveredCellChange] = []
                 valid_combo = True
 
                 for cell, option in zip(combo, options_combo):
@@ -188,7 +230,7 @@ def _recover_from_conflicting_clues(
     return baseline_result, initial_board, []
 
 
-def solve(image_path: Path) -> dict[str, Any]:
+def solve(image_path: Path) -> JsonDict:
     game_root = game_root_for_worker(__file__, "sudoku_solver")
     if not game_root.exists():
         return {
@@ -219,7 +261,7 @@ def solve(image_path: Path) -> dict[str, Any]:
     solution_count = int(getattr(solve_result, "solution_count", 1 if solve_result.solved else 0) or 0)
     unique_solution = bool(solve_result.solved and solution_count == 1)
 
-    fixed_cells_payload: list[dict[str, Any]] = []
+    fixed_cells_payload: list[_FixedCellPayload] = []
     for cell in parsed["fixed_cells"]:
         fixed_cells_payload.append(
             {
@@ -306,9 +348,7 @@ def solve(image_path: Path) -> dict[str, Any]:
         },
     }
 
-    logs_value = captured_logs.getvalue().strip()
-    if logs_value:
-        response["logs"] = logs_value[:1200]
+    attach_captured_logs(response, captured_logs)
 
     return response
 

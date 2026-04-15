@@ -12,9 +12,9 @@ import cv2
 import numpy as np
 
 try:
-    from .common import activate_game_import_context, game_root_for_worker, run_worker_cli
+    from .common import BoardBBox, JsonDict, activate_game_import_context, attach_captured_logs, game_root_for_worker, run_worker_cli
 except ImportError:
-    from common import activate_game_import_context, game_root_for_worker, run_worker_cli
+    from common import BoardBBox, JsonDict, activate_game_import_context, attach_captured_logs, game_root_for_worker, run_worker_cli
 
 
 MIN_BOARD_AREA_RATIO = 0.08
@@ -93,7 +93,7 @@ def _select_best_bbox(contours: Sequence[Any], image_width: int, image_height: i
     return best_bbox
 
 
-def _extract_board_crop(image: np.ndarray) -> tuple[np.ndarray, dict[str, int]] | tuple[None, None]:
+def _extract_board_crop(image: np.ndarray) -> tuple[np.ndarray, BoardBBox] | tuple[None, None]:
     image_height, image_width = image.shape[:2]
     masks = _build_contour_masks(image)
 
@@ -136,7 +136,7 @@ def _extract_board_crop(image: np.ndarray) -> tuple[np.ndarray, dict[str, int]] 
     return crop, metadata
 
 
-def _prepare_queens_image(image_path: Path) -> tuple[Path | None, dict[str, int] | None]:
+def _prepare_queens_image(image_path: Path) -> tuple[Path | None, BoardBBox | None]:
     image = cv2.imread(str(image_path))
     if image is None:
         return None, None
@@ -345,9 +345,7 @@ def _run_solver_attempt(queens_solver_class: Any, image_path: Path, attempt_labe
             },
         }
 
-    logs_value = captured_logs.getvalue().strip()
-    if logs_value:
-        response["logs"] = logs_value[:1200]
+    attach_captured_logs(response, captured_logs)
 
     return response
 
@@ -404,7 +402,7 @@ def _select_best_attempt(attempts: list[dict[str, Any]]) -> dict[str, Any]:
     return max(attempts, key=_attempt_quality)
 
 
-def solve(image_path: Path) -> dict[str, Any]:
+def solve(image_path: Path) -> JsonDict:
     game_root = game_root_for_worker(__file__, "queen_solver")
     if not game_root.exists():
         return {

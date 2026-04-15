@@ -1,9 +1,5 @@
 if (typeof importScripts === "function") {
-  try {
-    importScripts("puzzle_registry.js");
-  } catch (error) {
-    void error;
-  }
+  importScripts("puzzle_registry.js");
 }
 
 const DEFAULT_API_BASE = "http://127.0.0.1:8000";
@@ -16,65 +12,19 @@ const STORAGE_INTER_CLICK_DELAY_KEY = "solver_inter_click_delay_ms";
 const STORAGE_INTER_MOVE_DELAY_KEY = "solver_inter_move_delay_ms";
 const STORAGE_TANGO_APPLY_MODE_KEY = "solver_tango_apply_mode";
 
-const puzzleRegistry = globalThis.PuzzleRegistry || {};
-const sanitizePuzzleType =
-  typeof puzzleRegistry.sanitizePuzzleType === "function"
-    ? puzzleRegistry.sanitizePuzzleType
-    : function fallbackSanitizePuzzleType(value) {
-        if (value === "patches") {
-          return "patches";
-        }
-        if (value === "zip") {
-          return "zip";
-        }
-        if (value === "sudoku") {
-          return "sudoku";
-        }
-        if (value === "tango") {
-          return "tango";
-        }
-        if (value === "queens") {
-          return "queens";
-        }
-        return null;
-      };
+const puzzleRegistry = globalThis.PuzzleRegistry;
+if (!puzzleRegistry) {
+  throw new Error("PuzzleRegistry is not available in background context.");
+}
 
-const detectPuzzleTypeFromUrl =
-  typeof puzzleRegistry.detectPuzzleTypeFromUrl === "function"
-    ? puzzleRegistry.detectPuzzleTypeFromUrl
-    : function fallbackDetectPuzzleTypeFromUrl(url) {
-        if (!url || typeof url !== "string") {
-          return null;
-        }
-
-        const normalized = url.toLowerCase();
-        if (normalized.includes("/games/queens") || normalized.includes("/games/view/queens")) {
-          return "queens";
-        }
-        if (normalized.includes("/games/tango") || normalized.includes("/games/view/tango")) {
-          return "tango";
-        }
-        if (normalized.includes("/games/mini-sudoku") || normalized.includes("/games/view/mini-sudoku")) {
-          return "sudoku";
-        }
-        if (normalized.includes("/games/zip") || normalized.includes("/games/view/zip")) {
-          return "zip";
-        }
-        if (normalized.includes("/games/patches") || normalized.includes("/games/view/patches")) {
-          return "patches";
-        }
-        return null;
-      };
-
-const puzzleTypeToFrameSlug =
-  typeof puzzleRegistry.puzzleTypeToFrameSlug === "function"
-    ? puzzleRegistry.puzzleTypeToFrameSlug
-    : function fallbackPuzzleTypeToFrameSlug(puzzleType) {
-        if (puzzleType === "sudoku") {
-          return "mini-sudoku";
-        }
-        return puzzleType;
-      };
+const { sanitizePuzzleType, detectPuzzleTypeFromUrl, puzzleTypeToFrameSlug } = puzzleRegistry;
+if (
+  typeof sanitizePuzzleType !== "function" ||
+  typeof detectPuzzleTypeFromUrl !== "function" ||
+  typeof puzzleTypeToFrameSlug !== "function"
+) {
+  throw new Error("PuzzleRegistry is missing required background helpers.");
+}
 
 function normalizeApiBase(value) {
   if (!value || typeof value !== "string") {
@@ -488,7 +438,7 @@ function executeContentScript(tabId, frameId = 0) {
       chrome.scripting.executeScript(
         {
           target,
-          files: ["content.js"],
+          files: ["puzzle_registry.js", "content.js"],
         },
         () => {
           const error = chrome.runtime.lastError;
@@ -503,17 +453,23 @@ function executeContentScript(tabId, frameId = 0) {
     }
 
     if (chrome.tabs && typeof chrome.tabs.executeScript === "function") {
-      const details = Number.isInteger(frameId)
-        ? { file: "content.js", frameId, runAt: "document_idle" }
-        : { file: "content.js", runAt: "document_idle" };
+      const sharedDetails = Number.isInteger(frameId) ? { frameId, runAt: "document_idle" } : { runAt: "document_idle" };
 
-      chrome.tabs.executeScript(tabId, details, () => {
+      chrome.tabs.executeScript(tabId, { ...sharedDetails, file: "puzzle_registry.js" }, () => {
         const error = chrome.runtime.lastError;
         if (error) {
           reject(new Error(error.message));
           return;
         }
-        resolve();
+
+        chrome.tabs.executeScript(tabId, { ...sharedDetails, file: "content.js" }, () => {
+          const secondError = chrome.runtime.lastError;
+          if (secondError) {
+            reject(new Error(secondError.message));
+            return;
+          }
+          resolve();
+        });
       });
       return;
     }

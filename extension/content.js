@@ -6,62 +6,19 @@ let quickSolveStatus = null;
 let quickSolveBusy = false;
 let quickSolveObservedUrl = "";
 
-const puzzleRegistry = globalThis.PuzzleRegistry || {};
-const detectPuzzleTypeFromUrl =
-  typeof puzzleRegistry.detectPuzzleTypeFromUrl === "function"
-    ? puzzleRegistry.detectPuzzleTypeFromUrl
-    : function fallbackDetectPuzzleTypeFromUrl(url) {
-        if (!url || typeof url !== "string") {
-          return null;
-        }
+const puzzleRegistry = globalThis.PuzzleRegistry;
+if (!puzzleRegistry) {
+  throw new Error("PuzzleRegistry is not available in content context.");
+}
 
-        const normalized = url.toLowerCase();
-        if (normalized.includes("/games/queens") || normalized.includes("/games/view/queens")) {
-          return "queens";
-        }
-        if (normalized.includes("/games/tango") || normalized.includes("/games/view/tango")) {
-          return "tango";
-        }
-        if (normalized.includes("/games/mini-sudoku") || normalized.includes("/games/view/mini-sudoku")) {
-          return "sudoku";
-        }
-        if (normalized.includes("/games/zip") || normalized.includes("/games/view/zip")) {
-          return "zip";
-        }
-        if (normalized.includes("/games/patches") || normalized.includes("/games/view/patches")) {
-          return "patches";
-        }
-        return null;
-      };
-
-const puzzleTypeToLabel =
-  typeof puzzleRegistry.puzzleTypeToLabel === "function"
-    ? puzzleRegistry.puzzleTypeToLabel
-    : function fallbackPuzzleTypeToLabel(puzzleType) {
-        if (puzzleType === "tango") {
-          return "Tango";
-        }
-        if (puzzleType === "sudoku") {
-          return "Mini Sudoku";
-        }
-        if (puzzleType === "zip") {
-          return "Zip";
-        }
-        if (puzzleType === "patches") {
-          return "Patches";
-        }
-        return "Queens";
-      };
-
-const puzzleTypeToFrameSlug =
-  typeof puzzleRegistry.puzzleTypeToFrameSlug === "function"
-    ? puzzleRegistry.puzzleTypeToFrameSlug
-    : function fallbackPuzzleTypeToFrameSlug(puzzleType) {
-        if (puzzleType === "sudoku") {
-          return "mini-sudoku";
-        }
-        return puzzleType;
-      };
+const { detectPuzzleTypeFromUrl, puzzleTypeToLabel, puzzleTypeToFrameSlug } = puzzleRegistry;
+if (
+  typeof detectPuzzleTypeFromUrl !== "function" ||
+  typeof puzzleTypeToLabel !== "function" ||
+  typeof puzzleTypeToFrameSlug !== "function"
+) {
+  throw new Error("PuzzleRegistry is missing required content helpers.");
+}
 
 function detectPuzzleTypeFromPage() {
   const fromLocation = detectPuzzleTypeFromUrl(window.location.href);
@@ -388,7 +345,7 @@ function getGameIframeRect(puzzleType) {
   };
 }
 
-function autoDetectBoardSelection(puzzleType = null) {
+function autoDetectBoardSelection() {
   const selectors = [
     "canvas",
     "svg",
