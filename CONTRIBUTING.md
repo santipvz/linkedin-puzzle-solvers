@@ -12,7 +12,7 @@ Thanks for your interest in improving this project.
 git checkout -b feat/your-change-name
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r services/solver_api/requirements.txt
+pip install -r requirements.txt
 ```
 
 ## Run the Project Locally

@@ -10,7 +10,7 @@ This project has two deliverables:
 From repo root:
 
 ```bash
-python3 -m pip install -r services/solver_api/requirements.txt
+python3 -m pip install -r requirements.txt
 python3 -m compileall services/solver_api/app
 python3 -m compileall games/queen_solver/src
 python3 -m compileall games/tango_solver/src

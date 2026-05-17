@@ -21,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 
 from .puzzle_registry import PUZZLE_DEFINITIONS, get_puzzle_definition
+from .response_schemas import SolverResponse
 from .workers.common import BoardBBox, JsonDict
 
 
@@ -427,7 +428,7 @@ def _build_solve_handler(puzzle_key: str):
     async def solve_handler(
         image: UploadFile = File(...),
         board_capture: str | None = Header(default=None, alias="X-Board-Capture"),
-    ) -> dict[str, Any]:
+    ) -> SolverResponse | JsonDict:
         return await _solve_with_worker(
             definition.worker_filename,
             image,
@@ -443,4 +444,5 @@ for puzzle_definition in PUZZLE_DEFINITIONS:
     app.post(
         puzzle_definition.endpoint_path,
         name=f"solve_{puzzle_definition.key}",
+        response_model=None,
     )(_build_solve_handler(puzzle_definition.key))

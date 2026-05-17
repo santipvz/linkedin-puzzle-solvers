@@ -1,0 +1,14 @@
+[tool.ruff]
+target-version = "py312"
+line-length = 140
+extend-exclude = [
+  "datasets",
+  "deploy/local/.env",
+]
+
+[tool.ruff.lint]
+select = ["E", "F"]
+ignore = [
+  "E501",
+  "E402",
+]

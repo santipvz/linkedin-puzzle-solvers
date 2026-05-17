@@ -1,4 +1,1 @@
-opencv-python
-numpy
-pillow
-matplotlib
+-r ../../requirements.txt
