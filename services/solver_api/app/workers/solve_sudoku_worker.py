@@ -297,6 +297,17 @@ def solve(image_path: Path) -> JsonDict:
     solution_grid = _normalize_board(solve_result.board) if unique_solution else None
     ocr_stats = parsed.get("ocr") or {}
     overlay_cell_count = int(ocr_stats.get("overlay_cell_count") or 0)
+    fixed_count = int(ocr_stats.get("fixed_count") or len(fixed_cells_payload))
+    avg_confidence = float(ocr_stats.get("avg_confidence") or 0.0)
+    min_confidence = float(ocr_stats.get("min_confidence") or 0.0)
+    uncertain_count = int(ocr_stats.get("uncertain_count") or 0)
+    parse_reliable = bool(
+        fixed_count >= 4
+        and overlay_cell_count < 3
+        and avg_confidence >= 0.72
+        and (uncertain_count <= 2 or min_confidence >= 0.62)
+        and parsed.get("board_bbox") is not None
+    )
     error_message = None if unique_solution else solve_result.error
 
     if solve_result.solved and not unique_solution:
@@ -310,6 +321,12 @@ def solve(image_path: Path) -> JsonDict:
             "Detected existing solve-overlay markers in the screenshot. "
             "Clear overlay and solve again."
         )
+
+    if unique_solution and not parse_reliable:
+        unique_solution = False
+        moves = []
+        solution_grid = None
+        error_message = "Detected Mini Sudoku board/OCR is not reliable enough to apply a solution."
 
     removed_cells = [
         {
@@ -334,12 +351,13 @@ def solve(image_path: Path) -> JsonDict:
         "error": error_message,
         "details": {
             "iterations": int(solve_result.iterations),
-            "fixed_count": int(ocr_stats.get("fixed_count") or len(fixed_cells_payload)),
-            "avg_confidence": float(ocr_stats.get("avg_confidence") or 0.0),
-            "min_confidence": float(ocr_stats.get("min_confidence") or 0.0),
-            "uncertain_count": int(ocr_stats.get("uncertain_count") or 0),
+            "fixed_count": fixed_count,
+            "avg_confidence": avg_confidence,
+            "min_confidence": min_confidence,
+            "uncertain_count": uncertain_count,
             "overlay_cell_count": overlay_cell_count,
             "board_bbox": parsed.get("board_bbox"),
+            "parse_reliable": parse_reliable,
             "solution_count": solution_count,
             "unique_solution": unique_solution,
             "conflict_recovery_applied": bool(recovered_cells),

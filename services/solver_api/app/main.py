@@ -4,12 +4,14 @@ import asyncio
 import copy
 from datetime import datetime, timezone
 import hashlib
+import importlib
 import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
+import threading
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any
@@ -34,6 +36,7 @@ MAX_SOLVE_CACHE_ENTRIES = 96
 DATASET_CAPTURE_ENABLED = os.getenv("DATASET_CAPTURE_ENABLED", "1").strip().lower() not in {"0", "false", "no"}
 CORS_ALLOW_ORIGINS_RAW = os.getenv("CORS_ALLOW_ORIGINS", "*")
 CORS_ALLOW_ORIGIN_REGEX = (os.getenv("CORS_ALLOW_ORIGIN_REGEX") or "").strip() or None
+WORKER_MODE = os.getenv("SOLVER_WORKER_MODE", "inprocess").strip().lower()
 
 
 def _parse_cors_origins(raw_value: str) -> list[str]:
@@ -49,6 +52,8 @@ CORS_ALLOW_ORIGINS = _parse_cors_origins(CORS_ALLOW_ORIGINS_RAW)
 
 
 _solve_cache: OrderedDict[str, JsonDict] = OrderedDict()
+_worker_import_lock = threading.Lock()
+_worker_solve_functions: dict[str, Any] = {}
 
 
 app = FastAPI(
@@ -108,7 +113,30 @@ def _cache_put(cache_key: str, value: JsonDict) -> None:
 
 
 def _should_recompute_cached_response(puzzle_name: str, cached: JsonDict) -> bool:
-    if puzzle_name != "queens" or not isinstance(cached, dict):
+    if not isinstance(cached, dict):
+        return False
+
+    if puzzle_name == "tango":
+        board_size = int(cached.get("board_size") or 0)
+        details = cached.get("details") if isinstance(cached.get("details"), dict) else {}
+        parse_reliable = details.get("parse_reliable")
+        fixed_count = int(details.get("fixed_count") or 0)
+        constraint_count = int(details.get("constraint_count") or 0)
+
+        if board_size != 6:
+            return True
+        if parse_reliable is None:
+            return True
+        if not bool(cached.get("solved")) and fixed_count < 4 and constraint_count >= 2:
+            return True
+
+        return False
+
+    if puzzle_name == "patches":
+        details = cached.get("details") if isinstance(cached.get("details"), dict) else {}
+        return details.get("parse_reliable") is False
+
+    if puzzle_name != "queens":
         return False
 
     if bool(cached.get("solved")):
@@ -171,6 +199,22 @@ def _extract_board_only_image_payload(payload: bytes, response: JsonDict) -> byt
         return payload
 
 
+def _make_dataset_path_editable(path: Path) -> None:
+    try:
+        repo_stat = REPO_ROOT.stat()
+        os.chown(path, repo_stat.st_uid, repo_stat.st_gid)
+    except (AttributeError, OSError, PermissionError):
+        pass
+
+    try:
+        if path.is_dir():
+            path.chmod(0o775)
+        else:
+            path.chmod(0o664)
+    except (OSError, PermissionError):
+        pass
+
+
 def _archive_board_capture(puzzle: str, payload: bytes, response: JsonDict, from_cache: bool) -> None:
     if not DATASET_CAPTURE_ENABLED:
         return
@@ -181,6 +225,8 @@ def _archive_board_capture(puzzle: str, payload: bytes, response: JsonDict, from
 
     target_dir = CAPTURE_DATASET_DIR / puzzle / day
     target_dir.mkdir(parents=True, exist_ok=True)
+    for directory in (CAPTURE_DATASET_DIR, CAPTURE_DATASET_DIR / puzzle, target_dir):
+        _make_dataset_path_editable(directory)
 
     image_path = target_dir / f"{digest}.png"
     metadata_path = target_dir / f"{digest}.json"
@@ -188,6 +234,7 @@ def _archive_board_capture(puzzle: str, payload: bytes, response: JsonDict, from
     if not image_path.exists():
         image_payload = _extract_board_only_image_payload(payload, response)
         image_path.write_bytes(image_payload)
+        _make_dataset_path_editable(image_path)
 
     metadata: dict[str, Any] = {
         "puzzle": puzzle,
@@ -214,6 +261,7 @@ def _archive_board_capture(puzzle: str, payload: bytes, response: JsonDict, from
         metadata["seen_count"] = 1
 
     metadata_path.write_text(json.dumps(metadata, ensure_ascii=True, indent=2), encoding="utf-8")
+    _make_dataset_path_editable(metadata_path)
 
 
 def _write_temp_image(payload: bytes, filename: str | None) -> Path:
@@ -230,7 +278,7 @@ def _write_temp_image(payload: bytes, filename: str | None) -> Path:
     return Path(handle.name)
 
 
-def _run_solver_worker(worker_filename: str, image_path: Path) -> JsonDict:
+def _run_solver_worker_subprocess(worker_filename: str, image_path: Path) -> JsonDict:
     worker_path = WORKERS_DIR / worker_filename
     if not worker_path.exists():
         raise HTTPException(status_code=500, detail=f"Worker not found: {worker_filename}")
@@ -258,6 +306,80 @@ def _run_solver_worker(worker_filename: str, image_path: Path) -> JsonDict:
     except json.JSONDecodeError as exc:
         sample = result.stdout.strip()[:600]
         raise HTTPException(status_code=500, detail=f"Worker produced invalid JSON: {sample}") from exc
+
+
+def _worker_module_name(worker_filename: str) -> str:
+    module_stem = Path(worker_filename).stem
+    if not module_stem:
+        raise HTTPException(status_code=500, detail=f"Invalid worker filename: {worker_filename}")
+    return f"services.solver_api.app.workers.{module_stem}"
+
+
+def _worker_module_name_candidates(worker_filename: str) -> list[str]:
+    module_stem = Path(worker_filename).stem
+    if not module_stem:
+        raise HTTPException(status_code=500, detail=f"Invalid worker filename: {worker_filename}")
+    return [
+        f"services.solver_api.app.workers.{module_stem}",
+        f"app.workers.{module_stem}",
+        f"workers.{module_stem}",
+    ]
+
+
+def _load_worker_solve_function(worker_filename: str) -> Any:
+    solve_fn = _worker_solve_functions.get(worker_filename)
+    if solve_fn is not None:
+        return solve_fn
+
+    module = None
+    last_error: Exception | None = None
+    for module_name in _worker_module_name_candidates(worker_filename):
+        try:
+            module = importlib.import_module(module_name)
+            break
+        except ModuleNotFoundError as exc:
+            last_error = exc
+            continue
+
+    if module is None:
+        if last_error is not None:
+            raise last_error
+        raise HTTPException(status_code=500, detail=f"Could not import worker module: {worker_filename}")
+
+    solve_fn = getattr(module, "solve", None)
+    if not callable(solve_fn):
+        raise HTTPException(status_code=500, detail=f"Worker has no solve function: {worker_filename}")
+
+    _worker_solve_functions[worker_filename] = solve_fn
+    return solve_fn
+
+
+def _run_solver_worker_inprocess(worker_filename: str, image_path: Path) -> JsonDict:
+    worker_path = WORKERS_DIR / worker_filename
+    if not worker_path.exists():
+        raise HTTPException(status_code=500, detail=f"Worker not found: {worker_filename}")
+
+    # Game projects all expose modules under the name `src`, so imports are
+    # process-global and must not overlap across concurrent solves.
+    with _worker_import_lock:
+        solve_fn = _load_worker_solve_function(worker_filename)
+        try:
+            response = solve_fn(image_path)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Worker execution failed: {exc}") from exc
+
+    if not isinstance(response, dict):
+        raise HTTPException(status_code=500, detail="Worker returned an invalid response.")
+
+    return response
+
+
+def _run_solver_worker(worker_filename: str, image_path: Path) -> JsonDict:
+    if WORKER_MODE in {"subprocess", "process", "isolated"}:
+        return _run_solver_worker_subprocess(worker_filename, image_path)
+    return _run_solver_worker_inprocess(worker_filename, image_path)
 
 
 async def _solve_with_worker(
@@ -305,7 +427,7 @@ def _build_solve_handler(puzzle_key: str):
     async def solve_handler(
         image: UploadFile = File(...),
         board_capture: str | None = Header(default=None, alias="X-Board-Capture"),
-    ) -> JsonDict:
+    ) -> dict[str, Any]:
         return await _solve_with_worker(
             definition.worker_filename,
             image,

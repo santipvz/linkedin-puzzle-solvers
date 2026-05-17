@@ -93,6 +93,28 @@ def _board_bbox_from_grid_coords(grid_coords: object) -> BoardBBox | None:
     }
 
 
+def _compose_board_bbox(raw_board_bbox: object, grid_coords: object) -> BoardBBox | None:
+    grid_bbox = _board_bbox_from_grid_coords(grid_coords)
+    if not grid_bbox:
+        return raw_board_bbox if isinstance(raw_board_bbox, dict) else None
+
+    if not isinstance(raw_board_bbox, dict):
+        return grid_bbox
+
+    try:
+        base_x = int(raw_board_bbox.get("x", 0))
+        base_y = int(raw_board_bbox.get("y", 0))
+    except (TypeError, ValueError, AttributeError):
+        return grid_bbox
+
+    return {
+        "x": int(base_x + grid_bbox["x"]),
+        "y": int(base_y + grid_bbox["y"]),
+        "width": int(grid_bbox["width"]),
+        "height": int(grid_bbox["height"]),
+    }
+
+
 def solve(image_path: Path) -> JsonDict:
     game_root = game_root_for_worker(__file__, "tango_solver")
     if not game_root.exists():
@@ -156,9 +178,7 @@ def solve(image_path: Path) -> JsonDict:
 
     fixed_lookup = {(piece["row"], piece["col"]): piece["piece_type"] for piece in board_payload["fixed_pieces"]}
 
-    board_bbox = board_payload.get("board_bbox")
-    if not isinstance(board_bbox, dict):
-        board_bbox = _board_bbox_from_grid_coords(board_payload.get("grid_coords"))
+    board_bbox = _compose_board_bbox(board_payload.get("board_bbox"), board_payload.get("grid_coords"))
 
     moves: list[dict[str, int]] = []
     if solved:
@@ -176,19 +196,29 @@ def solve(image_path: Path) -> JsonDict:
                     }
                 )
 
+    fixed_count = int(len(board_payload["fixed_pieces"]))
+    constraint_count = int(len(board_payload["constraints"]))
+    parse_reliable = bool(fixed_count >= 4 and constraint_count >= 2 and isinstance(board_bbox, dict))
+    solved_payload = bool(solved and parse_reliable)
+    error_message = None if solved_payload else "No valid solution found."
+    if solved and not parse_reliable:
+        error_message = "Detected Tango board parse is not reliable enough to apply a solution."
+        moves = []
+
     response = {
         "puzzle": "tango",
-        "solved": bool(solved),
+        "solved": solved_payload,
         "board_size": int(solver.size),
         "moves": moves,
-        "solution_grid": _normalize_board(solver.board),
+        "solution_grid": _normalize_board(solver.board) if solved_payload else None,
         "fixed_pieces": fixed_pieces_payload,
         "constraints": constraints_payload,
-        "error": None if solved else "No valid solution found.",
+        "error": error_message,
         "details": {
             "steps": int(solver.get_steps()),
-            "fixed_count": int(len(board_payload["fixed_pieces"])),
-            "constraint_count": int(len(board_payload["constraints"])),
+            "fixed_count": fixed_count,
+            "constraint_count": constraint_count,
+            "parse_reliable": parse_reliable,
             "board_bbox": board_bbox,
         },
     }

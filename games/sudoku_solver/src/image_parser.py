@@ -13,7 +13,6 @@ from typing import TypedDict
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
-from sklearn.neighbors import KNeighborsClassifier
 
 
 BOARD_SIZE = 6
@@ -76,6 +75,43 @@ class _LineGroup:
         return int((self.start + self.end) // 2)
 
 
+class _DistanceWeightedKnn:
+    def __init__(self, features: list[np.ndarray] | np.ndarray, labels: list[int] | np.ndarray, n_neighbors: int = 3) -> None:
+        self._features = np.asarray(features, dtype=np.float32)
+        self._labels = np.asarray(labels, dtype=np.int32)
+        self._n_neighbors = max(1, min(int(n_neighbors), len(self._labels)))
+        self.classes_ = np.unique(self._labels)
+        self._class_index = {int(value): index for index, value in enumerate(self.classes_)}
+
+    def predict_proba(self, features: np.ndarray) -> np.ndarray:
+        query_features = np.asarray(features, dtype=np.float32)
+        if query_features.ndim == 1:
+            query_features = query_features.reshape(1, -1)
+
+        probabilities = np.zeros((len(query_features), len(self.classes_)), dtype=np.float32)
+        for row_index, feature in enumerate(query_features):
+            distances = np.sum((self._features - feature) ** 2, axis=1)
+            nearest = np.argpartition(distances, self._n_neighbors - 1)[: self._n_neighbors]
+            nearest = nearest[np.argsort(distances[nearest])]
+            nearest_distances = distances[nearest]
+            nearest_labels = self._labels[nearest]
+
+            exact_matches = nearest_distances <= 1e-12
+            if np.any(exact_matches):
+                weights = exact_matches.astype(np.float32)
+            else:
+                weights = 1.0 / (np.sqrt(nearest_distances) + 1e-6)
+
+            for label, weight in zip(nearest_labels, weights):
+                probabilities[row_index, self._class_index[int(label)]] += float(weight)
+
+            total = float(np.sum(probabilities[row_index]))
+            if total > 0.0:
+                probabilities[row_index] /= total
+
+        return probabilities
+
+
 class _MiniSudokuOcr:
     def __init__(self) -> None:
         self._model = self._train_model()
@@ -91,12 +127,9 @@ class _MiniSudokuOcr:
         best_digit, best_confidence = ranked[0]
         return best_digit, best_confidence, ranked
 
-    def _train_model(self) -> KNeighborsClassifier:
+    def _train_model(self) -> _DistanceWeightedKnn:
         features, labels = self._load_or_build_training_dataset()
-
-        model = KNeighborsClassifier(n_neighbors=3, weights="distance")
-        model.fit(np.asarray(features, dtype=np.float32), np.asarray(labels, dtype=np.int32))
-        return model
+        return _DistanceWeightedKnn(features, labels, n_neighbors=3)
 
     def _load_or_build_training_dataset(self) -> tuple[list[np.ndarray], list[int]]:
         cache_path = self._dataset_cache_path()
@@ -731,6 +764,8 @@ class MiniSudokuImageParser:
 
             if index == 0:
                 primary_prediction = candidate
+                if confidence >= OCR_STRONG_CONFIDENCE:
+                    return int(value), float(confidence), ranked
 
             if best_prediction is None:
                 best_prediction = candidate

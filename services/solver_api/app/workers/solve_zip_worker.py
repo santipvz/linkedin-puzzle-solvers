@@ -46,6 +46,11 @@ def _build_primary_clues(clue_entries: list[_ZipClueEntry]) -> dict[tuple[int, i
     }
 
 
+def _has_contiguous_clue_sequence(clues: dict[tuple[int, int], int]) -> bool:
+    values = sorted(int(value) for value in clues.values())
+    return bool(values) and values == list(range(1, len(values) + 1))
+
+
 def _score_clue_assignment(values: list[int], confidences: list[float], rank_penalty: float) -> float:
     score = float(sum(confidences)) - rank_penalty
 
@@ -286,6 +291,8 @@ def _recover_duplicate_clues(
         )
         if contiguous_assignment is not None:
             consider_assignment(contiguous_assignment)
+            if best_payload is not None:
+                return best_payload[1], best_payload[2]
 
     if has_duplicate:
         for combo in itertools.product(*options_per_cell):
@@ -325,6 +332,31 @@ def solve(image_path: Path) -> JsonDict:
         blocked_v=parsed["blocked_v"],
     )
 
+    parse_reliable = bool(len(clues) >= 4 and _has_contiguous_clue_sequence(clues))
+    if not parse_reliable:
+        response = {
+            "puzzle": "zip",
+            "solved": False,
+            "board_size": int(parsed["size"]),
+            "path": [],
+            "directions": [],
+            "moves": [],
+            "start_cell": None,
+            "clues": parsed["clues"],
+            "clue_grid": parsed["clue_grid"],
+            "error": "Detected Zip clues are not reliable enough to apply a solution.",
+            "details": {
+                "iterations": 0,
+                "clue_count": int(len(parsed["clues"])),
+                "board_bbox": parsed["board_bbox"],
+                "parse_reliable": False,
+                "duplicate_recovery_applied": bool(recovered_clues),
+                "recovered_clues": recovered_clues,
+            },
+        }
+        attach_captured_logs(response, captured_logs)
+        return response
+
     solve_result = solver.solve(
         size=int(parsed["size"]),
         blocked_h=parsed["blocked_h"],
@@ -354,6 +386,7 @@ def solve(image_path: Path) -> JsonDict:
             "iterations": int(solve_result.iterations),
             "clue_count": int(len(parsed["clues"])),
             "board_bbox": parsed["board_bbox"],
+            "parse_reliable": parse_reliable,
             "duplicate_recovery_applied": bool(recovered_clues),
             "recovered_clues": recovered_clues,
         },
