@@ -80,36 +80,6 @@ class EdgeDetectionBoardDetector(BoardDetector):
 
         return h_size, v_size
 
-    def _detect_size_by_improved_edges(self, image: np.ndarray) -> int:
-        """Detect size using improved edge analysis."""
-        height, width = image.shape[:2]
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
-        # Enhance for edge detection
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-        edges = cv2.Canny(blurred, 30, 100, apertureSize=3)
-
-        # Morphological operations
-        kernel = np.ones((3, 3), np.uint8)
-        edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
-
-        # Detect lines conservatively
-        lines = cv2.HoughLines(edges, 1, np.pi/180, threshold=int(min(height, width) * 0.4))
-
-        if lines is None:
-            return 0
-
-        # Extract and filter lines
-        h_lines, v_lines = self._extract_and_filter_lines(lines, height, width)
-
-        h_size = len(h_lines) - 1 if len(h_lines) > 1 else 0
-        v_size = len(v_lines) - 1 if len(v_lines) > 1 else 0
-
-        if abs(h_size - v_size) <= 1 and h_size > 0 and v_size > 0:
-            return max(h_size, v_size)
-
-        return 0
-
     def _detect_size_basic_fallback(self, image: np.ndarray) -> int:
         """Fallback method testing common sizes."""
         for size in self.common_sizes:

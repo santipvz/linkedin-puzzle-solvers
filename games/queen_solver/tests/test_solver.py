@@ -10,11 +10,18 @@ import os
 import sys
 import time
 import glob
+from pathlib import Path
 
 import numpy as np
 
-# Add src directory to Python path
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+REPO_ROOT = Path(__file__).resolve().parents[3]
+QUEENS_ROOT = REPO_ROOT / "games" / "queen_solver"
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from services.solver_api.app.workers.common import activate_game_import_context
+
+activate_game_import_context(QUEENS_ROOT)
 
 from src.queens_solver import QueensSolver
 from src.core.models import Region

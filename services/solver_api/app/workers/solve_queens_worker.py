@@ -12,9 +12,9 @@ import cv2
 import numpy as np
 
 try:
-    from .common import activate_game_import_context, game_root_for_worker, run_worker_cli
+    from .common import BoardBBox, JsonDict, activate_game_import_context, attach_captured_logs, game_root_for_worker, run_worker_cli
 except ImportError:
-    from common import activate_game_import_context, game_root_for_worker, run_worker_cli
+    from common import BoardBBox, JsonDict, activate_game_import_context, attach_captured_logs, game_root_for_worker, run_worker_cli
 
 
 MIN_BOARD_AREA_RATIO = 0.08
@@ -93,7 +93,7 @@ def _select_best_bbox(contours: Sequence[Any], image_width: int, image_height: i
     return best_bbox
 
 
-def _extract_board_crop(image: np.ndarray) -> tuple[np.ndarray, dict[str, int]] | tuple[None, None]:
+def _extract_board_crop(image: np.ndarray) -> tuple[np.ndarray, BoardBBox] | tuple[None, None]:
     image_height, image_width = image.shape[:2]
     masks = _build_contour_masks(image)
 
@@ -136,7 +136,7 @@ def _extract_board_crop(image: np.ndarray) -> tuple[np.ndarray, dict[str, int]] 
     return crop, metadata
 
 
-def _prepare_queens_image(image_path: Path) -> tuple[Path | None, dict[str, int] | None]:
+def _prepare_queens_image(image_path: Path) -> tuple[Path | None, BoardBBox | None]:
     image = cv2.imread(str(image_path))
     if image is None:
         return None, None
@@ -345,9 +345,7 @@ def _run_solver_attempt(queens_solver_class: Any, image_path: Path, attempt_labe
             },
         }
 
-    logs_value = captured_logs.getvalue().strip()
-    if logs_value:
-        response["logs"] = logs_value[:1200]
+    attach_captured_logs(response, captured_logs)
 
     return response
 
@@ -404,7 +402,63 @@ def _select_best_attempt(attempts: list[dict[str, Any]]) -> dict[str, Any]:
     return max(attempts, key=_attempt_quality)
 
 
-def solve(image_path: Path) -> dict[str, Any]:
+def _is_confident_queens_attempt(attempt: dict[str, Any]) -> bool:
+    details = attempt.get("details") or {}
+    solved = bool(attempt.get("solved"))
+    validation_passed = bool(details.get("validation_passed"))
+    board_size = int(attempt.get("board_size") or 0)
+    regions_detected = int(details.get("regions_detected") or 0)
+    moves_count = len(attempt.get("moves") or []) if isinstance(attempt.get("moves"), list) else 0
+
+    strict_confidence = solved and validation_passed and board_size > 0 and regions_detected == board_size
+    if strict_confidence:
+        return True
+
+    # Accept near-perfect region extraction when the solver already produced a valid full placement.
+    return bool(
+        solved
+        and validation_passed
+        and board_size > 0
+        and moves_count == board_size
+        and regions_detected >= max(1, board_size - 1)
+    )
+
+
+def _finalize_queens_attempt(
+    best_attempt: dict[str, Any],
+    attempts: list[dict[str, Any]],
+    detected_board_bbox: dict[str, int] | None,
+) -> dict[str, Any]:
+    details = best_attempt.setdefault("details", {})
+    parse_reliable = _is_confident_queens_attempt(best_attempt)
+    if detected_board_bbox is not None:
+        details["board_bbox"] = detected_board_bbox
+    elif isinstance(details.get("crop_bbox"), dict):
+        details["board_bbox"] = details["crop_bbox"]
+
+    details["parse_reliable"] = parse_reliable
+    details["attempt_count"] = len(attempts)
+    details["attempts"] = [
+        {
+            "attempt": attempt.get("details", {}).get("attempt"),
+            "solved": bool(attempt.get("solved")),
+            "board_size": int(attempt.get("board_size") or 0),
+            "regions_detected": int((attempt.get("details") or {}).get("regions_detected") or 0),
+            "iterations": int((attempt.get("details") or {}).get("iterations") or 0),
+        }
+        for attempt in attempts
+    ]
+
+    if bool(best_attempt.get("solved")) and not parse_reliable:
+        best_attempt["solved"] = False
+        best_attempt["moves"] = []
+        best_attempt["solution_grid"] = None
+        best_attempt["error"] = "Detected Queens board/regions are not reliable enough to apply a solution."
+
+    return best_attempt
+
+
+def solve(image_path: Path) -> JsonDict:
     game_root = game_root_for_worker(__file__, "queen_solver")
     if not game_root.exists():
         return {
@@ -432,6 +486,13 @@ def solve(image_path: Path) -> dict[str, Any]:
             if crop_metadata is not None:
                 detected_board_bbox = crop_metadata
 
+            cropped_attempt = _run_solver_attempt(queens_solver_class, crop_path, "auto-cropped")
+            if crop_metadata is not None:
+                cropped_attempt["details"]["crop_bbox"] = crop_metadata
+            attempts.append(cropped_attempt)
+            if _is_confident_queens_attempt(cropped_attempt):
+                return _finalize_queens_attempt(cropped_attempt, attempts, detected_board_bbox)
+
             inpainted_crop_path, inpainted_crop_meta = _prepare_inpainted_image(crop_path, board_detector_class)
             if inpainted_crop_path is not None:
                 temp_paths.append(inpainted_crop_path)
@@ -445,11 +506,8 @@ def solve(image_path: Path) -> dict[str, Any]:
                 if inpainted_crop_meta is not None:
                     inpainted_cropped_attempt["details"].update(inpainted_crop_meta)
                 attempts.append(inpainted_cropped_attempt)
-
-            cropped_attempt = _run_solver_attempt(queens_solver_class, crop_path, "auto-cropped")
-            if crop_metadata is not None:
-                cropped_attempt["details"]["crop_bbox"] = crop_metadata
-            attempts.append(cropped_attempt)
+                if _is_confident_queens_attempt(inpainted_cropped_attempt):
+                    return _finalize_queens_attempt(inpainted_cropped_attempt, attempts, detected_board_bbox)
 
         inpainted_original_path, inpainted_original_meta = _prepare_inpainted_image(image_path, board_detector_class)
         if inpainted_original_path is not None:
@@ -462,31 +520,14 @@ def solve(image_path: Path) -> dict[str, Any]:
             if inpainted_original_meta is not None:
                 inpainted_original_attempt["details"].update(inpainted_original_meta)
             attempts.append(inpainted_original_attempt)
+            if _is_confident_queens_attempt(inpainted_original_attempt):
+                return _finalize_queens_attempt(inpainted_original_attempt, attempts, detected_board_bbox)
 
         original_attempt = _run_solver_attempt(queens_solver_class, image_path, "original")
         attempts.append(original_attempt)
 
         best_attempt = _select_best_attempt(attempts)
-
-        details = best_attempt.setdefault("details", {})
-        if detected_board_bbox is not None:
-            details["board_bbox"] = detected_board_bbox
-        elif isinstance(details.get("crop_bbox"), dict):
-            details["board_bbox"] = details["crop_bbox"]
-
-        details["attempt_count"] = len(attempts)
-        details["attempts"] = [
-            {
-                "attempt": attempt.get("details", {}).get("attempt"),
-                "solved": bool(attempt.get("solved")),
-                "board_size": int(attempt.get("board_size") or 0),
-                "regions_detected": int((attempt.get("details") or {}).get("regions_detected") or 0),
-                "iterations": int((attempt.get("details") or {}).get("iterations") or 0),
-            }
-            for attempt in attempts
-        ]
-
-        return best_attempt
+        return _finalize_queens_attempt(best_attempt, attempts, detected_board_bbox)
     finally:
         for path in temp_paths:
             path.unlink(missing_ok=True)

@@ -2,10 +2,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from math import isqrt
-from typing import Any, Iterable
+from typing import Iterable, TypedDict
 
 
 VALID_SHAPES = {"any", "square", "wide", "tall"}
+
+
+class PatchesClueInput(TypedDict, total=False):
+    row: int
+    col: int
+    shape: str
+    area: int | None
+    value: int | None
 
 
 @dataclass(slots=True)
@@ -54,7 +62,7 @@ class PatchesSolver:
     def iterations(self) -> int:
         return self._iterations
 
-    def solve(self, board_size: int, clues: Iterable[PatchesClue | dict[str, Any]]) -> PatchesSolveResult:
+    def solve(self, board_size: int, clues: Iterable[PatchesClue | PatchesClueInput]) -> PatchesSolveResult:
         normalized_size = int(board_size)
         normalized_clues, error = self._normalize_clues(clues)
         if error:
@@ -151,9 +159,14 @@ class PatchesSolver:
         all_mask = (1 << total_cells) - 1
         self._iterations = 0
         assigned: list[_CandidateRegion | None] = [None for _ in range(clue_count)]
+        failed_states: set[tuple[int, tuple[int, ...]]] = set()
 
         def search(occupied_mask: int, remaining_indexes: tuple[int, ...]) -> bool:
             self._iterations += 1
+
+            state_key = (occupied_mask, remaining_indexes)
+            if state_key in failed_states:
+                return False
 
             if not remaining_indexes:
                 return occupied_mask == all_mask
@@ -173,6 +186,7 @@ class PatchesSolver:
                 ]
 
                 if not feasible:
+                    failed_states.add(state_key)
                     return False
 
                 candidate_areas = [candidate.area for candidate in feasible]
@@ -184,9 +198,11 @@ class PatchesSolver:
                     best_candidates = feasible
 
             if remaining_cell_count < min_area_sum or remaining_cell_count > max_area_sum:
+                failed_states.add(state_key)
                 return False
 
             if best_candidates is None or best_index < 0:
+                failed_states.add(state_key)
                 return False
 
             next_remaining = tuple(index for index in remaining_indexes if index != best_index)
@@ -206,6 +222,7 @@ class PatchesSolver:
                     return True
                 assigned[best_index] = None
 
+            failed_states.add(state_key)
             return False
 
         solved = search(occupied_mask=0, remaining_indexes=tuple(range(clue_count)))
@@ -313,7 +330,7 @@ class PatchesSolver:
 
     def _normalize_clues(
         self,
-        clues: Iterable[PatchesClue | dict[str, Any]],
+        clues: Iterable[PatchesClue | PatchesClueInput],
     ) -> tuple[list[PatchesClue], str | None]:
         normalized: list[PatchesClue] = []
 

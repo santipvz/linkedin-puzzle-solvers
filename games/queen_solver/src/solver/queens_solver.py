@@ -17,7 +17,6 @@ class BacktrackingQueensSolver(PuzzleSolver):
         start_time = time.time()
         self.iteration_count = 0
 
-        # Pre-validation
         if not self._pre_validate_solvability(board_size, regions):
             return SolverResult(
                 success=False,
@@ -28,14 +27,11 @@ class BacktrackingQueensSolver(PuzzleSolver):
                 error_message="Puzzle cannot have a valid solution",
             )
 
-        # Create region mapping for quick lookup
         region_map = self._create_region_map(board_size, regions)
 
-        # Try solving with full constraints
         solution = np.zeros((board_size, board_size), dtype=int)
 
         if self._solve_backtracking_full(solution, 0, board_size, regions, region_map):
-            # Post-validation
             validation_passed = self._post_validate_solution(solution, board_size, regions)
 
             return SolverResult(
@@ -47,7 +43,7 @@ class BacktrackingQueensSolver(PuzzleSolver):
                 error_message=None if validation_passed else "Solution found but validation failed",
             )
 
-        # No solution found with full constraints - don't try relaxed mode for now
+        # Keep failures strict; relaxed mode can return invalid placements.
         return SolverResult(
             success=False,
             solution=None,
@@ -59,11 +55,9 @@ class BacktrackingQueensSolver(PuzzleSolver):
 
     def _pre_validate_solvability(self, board_size: int, regions: dict[int, Region]) -> bool:
         """Validate if puzzle can have a solution before solving."""
-        # Must have exactly n regions for nxn board
         if len(regions) != board_size:
             return False
 
-        # Check for empty regions
         for region in regions.values():
             if region.size == 0:
                 return False
@@ -86,13 +80,11 @@ class BacktrackingQueensSolver(PuzzleSolver):
                 column_regions[c].append(region_id)
                 row_regions[r].append(region_id)
 
-        for col, region_ids in column_regions.items():
+        for region_ids in column_regions.values():
             unique_regions = list(set(region_ids))
             if len(unique_regions) > 1:
                 region_sizes = [regions[rid].size for rid in unique_regions]
 
-                # If there's a single-cell region with other small regions in same column,
-                # it might be impossible (single cell forces elimination of whole column)
                 if 1 in region_sizes and any(size <= 3 for size in region_sizes if size != 1):
                     return False
 
@@ -111,24 +103,90 @@ class BacktrackingQueensSolver(PuzzleSolver):
     def _solve_backtracking_full(self, solution: np.ndarray, row: int, board_size: int,
                                regions: dict[int, Region], region_map: np.ndarray) -> bool:
         """Backtracking with all constraints."""
-        self.iteration_count += 1
+        del row
 
-        if self.iteration_count > self.max_iterations:
-            return False
+        region_ids = sorted(regions.keys())
+        region_bit_by_id = {region_id: 1 << index for index, region_id in enumerate(region_ids)}
+        all_regions_mask = (1 << len(region_ids)) - 1
+        row_cells: list[list[tuple[int, int, int]]] = []
 
-        if row == board_size:
+        for current_row in range(board_size):
+            cells = []
+            for col in range(board_size):
+                region_id = int(region_map[current_row, col])
+                region = regions[region_id]
+                cells.append((col, region_bit_by_id[region_id], int(region.size)))
+            cells.sort(key=lambda item: (item[2], item[0]))
+            row_cells.append(cells)
+
+        placements = [-1 for _ in range(board_size)]
+
+        def has_remaining_region_options(
+            next_row: int,
+            used_cols_mask: int,
+            used_regions_mask: int,
+            previous_col: int,
+        ) -> bool:
+            for region_id in region_ids:
+                region_bit = region_bit_by_id[region_id]
+                if used_regions_mask & region_bit:
+                    continue
+
+                has_option = False
+                for region_row, region_col in regions[region_id].positions:
+                    if region_row < next_row:
+                        continue
+                    if used_cols_mask & (1 << region_col):
+                        continue
+                    if region_row == next_row and previous_col >= 0 and abs(previous_col - region_col) <= 1:
+                        continue
+
+                    has_option = True
+                    break
+
+                if not has_option:
+                    return False
+
             return True
 
-        for col in range(board_size):
-            if self._is_valid_full(solution, row, col, board_size, regions, region_map):
-                solution[row, col] = 1
+        def backtrack(current_row: int, used_cols_mask: int, used_regions_mask: int, previous_col: int) -> bool:
+            self.iteration_count += 1
+            if self.iteration_count > self.max_iterations:
+                return False
 
-                if self._solve_backtracking_full(solution, row + 1, board_size, regions, region_map):
+            if current_row == board_size:
+                return used_regions_mask == all_regions_mask
+
+            for col, region_bit, _region_size in row_cells[current_row]:
+                col_bit = 1 << col
+                if used_cols_mask & col_bit:
+                    continue
+                if used_regions_mask & region_bit:
+                    continue
+                if previous_col >= 0 and abs(previous_col - col) <= 1:
+                    continue
+
+                next_used_regions = used_regions_mask | region_bit
+                next_used_cols = used_cols_mask | col_bit
+                if not has_remaining_region_options(current_row + 1, next_used_cols, next_used_regions, col):
+                    continue
+
+                placements[current_row] = col
+                if backtrack(current_row + 1, next_used_cols, next_used_regions, col):
                     return True
+                placements[current_row] = -1
 
-                solution[row, col] = 0
+            return False
 
-        return False
+        if not backtrack(0, 0, 0, -1):
+            return False
+
+        solution[:, :] = 0
+        for solved_row, solved_col in enumerate(placements):
+            if solved_col < 0:
+                return False
+            solution[solved_row, solved_col] = 1
+        return True
 
     def _solve_backtracking_basic(self, solution: np.ndarray, row: int, board_size: int) -> bool:
         """Backtracking with basic constraints only."""
@@ -154,19 +212,16 @@ class BacktrackingQueensSolver(PuzzleSolver):
     def _is_valid_full(self, solution: np.ndarray, row: int, col: int, board_size: int,
                       regions: dict[int, Region], region_map: np.ndarray) -> bool:
         """Validate placement with all constraints."""
-        # Check column constraint
         for r in range(row):
             if solution[r, col] == 1:
                 return False
 
-        # Check region constraint
         region_id = region_map[row, col]
         region = regions[region_id]
         for r, c in region.positions:
             if solution[r, c] == 1:
                 return False
 
-        # Check adjacency constraint
         directions = [(-1, -1), (-1, 0), (-1, 1), (0, -1),
                      (0, 1), (1, -1), (1, 0), (1, 1)]
 
@@ -180,7 +235,6 @@ class BacktrackingQueensSolver(PuzzleSolver):
 
     def _is_valid_basic(self, solution: np.ndarray, row: int, col: int, board_size: int) -> bool:
         """Validate placement with basic constraints only."""
-        # Check column constraint
         for r in range(row):
             if solution[r, col] == 1:
                 return False
@@ -199,7 +253,6 @@ class BacktrackingQueensSolver(PuzzleSolver):
     def _post_validate_solution(self, solution: np.ndarray, board_size: int,
                               regions: dict[int, Region]) -> bool:
         """Validation of found solution."""
-        # Check queen count
         if np.sum(solution) != board_size:
             return False
 

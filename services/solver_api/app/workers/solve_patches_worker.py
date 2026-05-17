@@ -5,12 +5,98 @@ import io
 import itertools
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Protocol, TypedDict
 
 try:
-    from .common import activate_game_import_context, game_root_for_worker, run_worker_cli
+    from .common import JsonDict, activate_game_import_context, attach_captured_logs, game_root_for_worker, run_worker_cli
 except ImportError:
-    from common import activate_game_import_context, game_root_for_worker, run_worker_cli
+    from common import JsonDict, activate_game_import_context, attach_captured_logs, game_root_for_worker, run_worker_cli
+
+
+class _PatchesClueCandidate(TypedDict):
+    value: int
+    confidence: float
+
+
+class _ParsedPatchesClue(TypedDict):
+    row: int
+    col: int
+    shape: str
+    value: int | None
+    confidence: float
+    candidates: list[_PatchesClueCandidate]
+    badge_ratio: float
+    badge_fill: float
+
+
+_RecoveredClueChange = TypedDict(
+    "_RecoveredClueChange",
+    {
+        "row": int,
+        "col": int,
+        "from": int | None,
+        "to": int | None,
+        "confidence": float,
+        "candidate_rank": int,
+    },
+)
+
+
+class _GridLinesPayload(TypedDict):
+    rows: list[int]
+    cols: list[int]
+
+
+class _BoardBBoxPayload(TypedDict):
+    x: int
+    y: int
+    width: int
+    height: int
+
+
+class _ParsedPatchesBoard(TypedDict):
+    board_size: int
+    clues: list[_ParsedPatchesClue]
+    clue_grid: list[list[int | None]]
+    board_bbox: _BoardBBoxPayload
+    grid_lines: _GridLinesPayload
+
+
+class _RegionLike(Protocol):
+    top: int
+    left: int
+    height: int
+    width: int
+    area: int
+    clue_row: int
+    clue_col: int
+
+
+class _SolveResultLike(Protocol):
+    solved: bool
+    regions: list[_RegionLike] | None
+    iterations: int
+    error: str | None
+    relaxed_square_clues: int
+
+
+class _SolverLike(Protocol):
+    def solve(self, board_size: int, clues: list[object]) -> _SolveResultLike: ...
+
+
+class _ParserLike(Protocol):
+    def __init__(self, board_size: int) -> None: ...
+
+    def parse_image(self, image_path: str) -> _ParsedPatchesBoard: ...
+
+
+class _AttemptPayload(TypedDict):
+    parsed: _ParsedPatchesBoard
+    solve_result: _SolveResultLike
+    recovered_clues: list[_RecoveredClueChange]
+    recovery_attempts: int
+    score: float
+    board_size: int
 
 
 def _build_solution_grid(board_size: int, regions: list[dict[str, int]]) -> list[list[int]]:
@@ -26,7 +112,7 @@ def _build_solution_grid(board_size: int, regions: list[dict[str, int]]) -> list
     return grid
 
 
-def _build_solver_clues(parsed_clues: list[dict[str, Any]], value_overrides: dict[int, int | None] | None = None) -> list[Any]:
+def _build_solver_clues(parsed_clues: list[_ParsedPatchesClue], value_overrides: dict[int, int | None] | None = None) -> list[object]:
     from src.patches_solver import PatchesClue
 
     overrides = value_overrides or {}
@@ -44,7 +130,7 @@ def _build_solver_clues(parsed_clues: list[dict[str, Any]], value_overrides: dic
     return clues
 
 
-def _build_value_options(clue: dict[str, Any], board_size: int) -> list[tuple[int | None, float, int]]:
+def _build_value_options(clue: _ParsedPatchesClue, board_size: int) -> list[tuple[int | None, float, int]]:
     max_value = board_size * board_size
     options: list[tuple[int | None, float, int]] = []
     seen: set[int | None] = set()
@@ -55,7 +141,8 @@ def _build_value_options(clue: dict[str, Any], board_size: int) -> list[tuple[in
         seen.add(None)
     else:
         value = int(primary_value)
-        options.append((value, float(clue.get("confidence") or 1.0), 0))
+        primary_confidence = float(clue.get("confidence") or 1.0)
+        options.append((value, primary_confidence, 0))
         seen.add(value)
 
     for rank, candidate in enumerate(clue.get("candidates") or [], start=1):
@@ -71,11 +158,11 @@ def _build_value_options(clue: dict[str, Any], board_size: int) -> list[tuple[in
 
 
 def _recover_with_ocr_candidates(
-    solver: Any,
-    parsed_clues: list[dict[str, Any]],
+    solver: _SolverLike,
+    parsed_clues: list[_ParsedPatchesClue],
     board_size: int,
-    base_result: Any,
-) -> tuple[Any, list[dict[str, Any]], int]:
+    base_result: _SolveResultLike,
+) -> tuple[_SolveResultLike, list[_RecoveredClueChange], int]:
     option_lists = [_build_value_options(clue, board_size) for clue in parsed_clues]
     combination_count = 1
     for options in option_lists:
@@ -84,8 +171,11 @@ def _recover_with_ocr_candidates(
     if combination_count <= 1:
         return base_result, [], 0
 
+    max_candidate_assignments = 12000
     candidate_assignments: list[tuple[float, tuple[tuple[int | None, float, int], ...]]] = []
-    for assignment in itertools.product(*option_lists):
+    for assignment_index, assignment in enumerate(itertools.product(*option_lists)):
+        if assignment_index >= max_candidate_assignments:
+            break
         score = 0.0
         for value, confidence, rank in assignment:
             del value
@@ -112,7 +202,7 @@ def _recover_with_ocr_candidates(
         if not solve_result.solved:
             continue
 
-        replaced: list[dict[str, Any]] = []
+        replaced: list[_RecoveredClueChange] = []
         for index, selected in enumerate(assignment):
             selected_value, selected_confidence, selected_rank = selected
             original = parsed_clues[index].get("value")
@@ -130,17 +220,48 @@ def _recover_with_ocr_candidates(
                 }
             )
 
+        if base_result.solved and solve_result.relaxed_square_clues > base_result.relaxed_square_clues:
+            continue
+
         return solve_result, replaced, attempted
 
     return base_result, [], attempted
 
 
+def _has_ocr_alternatives(parsed_clues: list[_ParsedPatchesClue], board_size: int) -> bool:
+    for clue in parsed_clues:
+        if len(_build_value_options(clue, board_size)) > 1:
+            return True
+    return False
+
+
+def _should_try_ocr_recovery(attempt: _AttemptPayload) -> bool:
+    solve_result = attempt["solve_result"]
+    parsed = attempt["parsed"]
+    board_size = int(attempt["board_size"])
+    if not _has_ocr_alternatives(parsed["clues"], board_size):
+        return False
+
+    if not _is_confident_patches_attempt(attempt):
+        return True
+
+    if int(solve_result.relaxed_square_clues) > 0:
+        return True
+
+    return any(
+        clue.get("value") is not None and float(clue.get("confidence") or 0.0) < 0.92
+        for clue in parsed["clues"]
+    )
+
+
 def _attempt_solve_for_board_size(
     image_path: Path,
     board_size: int,
-    parser_cls: Any,
-    solver_cls: Any,
-) -> dict[str, Any]:
+    parser_cls: type[_ParserLike],
+    solver_cls: type[_SolverLike],
+    *,
+    allow_recovery: bool = True,
+) -> _AttemptPayload:
     parser = parser_cls(board_size=board_size)
     parsed = parser.parse_image(str(image_path))
 
@@ -148,9 +269,18 @@ def _attempt_solve_for_board_size(
     clues = _build_solver_clues(parsed["clues"])
     solve_result = solver.solve(board_size=int(parsed["board_size"]), clues=clues)
 
-    recovered_clues: list[dict[str, Any]] = []
+    recovered_clues: list[_RecoveredClueChange] = []
     recovery_attempts = 0
-    if not solve_result.solved:
+    base_attempt = {
+        "parsed": parsed,
+        "solve_result": solve_result,
+        "recovered_clues": recovered_clues,
+        "recovery_attempts": recovery_attempts,
+        "score": 0.0,
+        "board_size": int(parsed["board_size"]),
+    }
+
+    if allow_recovery and _should_try_ocr_recovery(base_attempt):
         solve_result, recovered_clues, recovery_attempts = _recover_with_ocr_candidates(
             solver=solver,
             parsed_clues=parsed["clues"],
@@ -182,7 +312,33 @@ def _attempt_solve_for_board_size(
     }
 
 
-def solve(image_path: Path) -> dict[str, Any]:
+def _is_confident_patches_attempt(attempt: _AttemptPayload) -> bool:
+    solve_result = attempt["solve_result"]
+    parsed = attempt["parsed"]
+    board_size = int(attempt["board_size"])
+    clue_count = int(len(parsed["clues"]))
+    numbered_clue_count = int(sum(1 for clue in parsed["clues"] if clue.get("value") is not None))
+    min_numbered_clues = max(3, board_size - 3)
+    return bool(
+        solve_result.solved
+        and 5 <= board_size <= 9
+        and clue_count >= max(4, board_size)
+        and numbered_clue_count >= min_numbered_clues
+    )
+
+
+def _base_attempt_recovery_priority(attempt: _AttemptPayload) -> tuple[int, float, int]:
+    parsed = attempt["parsed"]
+    clue_count = int(len(parsed["clues"]))
+    numbered_clue_count = int(sum(1 for clue in parsed["clues"] if clue.get("value") is not None))
+    return (
+        0 if clue_count >= max(4, int(attempt["board_size"])) else 1,
+        -float(numbered_clue_count),
+        abs(int(attempt["board_size"]) - 6),
+    )
+
+
+def solve(image_path: Path) -> JsonDict:
     game_root = game_root_for_worker(__file__, "patches_solver")
     if not game_root.exists():
         return {
@@ -199,7 +355,7 @@ def solve(image_path: Path) -> dict[str, Any]:
     captured_logs = io.StringIO()
 
     with contextlib.redirect_stdout(captured_logs), contextlib.redirect_stderr(captured_logs):
-        attempts: list[dict[str, Any]] = []
+        attempts: list[_AttemptPayload] = []
         for candidate_size in (6, 7, 8, 9):
             try:
                 attempt = _attempt_solve_for_board_size(
@@ -207,10 +363,36 @@ def solve(image_path: Path) -> dict[str, Any]:
                     board_size=int(candidate_size),
                     parser_cls=PatchesImageParser,
                     solver_cls=PatchesSolver,
+                    allow_recovery=False,
                 )
             except Exception:
                 continue
             attempts.append(attempt)
+            if _is_confident_patches_attempt(attempt) and not _should_try_ocr_recovery(attempt):
+                break
+
+        if attempts and (
+            not any(_is_confident_patches_attempt(attempt) for attempt in attempts)
+            or any(_should_try_ocr_recovery(attempt) for attempt in attempts)
+        ):
+            recovery_sizes = [
+                int(attempt["board_size"])
+                for attempt in sorted(attempts, key=_base_attempt_recovery_priority)[:2]
+            ]
+            for candidate_size in recovery_sizes:
+                try:
+                    recovery_attempt = _attempt_solve_for_board_size(
+                        image_path=image_path,
+                        board_size=int(candidate_size),
+                        parser_cls=PatchesImageParser,
+                        solver_cls=PatchesSolver,
+                        allow_recovery=True,
+                    )
+                except Exception:
+                    continue
+                attempts.append(recovery_attempt)
+                if _is_confident_patches_attempt(recovery_attempt):
+                    break
 
     if not attempts:
         return {
@@ -244,22 +426,39 @@ def solve(image_path: Path) -> dict[str, Any]:
 
     board_size = int(parsed["board_size"])
     solution_grid = _build_solution_grid(board_size, regions_payload) if solve_result.solved else None
+    clue_count = int(len(parsed["clues"]))
+    numbered_clue_count = int(sum(1 for clue in parsed["clues"] if clue.get("value") is not None))
+    min_numbered_clues = max(3, board_size - 3)
+    parse_reliable = bool(
+        solve_result.solved
+        and clue_count >= max(4, board_size)
+        and numbered_clue_count >= min_numbered_clues
+        and parsed.get("board_bbox") is not None
+    )
+
+    solved_payload = bool(solve_result.solved and parse_reliable)
+    if not solved_payload:
+        regions_payload = []
+        solution_grid = None
 
     response = {
         "puzzle": "patches",
-        "solved": bool(solve_result.solved),
+        "solved": solved_payload,
         "board_size": board_size,
         "regions": regions_payload,
         "moves": regions_payload,
         "solution_grid": solution_grid,
         "clues": parsed["clues"],
         "clue_grid": parsed["clue_grid"],
-        "error": None if solve_result.solved else solve_result.error,
+        "error": None if solved_payload else (solve_result.error or "Detected Patches board/OCR is not reliable enough to apply a solution."),
         "details": {
             "iterations": int(solve_result.iterations),
-            "clue_count": int(len(parsed["clues"])),
-            "numbered_clue_count": int(sum(1 for clue in parsed["clues"] if clue.get("value") is not None)),
+            "clue_count": clue_count,
+            "numbered_clue_count": numbered_clue_count,
+            "min_numbered_clues": min_numbered_clues,
+            "raw_solver_solved": bool(solve_result.solved),
             "relaxed_square_clues": int(solve_result.relaxed_square_clues),
+            "parse_reliable": parse_reliable,
             "ocr_recovery_applied": bool(recovered_clues),
             "ocr_recovery_attempts": int(recovery_attempts),
             "recovered_clues": recovered_clues,
@@ -269,9 +468,7 @@ def solve(image_path: Path) -> dict[str, Any]:
         },
     }
 
-    logs_value = captured_logs.getvalue().strip()
-    if logs_value:
-        response["logs"] = logs_value[:1200]
+    attach_captured_logs(response, captured_logs)
 
     return response
 

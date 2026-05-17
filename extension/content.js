@@ -6,62 +6,19 @@ let quickSolveStatus = null;
 let quickSolveBusy = false;
 let quickSolveObservedUrl = "";
 
-const puzzleRegistry = globalThis.PuzzleRegistry || {};
-const detectPuzzleTypeFromUrl =
-  typeof puzzleRegistry.detectPuzzleTypeFromUrl === "function"
-    ? puzzleRegistry.detectPuzzleTypeFromUrl
-    : function fallbackDetectPuzzleTypeFromUrl(url) {
-        if (!url || typeof url !== "string") {
-          return null;
-        }
+const puzzleRegistry = globalThis.PuzzleRegistry;
+if (!puzzleRegistry) {
+  throw new Error("PuzzleRegistry is not available in content context.");
+}
 
-        const normalized = url.toLowerCase();
-        if (normalized.includes("/games/queens") || normalized.includes("/games/view/queens")) {
-          return "queens";
-        }
-        if (normalized.includes("/games/tango") || normalized.includes("/games/view/tango")) {
-          return "tango";
-        }
-        if (normalized.includes("/games/mini-sudoku") || normalized.includes("/games/view/mini-sudoku")) {
-          return "sudoku";
-        }
-        if (normalized.includes("/games/zip") || normalized.includes("/games/view/zip")) {
-          return "zip";
-        }
-        if (normalized.includes("/games/patches") || normalized.includes("/games/view/patches")) {
-          return "patches";
-        }
-        return null;
-      };
-
-const puzzleTypeToLabel =
-  typeof puzzleRegistry.puzzleTypeToLabel === "function"
-    ? puzzleRegistry.puzzleTypeToLabel
-    : function fallbackPuzzleTypeToLabel(puzzleType) {
-        if (puzzleType === "tango") {
-          return "Tango";
-        }
-        if (puzzleType === "sudoku") {
-          return "Mini Sudoku";
-        }
-        if (puzzleType === "zip") {
-          return "Zip";
-        }
-        if (puzzleType === "patches") {
-          return "Patches";
-        }
-        return "Queens";
-      };
-
-const puzzleTypeToFrameSlug =
-  typeof puzzleRegistry.puzzleTypeToFrameSlug === "function"
-    ? puzzleRegistry.puzzleTypeToFrameSlug
-    : function fallbackPuzzleTypeToFrameSlug(puzzleType) {
-        if (puzzleType === "sudoku") {
-          return "mini-sudoku";
-        }
-        return puzzleType;
-      };
+const { detectPuzzleTypeFromUrl, puzzleTypeToLabel, puzzleTypeToFrameSlug } = puzzleRegistry;
+if (
+  typeof detectPuzzleTypeFromUrl !== "function" ||
+  typeof puzzleTypeToLabel !== "function" ||
+  typeof puzzleTypeToFrameSlug !== "function"
+) {
+  throw new Error("PuzzleRegistry is missing required content helpers.");
+}
 
 function detectPuzzleTypeFromPage() {
   const fromLocation = detectPuzzleTypeFromUrl(window.location.href);
@@ -301,6 +258,70 @@ function normalizeSelection(selection) {
   return { x, y, width, height, devicePixelRatio: dpr };
 }
 
+function getBoardBboxFromResult(result) {
+  const details = result && typeof result === "object" ? result.details : null;
+  const bbox = details && typeof details === "object" ? details.board_bbox || details.crop_bbox || null : null;
+  if (!bbox || typeof bbox !== "object") {
+    return null;
+  }
+
+  const x = Number(bbox.x);
+  const y = Number(bbox.y);
+  const width = Number(bbox.width);
+  const height = Number(bbox.height);
+
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height)) {
+    return null;
+  }
+
+  if (width < 20 || height < 20) {
+    return null;
+  }
+
+  return { x, y, width, height };
+}
+
+function refineSelectionWithBoardBbox(selection, result) {
+  const normalized = normalizeSelection(selection);
+  const boardBbox = getBoardBboxFromResult(result);
+  if (!normalized || !boardBbox) {
+    return normalized;
+  }
+
+  const dpr = normalized.devicePixelRatio || 1;
+  const selectionPixelWidth = normalized.width * dpr;
+  const selectionPixelHeight = normalized.height * dpr;
+
+  if (selectionPixelWidth <= 0 || selectionPixelHeight <= 0) {
+    return normalized;
+  }
+
+  const bboxWidthRatio = boardBbox.width / selectionPixelWidth;
+  const bboxHeightRatio = boardBbox.height / selectionPixelHeight;
+  if (bboxWidthRatio >= 0.92 && bboxHeightRatio >= 0.92) {
+    return normalized;
+  }
+
+  const maxX = normalized.x + normalized.width - 10;
+  const maxY = normalized.y + normalized.height - 10;
+  const refinedX = Math.max(normalized.x, Math.min(maxX, normalized.x + boardBbox.x / dpr));
+  const refinedY = Math.max(normalized.y, Math.min(maxY, normalized.y + boardBbox.y / dpr));
+  const remainingWidth = normalized.x + normalized.width - refinedX;
+  const remainingHeight = normalized.y + normalized.height - refinedY;
+
+  return normalizeSelection({
+    x: refinedX,
+    y: refinedY,
+    width: Math.max(10, Math.min(boardBbox.width / dpr, remainingWidth)),
+    height: Math.max(10, Math.min(boardBbox.height / dpr, remainingHeight)),
+    devicePixelRatio: normalized.devicePixelRatio,
+  });
+}
+
+function refineTangoSelection(selection, result) {
+  return refineSelectionWithBoardBbox(selection, result) || normalizeSelection(selection);
+}
+
 function clearSolutionOverlay() {
   if (solutionOverlayRoot && solutionOverlayRoot.parentNode) {
     solutionOverlayRoot.parentNode.removeChild(solutionOverlayRoot);
@@ -388,7 +409,7 @@ function getGameIframeRect(puzzleType) {
   };
 }
 
-function autoDetectBoardSelection(puzzleType = null) {
+function autoDetectBoardSelection(puzzleType) {
   const selectors = [
     "canvas",
     "svg",
@@ -443,13 +464,19 @@ function autoDetectBoardSelection(puzzleType = null) {
   candidates.sort((a, b) => b.score - a.score);
   const bestRect = candidates[0].rect;
 
-  return normalizeSelection({
+  const detectedSelection = normalizeSelection({
     x: bestRect.left,
     y: bestRect.top,
     width: bestRect.width,
     height: bestRect.height,
     devicePixelRatio: window.devicePixelRatio,
   });
+
+  if (puzzleType === "tango") {
+    return refineTangoSelection(detectedSelection, null) || detectedSelection;
+  }
+
+  return detectedSelection;
 }
 
 function autoDetectBoardSelectionWithFallback(puzzleType) {
@@ -962,9 +989,13 @@ function renderPatchesOverlay(root, selection, result) {
 }
 
 function renderSolutionOverlay(puzzleType, result, selection) {
-  const normalized = normalizeSelection(selection || boardSelection);
+  let normalized = normalizeSelection(selection || boardSelection);
   if (!normalized) {
     throw new Error("Board region is not selected.");
+  }
+
+  if (puzzleType === "tango") {
+    normalized = refineTangoSelection(normalized, result) || normalized;
   }
 
   const root = createOverlayRoot(normalized);
@@ -1265,6 +1296,63 @@ function findKeyboardTarget(element) {
   return null;
 }
 
+function scoreSudokuSelectionCandidate(candidate, boardSize, moves) {
+  const normalized = normalizeSelection(candidate);
+  if (!normalized || !boardSize || !Array.isArray(moves) || !moves.length) {
+    return 0;
+  }
+
+  const cellWidth = normalized.width / boardSize;
+  const cellHeight = normalized.height / boardSize;
+  let matchedCount = 0;
+
+  for (const move of moves) {
+    const baseX = normalized.x + (move.col + 0.5) * cellWidth;
+    const baseY = normalized.y + (move.row + 0.5) * cellHeight;
+    const pointCandidates = buildSudokuPointCandidates(baseX, baseY, cellWidth, cellHeight, normalized);
+    let matchedMove = false;
+
+    for (const point of pointCandidates) {
+      const cellElement = findSudokuCellElementAtPoint(point.x, point.y, normalized, cellWidth, cellHeight);
+      const inferredPosition = inferSudokuGridPositionFromCell(cellElement, normalized, cellWidth, cellHeight, boardSize);
+      if (inferredPosition && inferredPosition.row === move.row && inferredPosition.col === move.col) {
+        matchedMove = true;
+        break;
+      }
+    }
+
+    if (matchedMove) {
+      matchedCount += 1;
+    }
+  }
+
+  return matchedCount;
+}
+
+async function getReadySudokuSelectionCandidates(selection, boardSize, moves) {
+  let candidates = buildApplySelectionCandidates("sudoku", selection);
+
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const scoredCandidates = candidates
+      .map((entry, index) => ({
+        ...entry,
+        index,
+        strictPreflightCount: scoreSudokuSelectionCandidate(entry.selection, boardSize, moves),
+      }))
+      .filter((entry) => entry.strictPreflightCount > 0)
+      .sort((a, b) => b.strictPreflightCount - a.strictPreflightCount || a.index - b.index);
+
+    if (scoredCandidates.length > 0) {
+      return scoredCandidates;
+    }
+
+    await sleep(120);
+    candidates = buildApplySelectionCandidates("sudoku", selection);
+  }
+
+  return [];
+}
+
 function focusKeyboardTarget(target) {
   if (!(target instanceof HTMLElement) || typeof target.focus !== "function") {
     return;
@@ -1552,7 +1640,7 @@ async function applyQueensSolution(result, selection, settings) {
 
 async function applyTangoSolution(result, selection, settings) {
   const applySettings = normalizeApplySettings(settings);
-  const normalized = normalizeSelection(selection || boardSelection);
+  const normalized = refineTangoSelection(selection || boardSelection, result);
   if (!normalized) {
     return { ok: false, error: "Board selection is required before applying moves." };
   }
@@ -1702,9 +1790,9 @@ async function applySudokuSolution(result, selection, settings) {
     return { ok: false, error: "No valid Sudoku solution moves are available." };
   }
 
-  const selectionCandidates = buildApplySelectionCandidates("sudoku", selection);
+  const selectionCandidates = await getReadySudokuSelectionCandidates(selection, boardSize, actionableMoves);
   if (!selectionCandidates.length) {
-    return { ok: false, error: "Board selection is required before applying moves." };
+    return { ok: false, error: "Sudoku board is not ready for applying moves." };
   }
 
   let bestAttempt = {
@@ -1818,10 +1906,7 @@ async function applySudokuSolution(result, selection, settings) {
     }
 
     if (appliedCount === actionableMoves.length) {
-      const strategyBase =
-        candidateEntry.source === "auto-detect"
-          ? ":auto-detect"
-          : "";
+      const strategyBase = candidateEntry.source === "auto-detect" ? ":auto-detect" : "";
 
       if (alignedCount === actionableMoves.length) {
         return {

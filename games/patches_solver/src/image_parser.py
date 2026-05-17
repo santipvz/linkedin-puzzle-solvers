@@ -5,12 +5,12 @@ from functools import lru_cache
 import itertools
 from math import isqrt
 from pathlib import Path
+import tempfile
 from typing import Any
 
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
-from sklearn.neighbors import KNeighborsClassifier
 
 
 DEFAULT_BOARD_SIZE = 6
@@ -18,7 +18,7 @@ OUTER_CONTOUR_THRESHOLD = 242
 CLUE_SATURATION_THRESHOLD = 34
 
 DIGIT_CANVAS_SIZE = 28
-OCR_MIN_SCORE = 0.34
+OCR_MIN_SCORE = 0.18
 
 FONT_CANDIDATES = (
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -39,6 +39,43 @@ class _OcrPrediction:
 class _DigitChoice:
     digit: int
     score: float
+
+
+class _DistanceWeightedKnn:
+    def __init__(self, features: np.ndarray, labels: np.ndarray, n_neighbors: int = 3) -> None:
+        self._features = np.asarray(features, dtype=np.float32)
+        self._labels = np.asarray(labels, dtype=np.int32)
+        self._n_neighbors = max(1, min(int(n_neighbors), len(self._labels)))
+        self.classes_ = np.unique(self._labels)
+        self._class_index = {int(value): index for index, value in enumerate(self.classes_)}
+
+    def predict_proba(self, features: np.ndarray) -> np.ndarray:
+        query_features = np.asarray(features, dtype=np.float32)
+        if query_features.ndim == 1:
+            query_features = query_features.reshape(1, -1)
+
+        probabilities = np.zeros((len(query_features), len(self.classes_)), dtype=np.float32)
+        for row_index, feature in enumerate(query_features):
+            distances = np.sum((self._features - feature) ** 2, axis=1)
+            nearest = np.argpartition(distances, self._n_neighbors - 1)[: self._n_neighbors]
+            nearest = nearest[np.argsort(distances[nearest])]
+            nearest_distances = distances[nearest]
+            nearest_labels = self._labels[nearest]
+
+            exact_matches = nearest_distances <= 1e-12
+            if np.any(exact_matches):
+                weights = exact_matches.astype(np.float32)
+            else:
+                weights = 1.0 / (np.sqrt(nearest_distances) + 1e-6)
+
+            for label, weight in zip(nearest_labels, weights):
+                probabilities[row_index, self._class_index[int(label)]] += float(weight)
+
+            total = float(np.sum(probabilities[row_index]))
+            if total > 0.0:
+                probabilities[row_index] /= total
+
+        return probabilities
 
 
 class _PatchesClueOcr:
@@ -95,7 +132,10 @@ class _PatchesClueOcr:
         saturation = hsv[:, :, 1]
         value = hsv[:, :, 2]
 
-        text_mask = ((saturation < 100) & (value > 152)).astype(np.uint8) * 255
+        bright_text_threshold = max(152.0, float(np.percentile(value, 88)) + 8.0)
+        text_mask = ((saturation < 115) & (value >= bright_text_threshold)).astype(np.uint8) * 255
+        if np.count_nonzero(text_mask) < 12:
+            text_mask = ((saturation < 100) & (value > 172)).astype(np.uint8) * 255
         if np.count_nonzero(text_mask) < 12:
             return []
 
@@ -231,7 +271,11 @@ class _PatchesClueOcr:
 
         return normalized
 
-    def _build_classifier(self) -> KNeighborsClassifier:
+    def _build_classifier(self) -> _DistanceWeightedKnn:
+        cached = self._load_cached_classifier()
+        if cached is not None:
+            return cached
+
         font_paths = [path for path in FONT_CANDIDATES if Path(path).exists()]
         if not font_paths:
             raise RuntimeError("Could not find any system font for patches OCR templates.")
@@ -243,13 +287,16 @@ class _PatchesClueOcr:
             text = str(digit)
             for font_path in font_paths:
                 for font_size in (14, 16, 18, 20, 22, 24):
+                    try:
+                        font = ImageFont.truetype(font_path, size=font_size)
+                    except OSError:
+                        continue
                     for stroke_width in (0, 1, 2):
-                        for dx in (-2, -1, 0, 1, 2):
-                            for dy in (-2, -1, 0, 1, 2):
+                        for dx in (-1, 0, 1):
+                            for dy in (-1, 0, 1):
                                 bitmap = self._render_digit_template(
                                     text=text,
-                                    font_path=font_path,
-                                    font_size=font_size,
+                                    font=font,
                                     stroke_width=stroke_width,
                                     dx=dx,
                                     dy=dy,
@@ -257,22 +304,51 @@ class _PatchesClueOcr:
                                 features.append(bitmap.flatten().astype(np.float32))
                                 labels.append(int(digit))
 
-        classifier = KNeighborsClassifier(n_neighbors=3, weights="distance")
-        classifier.fit(np.array(features), np.array(labels))
-        return classifier
+        feature_array = np.array(features, dtype=np.float32)
+        label_array = np.array(labels, dtype=np.int32)
+        self._save_cached_classifier_data(feature_array, label_array)
+        return _DistanceWeightedKnn(feature_array, label_array, n_neighbors=3)
+
+    def _classifier_cache_path(self) -> Path:
+        return Path(tempfile.gettempdir()) / "linkedin_puzzle_solvers_patches_ocr_v2.npz"
+
+    def _load_cached_classifier(self) -> _DistanceWeightedKnn | None:
+        cache_path = self._classifier_cache_path()
+        if not cache_path.exists():
+            return None
+
+        try:
+            cached = np.load(cache_path)
+            features = cached["features"].astype(np.float32)
+            labels = cached["labels"].astype(np.int32)
+        except (OSError, ValueError, KeyError, EOFError):
+            cache_path.unlink(missing_ok=True)
+            return None
+
+        if features.ndim != 2 or labels.ndim != 1 or len(features) != len(labels) or len(labels) == 0:
+            cache_path.unlink(missing_ok=True)
+            return None
+
+        return _DistanceWeightedKnn(features, labels, n_neighbors=3)
+
+    def _save_cached_classifier_data(self, features: np.ndarray, labels: np.ndarray) -> None:
+        try:
+            cache_path = self._classifier_cache_path()
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            np.savez_compressed(cache_path, features=features, labels=labels)
+        except OSError:
+            pass
 
     def _render_digit_template(
         self,
         text: str,
-        font_path: str,
-        font_size: int,
+        font: ImageFont.ImageFont,
         stroke_width: int,
         dx: int,
         dy: int,
     ) -> np.ndarray:
         image = Image.new("L", (DIGIT_CANVAS_SIZE, DIGIT_CANVAS_SIZE), 0)
         draw = ImageDraw.Draw(image)
-        font = ImageFont.truetype(font_path, size=font_size)
 
         left, top, right, bottom = draw.textbbox(
             (0, 0),
@@ -321,10 +397,16 @@ class PatchesImageParser:
 
         board_crop, bbox = self._extract_board_crop(image)
 
-        board_size = self._board_size
-        row_lines = self._build_grid_lines(board_crop.shape[0], board_size)
-        col_lines = self._build_grid_lines(board_crop.shape[1], board_size)
-        clues = self._detect_clues(board_crop, row_lines, col_lines)
+        detected_lines = self._detect_grid_lines(board_crop)
+        if detected_lines is None:
+            board_size = self._board_size
+            row_lines = self._build_grid_lines(board_crop.shape[0], board_size)
+            col_lines = self._build_grid_lines(board_crop.shape[1], board_size)
+        else:
+            row_lines, col_lines = detected_lines
+            board_size = len(row_lines) - 1
+
+        clues = self._detect_clues(board_crop, row_lines, col_lines, board_size)
 
         clue_grid = [[None for _ in range(board_size)] for _ in range(board_size)]
         for clue in clues:
@@ -341,11 +423,16 @@ class PatchesImageParser:
             },
         }
 
-    def _detect_clues(self, board_bgr: np.ndarray, row_lines: list[int], col_lines: list[int]) -> list[dict[str, Any]]:
+    def _detect_clues(
+        self,
+        board_bgr: np.ndarray,
+        row_lines: list[int],
+        col_lines: list[int],
+        board_size: int,
+    ) -> list[dict[str, Any]]:
         clues: list[dict[str, Any]] = []
         board_hsv = cv2.cvtColor(board_bgr, cv2.COLOR_BGR2HSV)
 
-        board_size = self._board_size
         for row in range(board_size):
             for col in range(board_size):
                 y1 = row_lines[row]
@@ -381,7 +468,7 @@ class PatchesImageParser:
                 bh = int(badge["height"])
 
                 roi = board_bgr[y1 + by : y1 + by + bh, x1 + bx : x1 + bx + bw]
-                prediction = self._ocr.predict(roi, max_value=self._board_size * self._board_size)
+                prediction = self._ocr.predict(roi, max_value=board_size * board_size)
                 clue_value = int(prediction.value) if prediction is not None else None
 
                 if shape == "square" and clue_value is not None:
@@ -559,6 +646,73 @@ class PatchesImageParser:
                 best_bbox = (int(x), int(y), int(width), int(height))
 
         return best_bbox
+
+    def _detect_grid_lines(self, board_bgr: np.ndarray) -> tuple[list[int], list[int]] | None:
+        row_lines = self._detect_axis_grid_lines(board_bgr, axis=0)
+        col_lines = self._detect_axis_grid_lines(board_bgr, axis=1)
+        if row_lines is None or col_lines is None:
+            return None
+
+        row_size = len(row_lines) - 1
+        col_size = len(col_lines) - 1
+        if row_size != col_size or not (5 <= row_size <= 9):
+            return None
+
+        return row_lines, col_lines
+
+    def _detect_axis_grid_lines(self, board_bgr: np.ndarray, axis: int) -> list[int] | None:
+        if board_bgr.size == 0:
+            return None
+
+        hsv = cv2.cvtColor(board_bgr, cv2.COLOR_BGR2HSV)
+        saturation = hsv[:, :, 1]
+        value = hsv[:, :, 2]
+
+        # LinkedIn Patches uses low-saturation dashed gray separators. Colored clues are excluded by saturation.
+        grid_mask = ((saturation < 38) & (value >= 120) & (value <= 238)).astype(np.uint8)
+        projection = np.mean(grid_mask, axis=1 if axis == 0 else 0)
+        axis_length = int(board_bgr.shape[0 if axis == 0 else 1])
+        if axis_length <= 1:
+            return None
+
+        threshold = max(0.18, float(np.percentile(projection, 88)) * 0.65)
+        raw_indexes = np.where(projection >= threshold)[0]
+        if len(raw_indexes) == 0:
+            return None
+
+        groups: list[list[int]] = []
+        for index in raw_indexes:
+            value_index = int(index)
+            if not groups or value_index - groups[-1][-1] > 3:
+                groups.append([value_index])
+            else:
+                groups[-1].append(value_index)
+
+        centers = [int(round(sum(group) / len(group))) for group in groups if len(group) >= 1]
+        interior = [center for center in centers if 2 <= center <= axis_length - 3]
+        candidates = [0, *interior, axis_length]
+
+        deduped: list[int] = []
+        min_gap = max(18, int(round(axis_length / 14)))
+        for line in sorted(candidates):
+            if deduped and line - deduped[-1] < min_gap:
+                if line in (0, axis_length):
+                    deduped[-1] = line
+                continue
+            deduped.append(int(line))
+
+        size = len(deduped) - 1
+        if not (5 <= size <= 9):
+            return None
+
+        gaps = [deduped[index + 1] - deduped[index] for index in range(size)]
+        median_gap = float(np.median(gaps)) if gaps else 0.0
+        if median_gap <= 0 or any(abs(gap - median_gap) > median_gap * 0.28 for gap in gaps):
+            return None
+
+        deduped[0] = 0
+        deduped[-1] = axis_length
+        return deduped
 
     def _build_grid_lines(self, axis_length: int, board_size: int) -> list[int]:
         if axis_length <= 1:

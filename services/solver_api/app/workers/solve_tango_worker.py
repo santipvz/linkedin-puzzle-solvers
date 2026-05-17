@@ -4,15 +4,34 @@ import contextlib
 import io
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TypedDict
 
 try:
-    from .common import activate_game_import_context, game_root_for_worker, run_worker_cli
+    from .common import BoardBBox, JsonDict, activate_game_import_context, attach_captured_logs, game_root_for_worker, run_worker_cli
 except ImportError:
-    from common import activate_game_import_context, game_root_for_worker, run_worker_cli
+    from common import BoardBBox, JsonDict, activate_game_import_context, attach_captured_logs, game_root_for_worker, run_worker_cli
 
 
-def _normalize_board(board: list[list[Any]]) -> list[list[int]]:
+class _FixedPiecePayload(TypedDict):
+    row: int
+    col: int
+    piece_type: int
+
+
+class _ConstraintPayload(TypedDict):
+    type: str
+    pos1: tuple[int, int]
+    pos2: tuple[int, int]
+
+
+class _BoardStatePayload(TypedDict, total=False):
+    fixed_pieces: list[_FixedPiecePayload]
+    constraints: list[_ConstraintPayload]
+    board_bbox: BoardBBox
+    grid_coords: object
+
+
+def _normalize_board(board: list[list[int | None]]) -> list[list[int]]:
     normalized: list[list[int]] = []
     for row in board:
         normalized_row: list[int] = []
@@ -25,7 +44,7 @@ def _normalize_board(board: list[list[Any]]) -> list[list[int]]:
     return normalized
 
 
-def _board_bbox_from_grid_coords(grid_coords: Any) -> dict[str, int] | None:
+def _board_bbox_from_grid_coords(grid_coords: object) -> BoardBBox | None:
     if not isinstance(grid_coords, list):
         return None
 
@@ -74,7 +93,29 @@ def _board_bbox_from_grid_coords(grid_coords: Any) -> dict[str, int] | None:
     }
 
 
-def solve(image_path: Path) -> dict[str, Any]:
+def _compose_board_bbox(raw_board_bbox: object, grid_coords: object) -> BoardBBox | None:
+    grid_bbox = _board_bbox_from_grid_coords(grid_coords)
+    if not grid_bbox:
+        return raw_board_bbox if isinstance(raw_board_bbox, dict) else None
+
+    if not isinstance(raw_board_bbox, dict):
+        return grid_bbox
+
+    try:
+        base_x = int(raw_board_bbox.get("x", 0))
+        base_y = int(raw_board_bbox.get("y", 0))
+    except (TypeError, ValueError, AttributeError):
+        return grid_bbox
+
+    return {
+        "x": int(base_x + grid_bbox["x"]),
+        "y": int(base_y + grid_bbox["y"]),
+        "width": int(grid_bbox["width"]),
+        "height": int(grid_bbox["height"]),
+    }
+
+
+def solve(image_path: Path) -> JsonDict:
     game_root = game_root_for_worker(__file__, "tango_solver")
     if not game_root.exists():
         return {
@@ -105,16 +146,18 @@ def solve(image_path: Path) -> dict[str, Any]:
                 "error": "Failed to parse image into board state.",
             }
 
-        for piece in board_state["fixed_pieces"]:
+        board_payload: _BoardStatePayload = board_state
+
+        for piece in board_payload["fixed_pieces"]:
             solver.add_fixed_piece(piece["row"], piece["col"], piece["piece_type"])
 
-        for constraint in board_state["constraints"]:
+        for constraint in board_payload["constraints"]:
             solver.add_constraint(constraint["type"], constraint["pos1"], constraint["pos2"])
 
         solved = solver.solve()
 
     fixed_pieces_payload: list[dict[str, int]] = []
-    for piece in board_state["fixed_pieces"]:
+    for piece in board_payload["fixed_pieces"]:
         fixed_pieces_payload.append(
             {
                 "row": int(piece["row"]),
@@ -123,8 +166,8 @@ def solve(image_path: Path) -> dict[str, Any]:
             }
         )
 
-    constraints_payload: list[dict[str, Any]] = []
-    for constraint in board_state["constraints"]:
+    constraints_payload: list[dict[str, str | list[int]]] = []
+    for constraint in board_payload["constraints"]:
         constraints_payload.append(
             {
                 "type": str(constraint["type"]),
@@ -133,11 +176,9 @@ def solve(image_path: Path) -> dict[str, Any]:
             }
         )
 
-    fixed_lookup = {(piece["row"], piece["col"]): piece["piece_type"] for piece in board_state["fixed_pieces"]}
+    fixed_lookup = {(piece["row"], piece["col"]): piece["piece_type"] for piece in board_payload["fixed_pieces"]}
 
-    board_bbox = board_state.get("board_bbox")
-    if not isinstance(board_bbox, dict):
-        board_bbox = _board_bbox_from_grid_coords(board_state.get("grid_coords"))
+    board_bbox = _compose_board_bbox(board_payload.get("board_bbox"), board_payload.get("grid_coords"))
 
     moves: list[dict[str, int]] = []
     if solved:
@@ -155,26 +196,34 @@ def solve(image_path: Path) -> dict[str, Any]:
                     }
                 )
 
+    fixed_count = int(len(board_payload["fixed_pieces"]))
+    constraint_count = int(len(board_payload["constraints"]))
+    parse_reliable = bool(fixed_count >= 4 and constraint_count >= 2 and isinstance(board_bbox, dict))
+    solved_payload = bool(solved and parse_reliable)
+    error_message = None if solved_payload else "No valid solution found."
+    if solved and not parse_reliable:
+        error_message = "Detected Tango board parse is not reliable enough to apply a solution."
+        moves = []
+
     response = {
         "puzzle": "tango",
-        "solved": bool(solved),
+        "solved": solved_payload,
         "board_size": int(solver.size),
         "moves": moves,
-        "solution_grid": _normalize_board(solver.board),
+        "solution_grid": _normalize_board(solver.board) if solved_payload else None,
         "fixed_pieces": fixed_pieces_payload,
         "constraints": constraints_payload,
-        "error": None if solved else "No valid solution found.",
+        "error": error_message,
         "details": {
             "steps": int(solver.get_steps()),
-            "fixed_count": int(len(board_state["fixed_pieces"])),
-            "constraint_count": int(len(board_state["constraints"])),
+            "fixed_count": fixed_count,
+            "constraint_count": constraint_count,
+            "parse_reliable": parse_reliable,
             "board_bbox": board_bbox,
         },
     }
 
-    logs_value = captured_logs.getvalue().strip()
-    if logs_value:
-        response["logs"] = logs_value[:1200]
+    attach_captured_logs(response, captured_logs)
 
     return response
 

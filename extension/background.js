@@ -1,9 +1,5 @@
 if (typeof importScripts === "function") {
-  try {
-    importScripts("puzzle_registry.js");
-  } catch (error) {
-    void error;
-  }
+  importScripts("puzzle_registry.js");
 }
 
 const DEFAULT_API_BASE = "http://127.0.0.1:8000";
@@ -16,65 +12,19 @@ const STORAGE_INTER_CLICK_DELAY_KEY = "solver_inter_click_delay_ms";
 const STORAGE_INTER_MOVE_DELAY_KEY = "solver_inter_move_delay_ms";
 const STORAGE_TANGO_APPLY_MODE_KEY = "solver_tango_apply_mode";
 
-const puzzleRegistry = globalThis.PuzzleRegistry || {};
-const sanitizePuzzleType =
-  typeof puzzleRegistry.sanitizePuzzleType === "function"
-    ? puzzleRegistry.sanitizePuzzleType
-    : function fallbackSanitizePuzzleType(value) {
-        if (value === "patches") {
-          return "patches";
-        }
-        if (value === "zip") {
-          return "zip";
-        }
-        if (value === "sudoku") {
-          return "sudoku";
-        }
-        if (value === "tango") {
-          return "tango";
-        }
-        if (value === "queens") {
-          return "queens";
-        }
-        return null;
-      };
+const puzzleRegistry = globalThis.PuzzleRegistry;
+if (!puzzleRegistry) {
+  throw new Error("PuzzleRegistry is not available in background context.");
+}
 
-const detectPuzzleTypeFromUrl =
-  typeof puzzleRegistry.detectPuzzleTypeFromUrl === "function"
-    ? puzzleRegistry.detectPuzzleTypeFromUrl
-    : function fallbackDetectPuzzleTypeFromUrl(url) {
-        if (!url || typeof url !== "string") {
-          return null;
-        }
-
-        const normalized = url.toLowerCase();
-        if (normalized.includes("/games/queens") || normalized.includes("/games/view/queens")) {
-          return "queens";
-        }
-        if (normalized.includes("/games/tango") || normalized.includes("/games/view/tango")) {
-          return "tango";
-        }
-        if (normalized.includes("/games/mini-sudoku") || normalized.includes("/games/view/mini-sudoku")) {
-          return "sudoku";
-        }
-        if (normalized.includes("/games/zip") || normalized.includes("/games/view/zip")) {
-          return "zip";
-        }
-        if (normalized.includes("/games/patches") || normalized.includes("/games/view/patches")) {
-          return "patches";
-        }
-        return null;
-      };
-
-const puzzleTypeToFrameSlug =
-  typeof puzzleRegistry.puzzleTypeToFrameSlug === "function"
-    ? puzzleRegistry.puzzleTypeToFrameSlug
-    : function fallbackPuzzleTypeToFrameSlug(puzzleType) {
-        if (puzzleType === "sudoku") {
-          return "mini-sudoku";
-        }
-        return puzzleType;
-      };
+const { sanitizePuzzleType, detectPuzzleTypeFromUrl, puzzleTypeToFrameSlug } = puzzleRegistry;
+if (
+  typeof sanitizePuzzleType !== "function" ||
+  typeof detectPuzzleTypeFromUrl !== "function" ||
+  typeof puzzleTypeToFrameSlug !== "function"
+) {
+  throw new Error("PuzzleRegistry is missing required background helpers.");
+}
 
 function normalizeApiBase(value) {
   if (!value || typeof value !== "string") {
@@ -252,6 +202,20 @@ function refineSelectionWithBoardBbox(selection, result) {
   }
 
   const dpr = normalized.devicePixelRatio || 1;
+  const selectionPixelWidth = normalized.width * dpr;
+  const selectionPixelHeight = normalized.height * dpr;
+
+  if (selectionPixelWidth <= 0 || selectionPixelHeight <= 0) {
+    return normalized;
+  }
+
+  const bboxWidthRatio = boardBbox.width / selectionPixelWidth;
+  const bboxHeightRatio = boardBbox.height / selectionPixelHeight;
+  const bboxAlreadyCoversSelection = bboxWidthRatio >= 0.92 && bboxHeightRatio >= 0.92;
+  if (bboxAlreadyCoversSelection) {
+    return normalized;
+  }
+
   const offsetX = boardBbox.x / dpr;
   const offsetY = boardBbox.y / dpr;
   const refinedWidth = boardBbox.width / dpr;
@@ -281,24 +245,21 @@ function buildTangoSelectionCandidates(baseSelection) {
     return [];
   }
 
-  const specs = [
-    { sideRatio: 1.0, yOffsetRatio: 0 },
-    { sideRatio: 0.94, yOffsetRatio: -0.02 },
-    { sideRatio: 0.88, yOffsetRatio: -0.04 },
-    { sideRatio: 0.82, yOffsetRatio: -0.06 },
-    { sideRatio: 0.76, yOffsetRatio: -0.08 },
-    { sideRatio: 0.7, yOffsetRatio: -0.08 },
-    { sideRatio: 0.64, yOffsetRatio: -0.08 },
-    { sideRatio: 0.64, yOffsetRatio: 0 },
-  ];
+  const specs = [{ sideRatio: 1.0, xAlign: 0.5, yAlign: 0.5, yOffsetRatio: 0, source: "full" }];
+  for (const sideRatio of [0.96, 0.92, 0.88, 0.84, 0.8, 0.76]) {
+    specs.push({ sideRatio, xAlign: 0, yAlign: 0, yOffsetRatio: 0, source: "top-left" });
+  }
+  for (const sideRatio of [0.96, 0.92, 0.88, 0.84, 0.8, 0.76]) {
+    specs.push({ sideRatio, xAlign: 0.5, yAlign: 0.5, yOffsetRatio: -0.02, source: "center" });
+  }
 
   const candidates = [];
   const seen = new Set();
 
   for (const spec of specs) {
     const side = Math.max(10, Math.min(normalizedBase.width, normalizedBase.height) * spec.sideRatio);
-    const rawX = normalizedBase.x + (normalizedBase.width - side) / 2;
-    const rawY = normalizedBase.y + (normalizedBase.height - side) / 2 + normalizedBase.height * spec.yOffsetRatio;
+    const rawX = normalizedBase.x + (normalizedBase.width - side) * spec.xAlign;
+    const rawY = normalizedBase.y + (normalizedBase.height - side) * spec.yAlign + normalizedBase.height * spec.yOffsetRatio;
 
     const minX = normalizedBase.x;
     const maxX = normalizedBase.x + normalizedBase.width - side;
@@ -329,7 +290,7 @@ function buildTangoSelectionCandidates(baseSelection) {
     }
 
     seen.add(key);
-    candidates.push(candidate);
+    candidates.push({ selection: candidate, source: spec.source, sideRatio: spec.sideRatio });
   }
 
   return candidates;
@@ -390,6 +351,19 @@ function tangoAttemptScore(result, attemptSelection, baseSelection) {
   return score;
 }
 
+function isConfidentTangoAttempt(result, score) {
+  if (!result || !result.solved) {
+    return false;
+  }
+
+  const details = result.details && typeof result.details === "object" ? result.details : {};
+  const fixedCount = Number(details.fixed_count) || 0;
+  const constraintCount = Number(details.constraint_count) || 0;
+  const movesCount = Array.isArray(result.moves) ? result.moves.length : 0;
+
+  return score >= 4200 && fixedCount >= 4 && fixedCount <= 24 && constraintCount >= 2 && movesCount > 0;
+}
+
 async function solveTangoWithCandidateSearch({ normalizedSelection, screenshotDataUrl, apiBaseUrl }) {
   const candidates = buildTangoSelectionCandidates(normalizedSelection);
   if (!candidates.length) {
@@ -397,15 +371,29 @@ async function solveTangoWithCandidateSearch({ normalizedSelection, screenshotDa
   }
 
   let best = null;
+  const attempts = [];
 
   for (let index = 0; index < candidates.length; index += 1) {
-    const candidate = candidates[index];
+    const candidateEntry = candidates[index];
+    const candidate = candidateEntry.selection;
     const boardImage = await cropCapturedImage(screenshotDataUrl, candidate);
     const result = await callSolverApi(apiBaseUrl, "tango", boardImage, {
       captureBoardStart: index === 0,
     });
-    const refinedSelection = refineSelectionWithBoardBbox(candidate, result) || candidate;
+    const refinedSelection = candidate;
     const score = tangoAttemptScore(result, refinedSelection, normalizedSelection);
+    const attemptDetails = result && result.details && typeof result.details === "object" ? result.details : {};
+    const attemptSummary = {
+      attempt: index + 1,
+      source: candidateEntry.source,
+      sideRatio: candidateEntry.sideRatio,
+      score,
+      solved: Boolean(result && result.solved),
+      fixedCount: Number(attemptDetails.fixed_count) || 0,
+      constraintCount: Number(attemptDetails.constraint_count) || 0,
+      parseReliable: Boolean(attemptDetails.parse_reliable),
+    };
+    attempts.push(attemptSummary);
 
     if (!best || score > best.score) {
       best = {
@@ -414,7 +402,12 @@ async function solveTangoWithCandidateSearch({ normalizedSelection, screenshotDa
         selection: refinedSelection,
         attempt: index + 1,
         attemptCount: candidates.length,
+        attempts,
       };
+    }
+
+    if (isConfidentTangoAttempt(result, score)) {
+      break;
     }
   }
 
@@ -430,6 +423,7 @@ async function solveTangoWithCandidateSearch({ normalizedSelection, screenshotDa
   details.selection_attempt = best.attempt;
   details.selection_attempts = best.attemptCount;
   details.selection_search_score = best.score;
+  details.selection_attempt_results = best.attempts;
 
   if (best.result && typeof best.result === "object") {
     best.result.details = details;
@@ -437,7 +431,7 @@ async function solveTangoWithCandidateSearch({ normalizedSelection, screenshotDa
 
   return {
     result: best.result,
-    selection: best.selection,
+    selection: best.result && best.result.solved ? best.selection : normalizedSelection,
   };
 }
 
@@ -488,7 +482,7 @@ function executeContentScript(tabId, frameId = 0) {
       chrome.scripting.executeScript(
         {
           target,
-          files: ["content.js"],
+          files: ["puzzle_registry.js", "content.js"],
         },
         () => {
           const error = chrome.runtime.lastError;
@@ -503,17 +497,23 @@ function executeContentScript(tabId, frameId = 0) {
     }
 
     if (chrome.tabs && typeof chrome.tabs.executeScript === "function") {
-      const details = Number.isInteger(frameId)
-        ? { file: "content.js", frameId, runAt: "document_idle" }
-        : { file: "content.js", runAt: "document_idle" };
+      const sharedDetails = Number.isInteger(frameId) ? { frameId, runAt: "document_idle" } : { runAt: "document_idle" };
 
-      chrome.tabs.executeScript(tabId, details, () => {
+      chrome.tabs.executeScript(tabId, { ...sharedDetails, file: "puzzle_registry.js" }, () => {
         const error = chrome.runtime.lastError;
         if (error) {
           reject(new Error(error.message));
           return;
         }
-        resolve();
+
+        chrome.tabs.executeScript(tabId, { ...sharedDetails, file: "content.js" }, () => {
+          const secondError = chrome.runtime.lastError;
+          if (secondError) {
+            reject(new Error(secondError.message));
+            return;
+          }
+          resolve();
+        });
       });
       return;
     }
@@ -699,7 +699,8 @@ async function solveBoardCore({ tabId, puzzleType, apiBaseUrl, selection }) {
       apiBaseUrl,
     });
     result = tangoSolved.result;
-    refinedSelection = normalizeSelection(tangoSolved.selection) || normalizedSelection;
+    const tangoSelection = normalizeSelection(tangoSolved.selection) || normalizedSelection;
+    refinedSelection = refineSelectionWithBoardBbox(tangoSelection, result) || tangoSelection;
   } else {
     const boardImage = await cropCapturedImage(screenshotDataUrl, normalizedSelection);
     result = await callSolverApi(apiBaseUrl, puzzleType, boardImage, {
@@ -975,7 +976,7 @@ async function getViewportFallbackSelection(tabId, tab) {
 }
 
 async function detectSelectionForQuickSolve(tabId, puzzleType, frameContext, tab) {
-  const existing = await getTopBoardSelection(tabId);
+  const existing = puzzleType === "tango" ? null : await getTopBoardSelection(tabId);
 
   if (existing) {
     const normalizedExisting = maybeNormalizeSelectionForPuzzle(puzzleType, existing, frameContext?.iframeRect);
@@ -1385,7 +1386,8 @@ async function quickSolveFromPage(message, sender) {
     };
   }
 
-  const solvedSelection = normalizeSelection(solvedPayload.selection) || selectionContext.topSelection;
+  const rawSolvedSelection = normalizeSelection(solvedPayload.selection) || selectionContext.topSelection;
+  const solvedSelection = refineSelectionWithBoardBbox(rawSolvedSelection, solvedPayload.result) || rawSolvedSelection;
   let applyTopSelection = solvedSelection;
   if (hasMeaningfulSelectionDelta(selectionContext.topSelection, solvedSelection)) {
     const savedSolvedSelection = await setTopBoardSelection(tabId, solvedSelection);
@@ -1600,11 +1602,14 @@ async function applySolvedPayload(message, sender) {
   const applySettings = normalizeApplySettings(message.settings, quickSettings.applySettings);
 
   const frameContext = await getGameFrameContext(tabId, puzzleType);
-  let topSelection = maybeNormalizeSelectionForPuzzle(puzzleType, message.selection, frameContext && frameContext.iframeRect);
+  let topSelection =
+    puzzleType === "tango"
+      ? null
+      : maybeNormalizeSelectionForPuzzle(puzzleType, message.selection, frameContext && frameContext.iframeRect);
   let interactionTarget = topSelection ? resolveInteractionTarget(topSelection, frameContext) : null;
 
   if (!topSelection) {
-    const existing = await getTopBoardSelection(tabId);
+    const existing = puzzleType === "tango" ? null : await getTopBoardSelection(tabId);
     const normalizedExisting = maybeNormalizeSelectionForPuzzle(puzzleType, existing, frameContext && frameContext.iframeRect);
     topSelection = normalizedExisting || existing;
     interactionTarget = topSelection ? resolveInteractionTarget(topSelection, frameContext) : null;
@@ -1623,9 +1628,19 @@ async function applySolvedPayload(message, sender) {
     throw new Error("Board selection is required before applying moves.");
   }
 
+  const refinedTopSelection = refineSelectionWithBoardBbox(topSelection, message.result);
+  if (refinedTopSelection) {
+    topSelection = refinedTopSelection;
+  }
+
   const savedTopSelection = await setTopBoardSelection(tabId, topSelection);
   if (savedTopSelection) {
     topSelection = savedTopSelection;
+  }
+
+  const refinedInteractionTarget = resolveInteractionTarget(topSelection, frameContext);
+  if (refinedInteractionTarget) {
+    interactionTarget = refinedInteractionTarget;
   }
 
   if (!interactionTarget || !normalizeSelection(interactionTarget.selection)) {

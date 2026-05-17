@@ -5,19 +5,50 @@ import io
 import itertools
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TypedDict
 
 try:
-    from .common import activate_game_import_context, game_root_for_worker, run_worker_cli
+    from .common import JsonDict, activate_game_import_context, attach_captured_logs, game_root_for_worker, run_worker_cli
 except ImportError:
-    from common import activate_game_import_context, game_root_for_worker, run_worker_cli
+    from common import JsonDict, activate_game_import_context, attach_captured_logs, game_root_for_worker, run_worker_cli
 
 
-def _build_primary_clues(clue_entries: list[dict[str, Any]]) -> dict[tuple[int, int], int]:
+class _ZipClueCandidate(TypedDict):
+    value: int
+    confidence: float
+
+
+class _ZipClueEntry(TypedDict):
+    row: int
+    col: int
+    value: int
+    confidence: float
+    candidates: list[_ZipClueCandidate]
+
+
+_RecoveredClueChange = TypedDict(
+    "_RecoveredClueChange",
+    {
+        "row": int,
+        "col": int,
+        "from": int,
+        "to": int,
+        "confidence": float,
+        "candidate_rank": int,
+    },
+)
+
+
+def _build_primary_clues(clue_entries: list[_ZipClueEntry]) -> dict[tuple[int, int], int]:
     return {
         (int(entry["row"]), int(entry["col"])): int(entry["value"])
         for entry in clue_entries
     }
+
+
+def _has_contiguous_clue_sequence(clues: dict[tuple[int, int], int]) -> bool:
+    values = sorted(int(value) for value in clues.values())
+    return bool(values) and values == list(range(1, len(values) + 1))
 
 
 def _score_clue_assignment(values: list[int], confidences: list[float], rank_penalty: float) -> float:
@@ -42,7 +73,7 @@ def _score_clue_assignment(values: list[int], confidences: list[float], rank_pen
     return score
 
 
-def _build_clue_options(clue_entries: list[dict[str, Any]]) -> list[list[tuple[int, float, int]]]:
+def _build_clue_options(clue_entries: list[_ZipClueEntry]) -> list[list[tuple[int, float, int]]]:
     options_per_cell: list[list[tuple[int, float, int]]] = []
 
     for entry in clue_entries:
@@ -171,11 +202,11 @@ def _best_contiguous_assignment(
 
 
 def _build_recovered_payload(
-    clue_entries: list[dict[str, Any]],
+    clue_entries: list[_ZipClueEntry],
     assignment: list[tuple[int, float, int]],
-) -> tuple[dict[tuple[int, int], int], list[dict[str, Any]]]:
+) -> tuple[dict[tuple[int, int], int], list[_RecoveredClueChange]]:
     clues: dict[tuple[int, int], int] = {}
-    replaced: list[dict[str, Any]] = []
+    replaced: list[_RecoveredClueChange] = []
 
     for index, (value, confidence, rank) in enumerate(assignment):
         entry = clue_entries[index]
@@ -202,11 +233,11 @@ def _build_recovered_payload(
 
 
 def _recover_duplicate_clues(
-    clue_entries: list[dict[str, Any]],
+    clue_entries: list[_ZipClueEntry],
     board_size: int,
     blocked_h: list[list[bool]],
     blocked_v: list[list[bool]],
-) -> tuple[dict[tuple[int, int], int], list[dict[str, Any]]]:
+) -> tuple[dict[tuple[int, int], int], list[_RecoveredClueChange]]:
     primary = _build_primary_clues(clue_entries)
     if not clue_entries:
         return primary, []
@@ -222,7 +253,7 @@ def _recover_duplicate_clues(
     options_per_cell = _build_clue_options(clue_entries)
 
     solver = None
-    best_payload: tuple[float, dict[tuple[int, int], int], list[dict[str, Any]]] | None = None
+    best_payload: tuple[float, dict[tuple[int, int], int], list[_RecoveredClueChange]] | None = None
 
     def consider_assignment(assignment: list[tuple[int, float, int]]) -> None:
         nonlocal solver, best_payload
@@ -260,6 +291,8 @@ def _recover_duplicate_clues(
         )
         if contiguous_assignment is not None:
             consider_assignment(contiguous_assignment)
+            if best_payload is not None:
+                return best_payload[1], best_payload[2]
 
     if has_duplicate:
         for combo in itertools.product(*options_per_cell):
@@ -271,7 +304,7 @@ def _recover_duplicate_clues(
     return best_payload[1], best_payload[2]
 
 
-def solve(image_path: Path) -> dict[str, Any]:
+def solve(image_path: Path) -> JsonDict:
     game_root = game_root_for_worker(__file__, "zip_solver")
     if not game_root.exists():
         return {
@@ -298,6 +331,31 @@ def solve(image_path: Path) -> dict[str, Any]:
         blocked_h=parsed["blocked_h"],
         blocked_v=parsed["blocked_v"],
     )
+
+    parse_reliable = bool(len(clues) >= 4 and _has_contiguous_clue_sequence(clues))
+    if not parse_reliable:
+        response = {
+            "puzzle": "zip",
+            "solved": False,
+            "board_size": int(parsed["size"]),
+            "path": [],
+            "directions": [],
+            "moves": [],
+            "start_cell": None,
+            "clues": parsed["clues"],
+            "clue_grid": parsed["clue_grid"],
+            "error": "Detected Zip clues are not reliable enough to apply a solution.",
+            "details": {
+                "iterations": 0,
+                "clue_count": int(len(parsed["clues"])),
+                "board_bbox": parsed["board_bbox"],
+                "parse_reliable": False,
+                "duplicate_recovery_applied": bool(recovered_clues),
+                "recovered_clues": recovered_clues,
+            },
+        }
+        attach_captured_logs(response, captured_logs)
+        return response
 
     solve_result = solver.solve(
         size=int(parsed["size"]),
@@ -328,14 +386,13 @@ def solve(image_path: Path) -> dict[str, Any]:
             "iterations": int(solve_result.iterations),
             "clue_count": int(len(parsed["clues"])),
             "board_bbox": parsed["board_bbox"],
+            "parse_reliable": parse_reliable,
             "duplicate_recovery_applied": bool(recovered_clues),
             "recovered_clues": recovered_clues,
         },
     }
 
-    logs_value = captured_logs.getvalue().strip()
-    if logs_value:
-        response["logs"] = logs_value[:1200]
+    attach_captured_logs(response, captured_logs)
 
     return response
 

@@ -27,21 +27,26 @@ class _OcrPrediction:
     candidates: list[tuple[int, float]]
 
 
+@dataclass(slots=True)
+class _ZipTemplateBank:
+    labels: np.ndarray
+    counts: np.ndarray
+    packed: np.ndarray
+    value_ends: np.ndarray
+    popcount_lookup: np.ndarray
+
+
 class _ZipClueOcr:
     def __init__(self) -> None:
         self._templates = self._build_templates()
+        self._template_bank = self._build_template_bank(self._templates)
 
     def predict(self, clue_roi_gray: np.ndarray, max_value: int | None = None) -> _OcrPrediction | None:
         normalized = self._normalize_text(clue_roi_gray)
         if normalized is None:
             return None
 
-        scores: list[tuple[int, float]] = []
-        for value, templates in self._templates.items():
-            if max_value is not None and value > max_value:
-                continue
-            score = max(self._best_shift_iou(normalized, template) for template in templates)
-            scores.append((value, float(score)))
+        scores = self._score_template_bank(normalized, max_value=max_value)
 
         scores.sort(key=lambda item: item[1], reverse=True)
         if not scores:
@@ -95,6 +100,66 @@ class _ZipClueOcr:
             templates[value] = rendered
 
         return templates
+
+    def _build_template_bank(self, templates: dict[int, list[np.ndarray]]) -> _ZipTemplateBank:
+        labels: list[int] = []
+        counts: list[int] = []
+        packed_templates: list[np.ndarray] = []
+
+        for value, rendered_templates in templates.items():
+            for template in rendered_templates:
+                padded = cv2.copyMakeBorder(template, 2, 2, 2, 2, cv2.BORDER_CONSTANT, value=0)
+                for offset_y in range(5):
+                    for offset_x in range(5):
+                        shifted = padded[
+                            offset_y : offset_y + OCR_CANVAS_SIZE,
+                            offset_x : offset_x + OCR_CANVAS_SIZE,
+                        ] > 0
+                        pixel_count = int(np.count_nonzero(shifted))
+                        if pixel_count <= 0:
+                            continue
+
+                        labels.append(int(value))
+                        counts.append(pixel_count)
+                        packed_templates.append(np.packbits(shifted.reshape(-1)))
+
+        label_array = np.asarray(labels, dtype=np.int16)
+        count_array = np.asarray(counts, dtype=np.float32)
+        packed_array = np.vstack(packed_templates).astype(np.uint8)
+        value_ends = np.searchsorted(label_array, np.arange(OCR_MAX_VALUE + 1), side="right").astype(np.int32)
+        popcount_lookup = np.asarray([int(value).bit_count() for value in range(256)], dtype=np.uint8)
+
+        return _ZipTemplateBank(
+            labels=label_array,
+            counts=count_array,
+            packed=packed_array,
+            value_ends=value_ends,
+            popcount_lookup=popcount_lookup,
+        )
+
+    def _score_template_bank(self, normalized: np.ndarray, max_value: int | None = None) -> list[tuple[int, float]]:
+        limit_value = OCR_MAX_VALUE if max_value is None else max(1, min(OCR_MAX_VALUE, int(max_value)))
+        end_index = int(self._template_bank.value_ends[limit_value])
+        if end_index <= 0:
+            return []
+
+        normalized_bits = (normalized > 0).reshape(-1)
+        input_count = int(np.count_nonzero(normalized_bits))
+        if input_count <= 0:
+            return []
+
+        packed_input = np.packbits(normalized_bits)
+        packed_templates = self._template_bank.packed[:end_index]
+        labels = self._template_bank.labels[:end_index]
+        counts = self._template_bank.counts[:end_index]
+
+        intersections = self._template_bank.popcount_lookup[np.bitwise_and(packed_templates, packed_input)].sum(axis=1)
+        scores_by_template = intersections.astype(np.float32) / np.sqrt(float(input_count) * counts)
+
+        best_scores = np.zeros(limit_value + 1, dtype=np.float32)
+        np.maximum.at(best_scores, labels, scores_by_template)
+
+        return [(value, float(best_scores[value])) for value in range(1, limit_value + 1)]
 
     def _normalize_text(self, clue_roi_gray: np.ndarray) -> np.ndarray | None:
         if clue_roi_gray.size == 0:
@@ -152,16 +217,12 @@ class _ZipClueOcr:
         return normalized
 
     def _best_shift_iou(self, first: np.ndarray, second: np.ndarray) -> float:
-        first_u8 = np.where(first > 0, 255, 0).astype(np.uint8)
-        second_u8 = np.where(second > 0, 255, 0).astype(np.uint8)
-
-        padded = cv2.copyMakeBorder(second_u8, 2, 2, 2, 2, cv2.BORDER_CONSTANT, value=0)
-        response = cv2.matchTemplate(padded, first_u8, cv2.TM_CCORR_NORMED)
+        padded = cv2.copyMakeBorder(second, 2, 2, 2, 2, cv2.BORDER_CONSTANT, value=0)
+        response = cv2.matchTemplate(padded, first, cv2.TM_CCORR_NORMED)
         if response.size == 0:
             return 0.0
 
         return float(np.max(response))
-
 
 @lru_cache(maxsize=1)
 def _get_ocr() -> _ZipClueOcr:
@@ -280,6 +341,9 @@ class ZipImageParser:
                 best_clues = clues
                 best_entries = clue_entries
                 best_component_mask = clue_component_mask
+
+            if has_start and contiguous and len(clue_values) >= 4 and alignment_score <= 0.08:
+                break
 
         return int(best_size), best_x_lines, best_y_lines, best_clues, best_entries, best_component_mask
 
@@ -437,6 +501,7 @@ class ZipImageParser:
         max_area = cell_area * 0.70
         min_side = average_cell * 0.45
         max_side = average_cell * 1.10
+        component_boxes: list[tuple[int, int, int, int, int, int, int, float]] = []
 
         for label in range(1, component_count):
             x = int(stats[label, cv2.CC_STAT_LEFT])
@@ -470,9 +535,13 @@ class ZipImageParser:
                 abs(center_x - cell_center_x) / (cell_width / 2.0)
                 + abs(center_y - cell_center_y) / (cell_height / 2.0)
             ) / 2.0
+            component_boxes.append((label, x, y, width, height, row, col, float(normalized_offset)))
 
+        max_clue_value = max(1, min(board_size * board_size, len(component_boxes)))
+
+        for label, x, y, width, height, row, col, normalized_offset in component_boxes:
             roi = board_gray[y : y + height, x : x + width]
-            prediction = self._ocr.predict(roi, max_value=board_size * board_size)
+            prediction = self._ocr.predict(roi, max_value=max_clue_value)
             if prediction is None:
                 continue
 

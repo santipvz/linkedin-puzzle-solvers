@@ -22,6 +22,7 @@ class TangoSolver:
         self.constraints = []
         self.fixed_pieces = []
         self.steps = 0
+        self._constraints_by_cell = None
 
         # Visualization settings
         self._visualizer = None
@@ -30,6 +31,7 @@ class TangoSolver:
 
     def add_constraint(self, constraint_type, pos1, pos2):
         self.constraints.append((constraint_type, pos1, pos2))
+        self._constraints_by_cell = None
 
     def add_fixed_piece(self, row, col, piece_type):
         self.board[row][col] = piece_type
@@ -44,57 +46,91 @@ class TangoSolver:
             )
 
     def is_valid_placement(self, row, col, piece_type):
-        temp_board = [r[:] for r in self.board]
-        temp_board[row][col] = piece_type
-
-        if not self._check_row_column_constraints(temp_board, row, col):
+        if not self._check_row_column_constraints(row, col, piece_type):
             return False
 
-        if not self._check_no_three_consecutive(temp_board, row, col):
+        if not self._check_no_three_consecutive(row, col, piece_type):
             return False
 
-        if not self._check_equality_constraints(temp_board, row, col):
+        if not self._check_equality_constraints(row, col, piece_type):
             return False
 
         return True
 
-    def _check_row_column_constraints(self, board, row, col):
+    def _check_row_column_constraints(self, row, col, piece_type):
         row_count = [0, 0]
+        row_empty = 0
         for c in range(self.size):
-            if board[row][c] is not None:
-                row_count[board[row][c]] += 1
+            value = piece_type if c == col else self.board[row][c]
+            if value is None:
+                row_empty += 1
+            else:
+                row_count[value] += 1
 
         col_count = [0, 0]
+        col_empty = 0
         for r in range(self.size):
-            if board[r][col] is not None:
-                col_count[board[r][col]] += 1
+            value = piece_type if r == row else self.board[r][col]
+            if value is None:
+                col_empty += 1
+            else:
+                col_count[value] += 1
 
-        return all(count <= 3 for count in row_count + col_count)
+        if any(count > 3 for count in row_count + col_count):
+            return False
 
-    def _check_no_three_consecutive(self, board, row, col):
-        piece_type = board[row][col]
+        return (
+            row_count[0] + row_empty >= 3
+            and row_count[1] + row_empty >= 3
+            and col_count[0] + col_empty >= 3
+            and col_count[1] + col_empty >= 3
+        )
 
+    def _cell_value_with_candidate(self, row, col, candidate_row, candidate_col, piece_type):
+        if row == candidate_row and col == candidate_col:
+            return piece_type
+        return self.board[row][col]
+
+    def _check_no_three_consecutive(self, row, col, piece_type):
         for start_col in range(max(0, col - 2), min(self.size - 2, col + 1)):
-            if all(board[row][start_col + i] == piece_type for i in range(3)):
+            if all(
+                self._cell_value_with_candidate(row, start_col + i, row, col, piece_type) == piece_type
+                for i in range(3)
+            ):
                 return False
 
         for start_row in range(max(0, row - 2), min(self.size - 2, row + 1)):
-            if all(board[start_row + i][col] == piece_type for i in range(3)):
+            if all(
+                self._cell_value_with_candidate(start_row + i, col, row, col, piece_type) == piece_type
+                for i in range(3)
+            ):
                 return False
 
         return True
 
-    def _check_equality_constraints(self, board, row, col):
+    def _build_constraint_lookup(self):
+        lookup = {(row, col): [] for row in range(self.size) for col in range(self.size)}
         for constraint_type, pos1, pos2 in self.constraints:
+            lookup[pos1].append((constraint_type, pos1, pos2))
+            lookup[pos2].append((constraint_type, pos1, pos2))
+        self._constraints_by_cell = lookup
+
+    def _check_equality_constraints(self, row, col, piece_type):
+        if self._constraints_by_cell is None:
+            self._build_constraint_lookup()
+
+        for constraint_type, pos1, pos2 in self._constraints_by_cell.get((row, col), []):
             r1, c1 = pos1
             r2, c2 = pos2
+            value1 = self._cell_value_with_candidate(r1, c1, row, col, piece_type)
+            value2 = self._cell_value_with_candidate(r2, c2, row, col, piece_type)
 
-            if board[r1][c1] is not None and board[r2][c2] is not None:
+            if value1 is not None and value2 is not None:
                 if constraint_type == '=':
-                    if board[r1][c1] != board[r2][c2]:
+                    if value1 != value2:
                         return False
                 elif constraint_type == 'x':
-                    if board[r1][c1] == board[r2][c2]:
+                    if value1 == value2:
                         return False
 
         return True
@@ -159,45 +195,69 @@ class TangoSolver:
         return gif_path
 
     def _backtrack(self):
+        best_cell = None
+        best_candidates = None
+
         for row in range(self.size):
             for col in range(self.size):
-                if self.board[row][col] is None:
-                    for piece_type in [0, 1]:
-                        self.steps += 1
+                if self.board[row][col] is not None:
+                    continue
 
-                        if self._create_gif and self._visualizer:
-                            self._visualizer.save_frame(
-                                self.board,
-                                self.constraints,
-                                (row, col),
-                                f"Step {self.steps}: Trying {piece_type} at ({row}, {col})"
-                            )
-
-                        if self.is_valid_placement(row, col, piece_type):
-                            self.board[row][col] = piece_type
-
-                            if self._create_gif and self._visualizer:
-                                self._visualizer.save_frame(
-                                    self.board,
-                                    self.constraints,
-                                    (row, col),
-                                    f"Step {self.steps}: Placed {piece_type} at ({row}, {col})"
-                                )
-
-                            if self._backtrack():
-                                return True
-
-                            self.board[row][col] = None
-
-                            if self._create_gif and self._visualizer:
-                                self._visualizer.save_frame(
-                                    self.board,
-                                    self.constraints,
-                                    (row, col),
-                                    f"Step {self.steps}: Backtracking from ({row}, {col})"
-                                )
+                candidates = [piece_type for piece_type in (0, 1) if self.is_valid_placement(row, col, piece_type)]
+                if not candidates:
                     return False
-        return self.is_complete()
+
+                if best_candidates is None or len(candidates) < len(best_candidates):
+                    best_cell = (row, col)
+                    best_candidates = candidates
+                    if len(best_candidates) == 1:
+                        break
+            if best_candidates is not None and len(best_candidates) == 1:
+                break
+
+        if best_cell is None or best_candidates is None:
+            return self.is_complete()
+
+        row, col = best_cell
+        row_counts = [sum(1 for value in self.board[row] if value == piece_type) for piece_type in (0, 1)]
+        col_counts = [sum(1 for r in range(self.size) if self.board[r][col] == piece_type) for piece_type in (0, 1)]
+        ordered_candidates = sorted(best_candidates, key=lambda piece_type: (row_counts[piece_type] + col_counts[piece_type], piece_type))
+
+        for piece_type in ordered_candidates:
+            self.steps += 1
+
+            if self._create_gif and self._visualizer:
+                self._visualizer.save_frame(
+                    self.board,
+                    self.constraints,
+                    (row, col),
+                    f"Step {self.steps}: Trying {piece_type} at ({row}, {col})"
+                )
+
+            self.board[row][col] = piece_type
+
+            if self._create_gif and self._visualizer:
+                self._visualizer.save_frame(
+                    self.board,
+                    self.constraints,
+                    (row, col),
+                    f"Step {self.steps}: Placed {piece_type} at ({row}, {col})"
+                )
+
+            if self._backtrack():
+                return True
+
+            self.board[row][col] = None
+
+            if self._create_gif and self._visualizer:
+                self._visualizer.save_frame(
+                    self.board,
+                    self.constraints,
+                    (row, col),
+                    f"Step {self.steps}: Backtracking from ({row}, {col})"
+                )
+
+        return False
 
     def print_board_with_constraints(self):
         constraint_map = {}

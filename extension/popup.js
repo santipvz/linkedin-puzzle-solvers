@@ -9,8 +9,6 @@ const STORAGE_TANGO_APPLY_MODE_KEY = "solver_tango_apply_mode";
 const DEFAULT_AUTO_CLOSE_AFTER_APPLY = true;
 const DEFAULT_INTER_CLICK_DELAY_MS = 45;
 const DEFAULT_INTER_MOVE_DELAY_MS = 40;
-const DEFAULT_TANGO_APPLY_MODE = "left-cycle";
-
 const puzzleTypeSelect = document.getElementById("puzzleType");
 const apiUrlInput = document.getElementById("apiUrl");
 const selectBoardButton = document.getElementById("selectBoard");
@@ -115,7 +113,7 @@ function executeContentScript(tabId, frameId = 0) {
     chrome.scripting.executeScript(
       {
         target,
-        files: ["content.js"],
+        files: ["puzzle_registry.js", "content.js"],
       },
       () => {
         const error = chrome.runtime.lastError;

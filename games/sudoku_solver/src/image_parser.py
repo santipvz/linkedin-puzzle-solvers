@@ -8,12 +8,11 @@ import tempfile
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import TypedDict
 
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
-from sklearn.neighbors import KNeighborsClassifier
 
 
 BOARD_SIZE = 6
@@ -21,6 +20,48 @@ GRID_LINE_COUNT = BOARD_SIZE + 1
 OCR_INPUT_SIZE = 28
 OCR_MIN_CONFIDENCE = 0.52
 OCR_STRONG_CONFIDENCE = 0.78
+
+
+class _DigitCandidate(TypedDict):
+    value: int
+    confidence: float
+
+
+class _FixedCell(TypedDict):
+    row: int
+    col: int
+    value: int
+    confidence: float
+    overlay_ratio: float
+    candidates: list[_DigitCandidate]
+
+
+class _OcrStats(TypedDict):
+    fixed_count: int
+    avg_confidence: float
+    min_confidence: float
+    uncertain_count: int
+    overlay_cell_count: int
+
+
+class _GridLinesPayload(TypedDict):
+    rows: list[int]
+    cols: list[int]
+
+
+class _BoardBBoxPayload(TypedDict):
+    x: int
+    y: int
+    width: int
+    height: int
+
+
+class _ParsedSudokuBoard(TypedDict):
+    board: list[list[int]]
+    fixed_cells: list[_FixedCell]
+    ocr: _OcrStats
+    board_bbox: _BoardBBoxPayload
+    grid_lines: _GridLinesPayload
 
 
 @dataclass(slots=True)
@@ -32,6 +73,43 @@ class _LineGroup:
     @property
     def center(self) -> int:
         return int((self.start + self.end) // 2)
+
+
+class _DistanceWeightedKnn:
+    def __init__(self, features: list[np.ndarray] | np.ndarray, labels: list[int] | np.ndarray, n_neighbors: int = 3) -> None:
+        self._features = np.asarray(features, dtype=np.float32)
+        self._labels = np.asarray(labels, dtype=np.int32)
+        self._n_neighbors = max(1, min(int(n_neighbors), len(self._labels)))
+        self.classes_ = np.unique(self._labels)
+        self._class_index = {int(value): index for index, value in enumerate(self.classes_)}
+
+    def predict_proba(self, features: np.ndarray) -> np.ndarray:
+        query_features = np.asarray(features, dtype=np.float32)
+        if query_features.ndim == 1:
+            query_features = query_features.reshape(1, -1)
+
+        probabilities = np.zeros((len(query_features), len(self.classes_)), dtype=np.float32)
+        for row_index, feature in enumerate(query_features):
+            distances = np.sum((self._features - feature) ** 2, axis=1)
+            nearest = np.argpartition(distances, self._n_neighbors - 1)[: self._n_neighbors]
+            nearest = nearest[np.argsort(distances[nearest])]
+            nearest_distances = distances[nearest]
+            nearest_labels = self._labels[nearest]
+
+            exact_matches = nearest_distances <= 1e-12
+            if np.any(exact_matches):
+                weights = exact_matches.astype(np.float32)
+            else:
+                weights = 1.0 / (np.sqrt(nearest_distances) + 1e-6)
+
+            for label, weight in zip(nearest_labels, weights):
+                probabilities[row_index, self._class_index[int(label)]] += float(weight)
+
+            total = float(np.sum(probabilities[row_index]))
+            if total > 0.0:
+                probabilities[row_index] /= total
+
+        return probabilities
 
 
 class _MiniSudokuOcr:
@@ -49,12 +127,9 @@ class _MiniSudokuOcr:
         best_digit, best_confidence = ranked[0]
         return best_digit, best_confidence, ranked
 
-    def _train_model(self) -> KNeighborsClassifier:
+    def _train_model(self) -> _DistanceWeightedKnn:
         features, labels = self._load_or_build_training_dataset()
-
-        model = KNeighborsClassifier(n_neighbors=3, weights="distance")
-        model.fit(np.asarray(features, dtype=np.float32), np.asarray(labels, dtype=np.int32))
-        return model
+        return _DistanceWeightedKnn(features, labels, n_neighbors=3)
 
     def _load_or_build_training_dataset(self) -> tuple[list[np.ndarray], list[int]]:
         cache_path = self._dataset_cache_path()
@@ -65,7 +140,7 @@ class _MiniSudokuOcr:
                 cached_labels = cached["labels"].astype(np.int32)
                 if cached_features.ndim == 2 and len(cached_features) == len(cached_labels) and len(cached_labels) > 0:
                     return [row for row in cached_features], [int(value) for value in cached_labels.tolist()]
-            except Exception:
+            except (OSError, ValueError, KeyError, EOFError):
                 cache_path.unlink(missing_ok=True)
 
         rng = random.Random(1337)
@@ -104,7 +179,7 @@ class _MiniSudokuOcr:
                 features=np.asarray(features, dtype=np.float32),
                 labels=np.asarray(labels, dtype=np.int32),
             )
-        except Exception:
+        except OSError:
             pass
 
         return features, labels
@@ -157,7 +232,7 @@ class _MiniSudokuOcr:
     def _render_digit_canvas(
         self,
         digit: int,
-        font: Any,
+        font: ImageFont.ImageFont,
         rng: random.Random,
         np_rng: np.random.Generator,
     ) -> np.ndarray:
@@ -226,7 +301,7 @@ class MiniSudokuImageParser:
     def __init__(self) -> None:
         self._ocr = _get_ocr_model()
 
-    def parse_image(self, image_path: str | Path) -> dict[str, Any]:
+    def parse_image(self, image_path: str | Path) -> _ParsedSudokuBoard:
         path = Path(image_path)
         image = cv2.imread(str(path))
         if image is None:
@@ -689,6 +764,8 @@ class MiniSudokuImageParser:
 
             if index == 0:
                 primary_prediction = candidate
+                if confidence >= OCR_STRONG_CONFIDENCE:
+                    return int(value), float(confidence), ranked
 
             if best_prediction is None:
                 best_prediction = candidate
@@ -726,7 +803,7 @@ class MiniSudokuImageParser:
         board_crop: np.ndarray,
         row_lines: list[int],
         col_lines: list[int],
-    ) -> tuple[list[list[int]], list[dict[str, Any]], dict[str, float | int]]:
+    ) -> tuple[list[list[int]], list[_FixedCell], _OcrStats]:
         gray = cv2.cvtColor(board_crop, cv2.COLOR_BGR2GRAY)
         hsv = cv2.cvtColor(board_crop, cv2.COLOR_BGR2HSV)
         orange_mask = cv2.inRange(
@@ -736,7 +813,7 @@ class MiniSudokuImageParser:
         )
 
         board = [[0 for _ in range(BOARD_SIZE)] for _ in range(BOARD_SIZE)]
-        fixed_cells: list[dict[str, Any]] = []
+        fixed_cells: list[_FixedCell] = []
         confidences: list[float] = []
         uncertain_count = 0
         overlay_cell_count = 0
@@ -790,7 +867,7 @@ class MiniSudokuImageParser:
         avg_confidence = float(np.mean(confidences)) if confidences else 0.0
         min_confidence = float(np.min(confidences)) if confidences else 0.0
 
-        ocr_stats: dict[str, float | int] = {
+        ocr_stats: _OcrStats = {
             "fixed_count": int(len(fixed_cells)),
             "avg_confidence": avg_confidence,
             "min_confidence": min_confidence,

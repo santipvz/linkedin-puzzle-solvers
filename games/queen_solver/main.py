@@ -5,7 +5,6 @@ import sys
 import os
 import argparse
 
-# Add src directory to Python path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
 from src.queens_solver import QueensSolver
@@ -50,27 +49,18 @@ Examples:
 
     args = parser.parse_args()
 
-    # Handle conflicting arguments
     if args.quiet and args.verbose:
         print("Error: Cannot use both --quiet and --verbose at the same time")
         return 1
 
-    # Validate input file
     if not os.path.exists(args.image_path):
         print(f"Error: Image file not found: {args.image_path}")
         return 1
 
-    # Create solver
-    # Default behavior: show basic output with board
-    # --verbose: show detailed output
-    # --quiet: minimal output only
-    verbose_mode = args.verbose
-    solver = QueensSolver(verbose=verbose_mode)
+    solver = QueensSolver(verbose=args.verbose)
 
-    # Solve puzzle
     success = solver.solve_from_image(args.image_path, args.output, quiet_mode=args.quiet)
 
-    # Handle output messages based on mode
     if not args.quiet:
         if success:
             print(f"\n✅ Results saved to: {args.output}/")
