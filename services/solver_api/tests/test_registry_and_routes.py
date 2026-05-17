@@ -47,5 +47,17 @@ class CorsParsingTests(unittest.TestCase):
         self.assertEqual(["https://a.example", "https://b.example"], parsed)
 
 
+class ExtensionRegressionTests(unittest.TestCase):
+    def test_mini_sudoku_apply_keeps_ready_preflight(self) -> None:
+        content_script = (REPO_ROOT / "extension" / "content.js").read_text(encoding="utf-8")
+
+        self.assertIn("async function getReadySudokuSelectionCandidates", content_script)
+        self.assertIn("scoreSudokuSelectionCandidate", content_script)
+        self.assertIn(
+            "const selectionCandidates = await getReadySudokuSelectionCandidates(selection, boardSize, actionableMoves);",
+            content_script,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

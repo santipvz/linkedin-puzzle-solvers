@@ -12,6 +12,8 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from core.vision.line_projection import extract_line_groups
+
 
 DEFAULT_BOARD_SIZE = 6
 OUTER_CONTOUR_THRESHOLD = 242
@@ -676,19 +678,11 @@ class PatchesImageParser:
             return None
 
         threshold = max(0.18, float(np.percentile(projection, 88)) * 0.65)
-        raw_indexes = np.where(projection >= threshold)[0]
-        if len(raw_indexes) == 0:
+        groups = extract_line_groups(projection, threshold)
+        if not groups:
             return None
 
-        groups: list[list[int]] = []
-        for index in raw_indexes:
-            value_index = int(index)
-            if not groups or value_index - groups[-1][-1] > 3:
-                groups.append([value_index])
-            else:
-                groups[-1].append(value_index)
-
-        centers = [int(round(sum(group) / len(group))) for group in groups if len(group) >= 1]
+        centers = [int(round((start + end) / 2)) for start, end, _strength in groups]
         interior = [center for center in centers if 2 <= center <= axis_length - 3]
         candidates = [0, *interior, axis_length]
 

@@ -49,6 +49,7 @@ def activate_game_import_context(game_root: Path) -> None:
         if module_name == "src" or module_name.startswith("src."):
             del sys.modules[module_name]
 
+    ensure_sys_path(game_root.parents[1])
     ensure_sys_path(game_root)
 
 

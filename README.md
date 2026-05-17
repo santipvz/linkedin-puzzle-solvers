@@ -1,5 +1,7 @@
 # LinkedIn Puzzle Solvers
 
+[![CI](https://github.com/santipvz/linkedin-puzzle-solvers/actions/workflows/ci.yml/badge.svg)](https://github.com/santipvz/linkedin-puzzle-solvers/actions/workflows/ci.yml)
+
 Computer-vision solvers and browser automation for LinkedIn daily puzzles.
 
 The project is a Python + browser-extension monorepo. The extension captures the active LinkedIn puzzle board, sends it to a local FastAPI service, receives a normalized solution, previews it, and can apply the moves back into the page.
@@ -21,7 +23,7 @@ Development mode:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r services/solver_api/requirements.txt
+pip install -r requirements.txt
 
 cd services/solver_api
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
@@ -186,7 +188,13 @@ Install dependencies:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r services/solver_api/requirements.txt
+pip install -r requirements-dev.txt
+```
+
+Run all local quality checks:
+
+```bash
+python3 scripts/quality_check.py
 ```
 
 Run API in development:

@@ -1,7 +1,1 @@
-opencv-python
-numpy
-matplotlib
-scikit-image
-scipy
-Pillow
-scikit-learn
+-r ../../requirements.txt

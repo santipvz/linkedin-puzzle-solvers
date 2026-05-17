@@ -4,6 +4,10 @@ import sys
 import unittest
 from pathlib import Path
 
+import cv2
+import numpy as np
+from PIL import Image, ImageDraw, ImageFont
+
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PATCHES_ROOT = REPO_ROOT / "games" / "patches_solver"
@@ -15,7 +19,7 @@ from services.solver_api.app.workers.common import activate_game_import_context
 activate_game_import_context(PATCHES_ROOT)
 
 from services.solver_api.app.workers.solve_patches_worker import solve as solve_patches_worker
-from src.image_parser import PatchesImageParser
+from src.image_parser import PatchesImageParser, _get_ocr
 from src.patches_solver import PatchesClue, PatchesSolver
 
 
@@ -39,6 +43,24 @@ class PatchesSolverTests(unittest.TestCase):
 
 
 class PatchesParserIntegrationTests(unittest.TestCase):
+    def test_ocr_reads_white_digit_on_gray_badge(self) -> None:
+        image = Image.new("RGB", (54, 54), (132, 150, 158))
+        draw = ImageDraw.Draw(image)
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 24)
+        left, top, right, bottom = draw.textbbox((0, 0), "3", font=font)
+        draw.text(
+            (((54 - (right - left)) // 2) - left, ((54 - (bottom - top)) // 2) - top),
+            "3",
+            font=font,
+            fill=(255, 255, 255),
+        )
+
+        roi = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+        prediction = _get_ocr().predict(roi, max_value=49)
+
+        self.assertIsNotNone(prediction)
+        self.assertEqual(3, prediction.value if prediction is not None else None)
+
     def test_parser_detects_clues_on_sample(self) -> None:
         parser = PatchesImageParser(board_size=6)
         sample_path = PATCHES_ROOT / "examples" / "sample1.png"
