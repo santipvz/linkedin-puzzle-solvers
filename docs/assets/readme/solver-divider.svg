@@ -1,0 +1,27 @@
+<svg width="1200" height="72" viewBox="0 0 1200 72" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Animated solver divider</title>
+  <desc id="desc">Subtle animated divider for the README.</desc>
+  <defs>
+    <linearGradient id="line" x1="0" y1="0" x2="1200" y2="0" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0A66C2" stop-opacity="0"/>
+      <stop offset="0.2" stop-color="#0A66C2"/>
+      <stop offset="0.5" stop-color="#7DD3FC"/>
+      <stop offset="0.8" stop-color="#0A66C2"/>
+      <stop offset="1" stop-color="#0A66C2" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="glow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <path d="M70 36 H1130" stroke="url(#line)" stroke-width="2" stroke-linecap="round"/>
+  <path id="path" d="M70 36 H1130" stroke="transparent"/>
+  <g fill="#0A66C2" opacity="0.9">
+    <rect x="558" y="26" width="20" height="20" rx="5"/>
+    <rect x="590" y="26" width="20" height="20" rx="5" opacity="0.55"/>
+    <rect x="622" y="26" width="20" height="20" rx="5"/>
+  </g>
+</svg>

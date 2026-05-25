@@ -7,6 +7,9 @@ __pycache__/
 errors/
 *.zip
 *.png
+!docs/assets/readme/*.png
+!docs/assets/readme/*.gif
+!docs/assets/readme/*.svg
 !games/patches_solver/examples/*.png
 !games/patches_solver/assets/*.png
 deploy/local/.env

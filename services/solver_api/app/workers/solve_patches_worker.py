@@ -163,13 +163,50 @@ def _recover_with_ocr_candidates(
     board_size: int,
     base_result: _SolveResultLike,
 ) -> tuple[_SolveResultLike, list[_RecoveredClueChange], int]:
+    attempted = 0
+
+    if base_result.error == "Sum of numbered clue areas exceeds board size.":
+        numbered_indexes = [index for index, clue in enumerate(parsed_clues) if clue.get("value") is not None]
+        ranked_indexes = sorted(
+            numbered_indexes,
+            key=lambda index: (
+                float(parsed_clues[index].get("confidence") or 0.0),
+                -int(parsed_clues[index].get("value") or 0),
+            ),
+        )
+
+        for removal_count in (1, 2):
+            for indexes in itertools.combinations(ranked_indexes[:6], removal_count):
+                overrides = {index: None for index in indexes}
+                solve_result = solver.solve(
+                    board_size=int(board_size),
+                    clues=_build_solver_clues(parsed_clues, value_overrides=overrides),
+                )
+                attempted += 1
+
+                if not solve_result.solved:
+                    continue
+
+                replaced = [
+                    {
+                        "row": int(parsed_clues[index]["row"]),
+                        "col": int(parsed_clues[index]["col"]),
+                        "from": int(parsed_clues[index].get("value") or 0),
+                        "to": None,
+                        "confidence": float(parsed_clues[index].get("confidence") or 0.0),
+                        "candidate_rank": -1,
+                    }
+                    for index in indexes
+                ]
+                return solve_result, replaced, attempted
+
     option_lists = [_build_value_options(clue, board_size) for clue in parsed_clues]
     combination_count = 1
     for options in option_lists:
         combination_count *= max(1, len(options))
 
     if combination_count <= 1:
-        return base_result, [], 0
+        return base_result, [], attempted
 
     max_candidate_assignments = 12000
     candidate_assignments: list[tuple[float, tuple[tuple[int | None, float, int], ...]]] = []
@@ -185,8 +222,6 @@ def _recover_with_ocr_candidates(
     candidate_assignments.sort(key=lambda item: item[0], reverse=True)
 
     base_values = [clue.get("value") for clue in parsed_clues]
-    attempted = 0
-
     for _score, assignment in candidate_assignments:
         values = [value for value, _confidence, _rank in assignment]
         if values == base_values:
@@ -239,6 +274,9 @@ def _should_try_ocr_recovery(attempt: _AttemptPayload) -> bool:
     solve_result = attempt["solve_result"]
     parsed = attempt["parsed"]
     board_size = int(attempt["board_size"])
+    if solve_result.error == "Sum of numbered clue areas exceeds board size.":
+        return True
+
     if not _has_ocr_alternatives(parsed["clues"], board_size):
         return False
 

@@ -1,24 +1,98 @@
-# LinkedIn Puzzle Solvers
+<p align="center">
+  <img src="docs/assets/readme/logo.png" alt="LinkedIn Puzzle Solvers logo" width="230">
+</p>
 
-[![CI](https://github.com/santipvz/linkedin-puzzle-solvers/actions/workflows/ci.yml/badge.svg)](https://github.com/santipvz/linkedin-puzzle-solvers/actions/workflows/ci.yml)
+<h1 align="center">LinkedIn Puzzle Solvers</h1>
 
-Computer-vision solvers and browser automation for LinkedIn daily puzzles.
+<p align="center">
+  <strong>Daily LinkedIn puzzles, solved locally.</strong>
+  <br>
+  Browser extension + FastAPI solver service powered by computer vision and puzzle-specific automation.
+</p>
 
-The project is a Python + browser-extension monorepo. The extension captures the active LinkedIn puzzle board, sends it to a local FastAPI service, receives a normalized solution, previews it, and can apply the moves back into the page.
+<p align="center">
+  <a href="https://github.com/santipvz/linkedin-puzzle-solvers/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/santipvz/linkedin-puzzle-solvers/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white">
+  <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-local_api-009688?logo=fastapi&logoColor=white">
+  <img alt="Browser Extension" src="https://img.shields.io/badge/Browser-extension-4285F4?logo=googlechrome&logoColor=white">
+  <img alt="License" src="https://img.shields.io/badge/License-MIT-green">
+</p>
 
-Supported puzzles:
+<p align="center">
+  <a href="https://github.com/santipvz/linkedin-puzzle-solvers/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/santipvz/linkedin-puzzle-solvers?style=social"></a>
+  <a href="https://github.com/santipvz/linkedin-puzzle-solvers/fork"><img alt="GitHub forks" src="https://img.shields.io/github/forks/santipvz/linkedin-puzzle-solvers?style=social"></a>
+  <a href="https://github.com/santipvz/linkedin-puzzle-solvers/issues"><img alt="GitHub issues" src="https://img.shields.io/github/issues/santipvz/linkedin-puzzle-solvers?logo=github"></a>
+  <a href="https://github.com/santipvz/linkedin-puzzle-solvers/pulls"><img alt="GitHub pull requests" src="https://img.shields.io/github/issues-pr/santipvz/linkedin-puzzle-solvers?logo=github"></a>
+</p>
 
-- Queens
-- Tango
-- Mini Sudoku
-- Zip
-- Patches
+<p align="center">
+  <img alt="Queens" src="https://img.shields.io/badge/Queens-0A66C2?style=for-the-badge">
+  <img alt="Tango" src="https://img.shields.io/badge/Tango-7C3AED?style=for-the-badge">
+  <img alt="Mini Sudoku" src="https://img.shields.io/badge/Mini%20Sudoku-16A34A?style=for-the-badge">
+  <img alt="Zip" src="https://img.shields.io/badge/Zip-F97316?style=for-the-badge">
+  <img alt="Patches" src="https://img.shields.io/badge/Patches-E11D48?style=for-the-badge">
+</p>
+
+<p align="center">
+  <img src="docs/assets/readme/solver-divider.svg" width="100%" alt="Animated divider">
+</p>
+
+<table>
+  <tr>
+    <td align="center" width="25%"><img alt="Capture" src="https://img.shields.io/badge/01-Capture-0A66C2?style=for-the-badge"><br><sub>Board screenshot from the active game.</sub></td>
+    <td align="center" width="25%"><img alt="Parse" src="https://img.shields.io/badge/02-Parse-7C3AED?style=for-the-badge"><br><sub>Computer vision extracts the puzzle state.</sub></td>
+    <td align="center" width="25%"><img alt="Solve" src="https://img.shields.io/badge/03-Solve-16A34A?style=for-the-badge"><br><sub>Local workers compute the solution.</sub></td>
+    <td align="center" width="25%"><img alt="Apply" src="https://img.shields.io/badge/04-Apply-F97316?style=for-the-badge"><br><sub>Preview, then automate the moves.</sub></td>
+  </tr>
+</table>
+
+## Demo Gallery
+
+<table>
+  <tr>
+    <td width="50%">
+      <h3 align="center">Queens</h3>
+      <img src="docs/assets/readme/queens.gif" alt="Queens solver demo">
+    </td>
+    <td width="50%">
+      <h3 align="center">Tango</h3>
+      <img src="docs/assets/readme/tango.gif" alt="Tango solver demo">
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <h3 align="center">Mini Sudoku</h3>
+      <img src="docs/assets/readme/minisudoku.gif" alt="Mini Sudoku solver demo">
+    </td>
+    <td width="50%">
+      <h3 align="center">Zip</h3>
+      <img src="docs/assets/readme/zip.gif" alt="Zip solver demo">
+    </td>
+  </tr>
+  <tr>
+    <td colspan="2">
+      <h3 align="center">Patches</h3>
+      <p align="center"><img src="docs/assets/readme/patches.gif" alt="Patches solver demo" width="680"></p>
+    </td>
+  </tr>
+</table>
+
+<p align="center">
+  <img src="docs/assets/readme/solver-divider.svg" width="100%" alt="Animated divider">
+</p>
+
 
 ## Quick Start
 
-### 1. Start The Solver API
+<table>
+  <tr>
+    <td width="33%"><strong>1. API</strong><br><sub>Start the local FastAPI solver service.</sub></td>
+    <td width="33%"><strong>2. Extension</strong><br><sub>Load extension in your browser.</sub></td>
+    <td width="33%"><strong>3. Solve</strong><br><sub>Open a LinkedIn game and click Solve + Apply.</sub></td>
+  </tr>
+</table>
 
-Development mode:
+### 1. Start the API
 
 ```bash
 python3 -m venv .venv
@@ -29,25 +103,15 @@ cd services/solver_api
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-Health check:
+Check it is running:
 
 ```bash
 curl http://127.0.0.1:8000/health
 ```
 
-Docker mode:
+Prefer Docker? Use `deploy/local/README.md`. Docker exposes the API at `http://127.0.0.1:18000`.
 
-```bash
-cd deploy/local
-cp .env.example .env
-mkdir -p ../../datasets
-docker compose up -d --build
-curl http://127.0.0.1:18000/health
-```
-
-Use `http://127.0.0.1:8000` for local Uvicorn or `http://127.0.0.1:18000` for Docker.
-
-### 2. Load The Browser Extension
+### 2. Load the extension
 
 Chrome / Chromium:
 
@@ -56,18 +120,18 @@ Chrome / Chromium:
 3. Click `Load unpacked`.
 4. Select `extension/`.
 
-Firefox temporary install:
+Firefox:
 
 1. Open `about:debugging#/runtime/this-firefox`.
 2. Click `Load Temporary Add-on`.
 3. Select `extension/manifest.json`.
 
-### 3. Solve A Puzzle
+### 3. Solve a puzzle
 
-1. Open a supported LinkedIn puzzle page.
-2. Click the extension icon and set the API URL.
-3. Use `Auto Detect`, `Solve`, `Apply`, or `Solve + Apply`.
-4. Or use the in-page quick widget: `Solve <Puzzle>`.
+1. Open a supported LinkedIn game page.
+2. Click the extension icon.
+3. Set the API URL to `http://127.0.0.1:8000`.
+4. Use `Auto Detect`, `Solve`, `Apply`, or `Solve + Apply`.
 
 Supported URLs:
 
@@ -77,202 +141,48 @@ Supported URLs:
 - `https://www.linkedin.com/games/zip/`
 - `https://www.linkedin.com/games/patches/`
 
-## Architecture
+## How It Works
 
-```mermaid
-flowchart LR
-    User[User on LinkedIn Games] --> Extension[Browser Extension<br/>extension/]
+The extension captures the board image, sends it to the local FastAPI service, and receives a normalized solution. The API routes the image to the matching puzzle worker, where computer vision parses the board and the solver returns the moves.
 
-    Extension -->|capture board image| Content[Content Script<br/>DOM, iframe mapping, overlay, apply]
-    Content -->|runtime messages| Background[Background Script<br/>routing, screenshots, API calls]
-    Background -->|POST /solve/puzzle| API[FastAPI Solver API<br/>services/solver_api/app]
-
-    subgraph APIBox[API Layer]
-        API --> Registry[Puzzle Registry<br/>puzzle_registry.py]
-        API --> Cache[In-memory image-hash cache]
-        API --> Capture[Optional dataset capture<br/>datasets/puzzle/date]
-        API --> Workers[Worker Dispatcher]
-    end
-
-    subgraph WorkersBox[Worker Layer]
-        Workers --> QueensWorker[Queens Worker]
-        Workers --> TangoWorker[Tango Worker]
-        Workers --> SudokuWorker[Sudoku Worker]
-        Workers --> ZipWorker[Zip Worker]
-        Workers --> PatchesWorker[Patches Worker]
-    end
-
-    subgraph GamesBox[Puzzle Packages]
-        Parser[Image Parser<br/>computer vision / OCR]
-        Solver[Puzzle Solver<br/>constraints / backtracking / paths]
-    end
-
-    subgraph CoreBox[Shared Core]
-        BoardDetection[core/commons/board_detection.py]
-        LineProjection[core/vision/line_projection.py]
-        Payloads[core/vision/parsed_board_payload.py]
-    end
-
-    QueensWorker --> Parser
-    TangoWorker --> Parser
-    SudokuWorker --> Parser
-    ZipWorker --> Parser
-    PatchesWorker --> Parser
-    Parser --> BoardDetection
-    Parser --> LineProjection
-    Parser --> Payloads
-    Parser --> Solver
-    Solver -->|JSON solution| Workers
-    Workers --> API
-    API --> Background
-    Background --> Content
-    Content -->|overlay/apply moves| User
+```text
+LinkedIn page -> browser extension -> local API -> puzzle worker -> overlay/apply
 ```
 
-## Repository Layout
+Main folders:
 
-- `extension/`: browser extension UI and automation.
-- `services/solver_api/`: FastAPI app, puzzle registry, solve endpoints, worker execution, caching, dataset capture.
-- `services/solver_api/app/workers/`: one worker per puzzle; each worker normalizes parser/solver output into the API response contract.
-- `games/queen_solver/`: Queens image parser and solver.
-- `games/tango_solver/`: Tango image parser, constraint detection, solver, and tests.
-- `games/sudoku_solver/`: Mini Sudoku parser and solver.
-- `games/zip_solver/`: Zip parser and path solver.
-- `games/patches_solver/`: Patches parser/OCR and rectangle-tiling solver.
-- `core/`: shared board-detection, line-projection, and parser payload helpers.
-- `scripts/`: smoke checks, registry sync checks, and dataset benchmarks.
-- `deploy/local/`: Docker Compose deployment for a persistent local API service.
-- `docs/`: architecture, release, and refactor notes.
-- `datasets/`: generated local captures, ignored by git.
+- `extension/`: browser extension UI, capture, overlay, and auto-apply logic.
+- `services/solver_api/`: FastAPI app and puzzle worker routing.
+- `games/*_solver/`: puzzle-specific parsers and solvers.
+- `core/`: shared computer-vision helpers.
+- `deploy/local/`: Docker Compose setup.
+- `docs/`: architecture and release notes.
 
-## Runtime Flow
-
-1. The extension detects the puzzle type from the page URL or iframe URL.
-2. The extension captures the board or selected region as an image.
-3. The background script calls `POST /solve/<puzzle>` with multipart field `image`.
-4. The API hashes the image and uses an in-memory cache when possible.
-5. The selected worker loads the puzzle package, parses the board image, and runs the solver.
-6. The worker returns a stable JSON payload: puzzle name, solved status, board size, moves, solution grid, clues, errors, and details.
-7. The extension renders an overlay and optionally applies the solution through DOM/click/keyboard/drag automation.
-
-## API
-
-Health:
+## Useful Commands
 
 ```bash
-curl http://127.0.0.1:8000/health
-```
-
-Solve endpoints:
-
-- `POST /solve/queens`
-- `POST /solve/tango`
-- `POST /solve/sudoku`
-- `POST /solve/zip`
-- `POST /solve/patches`
-
-All solve endpoints accept multipart form data with field name `image`.
-
-Example:
-
-```bash
-curl -X POST \
-  -F "image=@games/tango_solver/examples/sample1.png" \
-  http://127.0.0.1:8000/solve/tango
-```
-
-## Local Commands
-
-Install dependencies:
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements-dev.txt
-```
-
-Run all local quality checks:
-
-```bash
+# Run all quality checks
 python3 scripts/quality_check.py
-```
 
-Run API in development:
-
-```bash
-cd services/solver_api
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
-```
-
-Run Docker service:
-
-```bash
-cd deploy/local
-docker compose up -d --build
-docker compose logs -f solver-api
-```
-
-Run smoke checks:
-
-```bash
-python3 scripts/check_puzzle_registry_sync.py
+# Run API tests
 python3 -m unittest discover -s services/solver_api/tests -p "test_*.py"
-python3 scripts/smoke_check.py
-```
 
-Run puzzle tests:
-
-```bash
+# Run puzzle tests
 python3 -m pytest games/queen_solver/tests games/tango_solver/tests games/patches_solver/tests
-```
 
-Check extension JavaScript syntax:
-
-```bash
+# Check extension JavaScript syntax
 node --check extension/background.js
 node --check extension/content.js
 node --check extension/popup.js
 ```
 
-Compile Python modules:
+## More Docs
 
-```bash
-python3 -m compileall services/solver_api/app games/*_solver/src core scripts
-```
-
-## Dataset Capture
-
-The API can archive start-board screenshots for debugging and regression data.
-
-- Default path: `datasets/<puzzle>/<YYYY-MM-DD>/`.
-- Capture is enabled by default with `DATASET_CAPTURE_ENABLED=1`.
-- Disable capture with `DATASET_CAPTURE_ENABLED=0`.
-- Docker capture paths are configured in `deploy/local/.env`.
-- Generated datasets are ignored by git.
-
-If files under `datasets/` are owned by `root`, fix them from the repo root:
-
-```bash
-sudo chown -R "$USER:$USER" datasets
-chmod -R u+rwX,go+rX datasets
-```
-
-## Troubleshooting
-
-- API does not respond: check `curl http://127.0.0.1:8000/health` or Docker port `18000`.
-- Extension cannot connect: verify the configured API URL in the popup.
-- Puzzle solves but applies incorrectly: use preview overlay first, then inspect parser details in the API response.
-- Patches OCR looks wrong: check `clue_count`, `numbered_clue_count`, `recovered_clues`, and `parse_reliable` in response details.
-- Dataset files cannot be deleted: fix ownership with the `chown` command in the Dataset Capture section.
-
-## More Documentation
-
-- `extension/README.md`: browser extension usage.
-- `services/solver_api/README.md`: API-specific usage.
-- `deploy/local/README.md`: Docker deployment operations.
-- `docs/architecture.md`: deeper architecture notes.
-- `docs/release.md`: release checklist.
-- `CONTRIBUTING.md`: contribution guidelines.
+- Extension setup and troubleshooting: `extension/README.md`
+- API details: `services/solver_api/README.md`
+- Docker deployment: `deploy/local/README.md`
+- Architecture notes: `docs/architecture.md`
+- Contributing: `CONTRIBUTING.md`
 
 ## License
 
