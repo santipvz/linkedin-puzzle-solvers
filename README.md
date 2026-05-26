@@ -37,18 +37,9 @@
   <img src="docs/assets/readme/solver-divider.svg" width="100%" alt="Animated divider">
 </p>
 
-<table>
-  <tr>
-    <td align="center" width="25%"><img alt="Capture" src="https://img.shields.io/badge/01-Capture-0A66C2?style=for-the-badge"><br><sub>Board screenshot from the active game.</sub></td>
-    <td align="center" width="25%"><img alt="Parse" src="https://img.shields.io/badge/02-Parse-7C3AED?style=for-the-badge"><br><sub>Computer vision extracts the puzzle state.</sub></td>
-    <td align="center" width="25%"><img alt="Solve" src="https://img.shields.io/badge/03-Solve-16A34A?style=for-the-badge"><br><sub>Local workers compute the solution.</sub></td>
-    <td align="center" width="25%"><img alt="Apply" src="https://img.shields.io/badge/04-Apply-F97316?style=for-the-badge"><br><sub>Preview, then automate the moves.</sub></td>
-  </tr>
-</table>
-
 ## Demo Gallery
 
-<table>
+<table border="0" cellspacing="0" cellpadding="0">
   <tr>
     <td width="50%">
       <h3 align="center">Queens</h3>
@@ -83,14 +74,6 @@
 
 
 ## Quick Start
-
-<table>
-  <tr>
-    <td width="33%"><strong>1. API</strong><br><sub>Start the local FastAPI solver service.</sub></td>
-    <td width="33%"><strong>2. Extension</strong><br><sub>Load extension in your browser.</sub></td>
-    <td width="33%"><strong>3. Solve</strong><br><sub>Open a LinkedIn game and click Solve + Apply.</sub></td>
-  </tr>
-</table>
 
 ### 1. Start the API
 
