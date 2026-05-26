@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/readme/logo.png" alt="LinkedIn Puzzle Solvers logo" width="230">
+  <img src="docs/assets/readme/logo.png" alt="LinkedIn Puzzle Solvers logo">
 </p>
 
 <h1 align="center">LinkedIn Puzzle Solvers</h1>
