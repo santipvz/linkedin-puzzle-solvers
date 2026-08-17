@@ -12,7 +12,8 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from core.vision.line_projection import extract_line_groups
+from core.commons import BoardBBox, GridBounds, crop_board, external_contour_bbox_candidates, uniform_grid_bounds
+from core.vision import DistanceWeightedKnn, build_parsed_board_payload, extract_line_groups
 
 
 DEFAULT_BOARD_SIZE = 6
@@ -41,43 +42,6 @@ class _OcrPrediction:
 class _DigitChoice:
     digit: int
     score: float
-
-
-class _DistanceWeightedKnn:
-    def __init__(self, features: np.ndarray, labels: np.ndarray, n_neighbors: int = 3) -> None:
-        self._features = np.asarray(features, dtype=np.float32)
-        self._labels = np.asarray(labels, dtype=np.int32)
-        self._n_neighbors = max(1, min(int(n_neighbors), len(self._labels)))
-        self.classes_ = np.unique(self._labels)
-        self._class_index = {int(value): index for index, value in enumerate(self.classes_)}
-
-    def predict_proba(self, features: np.ndarray) -> np.ndarray:
-        query_features = np.asarray(features, dtype=np.float32)
-        if query_features.ndim == 1:
-            query_features = query_features.reshape(1, -1)
-
-        probabilities = np.zeros((len(query_features), len(self.classes_)), dtype=np.float32)
-        for row_index, feature in enumerate(query_features):
-            distances = np.sum((self._features - feature) ** 2, axis=1)
-            nearest = np.argpartition(distances, self._n_neighbors - 1)[: self._n_neighbors]
-            nearest = nearest[np.argsort(distances[nearest])]
-            nearest_distances = distances[nearest]
-            nearest_labels = self._labels[nearest]
-
-            exact_matches = nearest_distances <= 1e-12
-            if np.any(exact_matches):
-                weights = exact_matches.astype(np.float32)
-            else:
-                weights = 1.0 / (np.sqrt(nearest_distances) + 1e-6)
-
-            for label, weight in zip(nearest_labels, weights):
-                probabilities[row_index, self._class_index[int(label)]] += float(weight)
-
-            total = float(np.sum(probabilities[row_index]))
-            if total > 0.0:
-                probabilities[row_index] /= total
-
-        return probabilities
 
 
 class _PatchesClueOcr:
@@ -273,7 +237,7 @@ class _PatchesClueOcr:
 
         return normalized
 
-    def _build_classifier(self) -> _DistanceWeightedKnn:
+    def _build_classifier(self) -> DistanceWeightedKnn:
         cached = self._load_cached_classifier()
         if cached is not None:
             return cached
@@ -309,12 +273,12 @@ class _PatchesClueOcr:
         feature_array = np.array(features, dtype=np.float32)
         label_array = np.array(labels, dtype=np.int32)
         self._save_cached_classifier_data(feature_array, label_array)
-        return _DistanceWeightedKnn(feature_array, label_array, n_neighbors=3)
+        return DistanceWeightedKnn(feature_array, label_array, n_neighbors=3)
 
     def _classifier_cache_path(self) -> Path:
         return Path(tempfile.gettempdir()) / "linkedin_puzzle_solvers_patches_ocr_v2.npz"
 
-    def _load_cached_classifier(self) -> _DistanceWeightedKnn | None:
+    def _load_cached_classifier(self) -> DistanceWeightedKnn | None:
         cache_path = self._classifier_cache_path()
         if not cache_path.exists():
             return None
@@ -331,7 +295,7 @@ class _PatchesClueOcr:
             cache_path.unlink(missing_ok=True)
             return None
 
-        return _DistanceWeightedKnn(features, labels, n_neighbors=3)
+        return DistanceWeightedKnn(features, labels, n_neighbors=3)
 
     def _save_cached_classifier_data(self, features: np.ndarray, labels: np.ndarray) -> None:
         try:
@@ -414,16 +378,15 @@ class PatchesImageParser:
         for clue in clues:
             clue_grid[int(clue["row"])][int(clue["col"])] = clue["value"]
 
-        return {
-            "board_size": int(board_size),
-            "clues": clues,
-            "clue_grid": clue_grid,
-            "board_bbox": bbox,
-            "grid_lines": {
-                "rows": [int(value) for value in row_lines],
-                "cols": [int(value) for value in col_lines],
+        return build_parsed_board_payload(
+            board_size=board_size,
+            board_bbox=BoardBBox.from_mapping(bbox),
+            grid=GridBounds(rows=tuple(row_lines), cols=tuple(col_lines)),
+            extra_fields={
+                "clues": clues,
+                "clue_grid": clue_grid,
             },
-        }
+        )
 
     def _detect_clues(
         self,
@@ -579,73 +542,32 @@ class PatchesImageParser:
         return "any"
 
     def _extract_board_crop(self, image: np.ndarray) -> tuple[np.ndarray, dict[str, int]]:
-        image_height, image_width = image.shape[:2]
         bbox = self._detect_board_bbox(image)
-
         if bbox is None:
-            return image, {
-                "x": 0,
-                "y": 0,
-                "width": int(image_width),
-                "height": int(image_height),
-            }
+            bbox = BoardBBox.full_image(image)
+        cropped = crop_board(image, bbox)
+        if cropped is None:
+            raise ValueError("Detected Patches board is outside the image.")
+        crop, actual_bbox = cropped
+        return crop, actual_bbox.to_payload()
 
-        x, y, width, height = bbox
-        x1 = max(0, x)
-        y1 = max(0, y)
-        x2 = min(image_width, x + width)
-        y2 = min(image_height, y + height)
-
-        crop = image[y1:y2, x1:x2]
-        metadata = {
-            "x": int(x1),
-            "y": int(y1),
-            "width": int(x2 - x1),
-            "height": int(y2 - y1),
-        }
-        return crop, metadata
-
-    def _detect_board_bbox(self, image: np.ndarray) -> tuple[int, int, int, int] | None:
+    def _detect_board_bbox(self, image: np.ndarray) -> BoardBBox | None:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         mask = (gray < OUTER_CONTOUR_THRESHOLD).astype(np.uint8) * 255
-
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not contours:
-            return None
-
-        image_height, image_width = gray.shape
-        image_area = image_height * image_width
-        center_x = image_width / 2
-        center_y = image_height / 2
-
         best_score = float("-inf")
-        best_bbox: tuple[int, int, int, int] | None = None
+        best_bbox: BoardBBox | None = None
 
-        for contour in contours:
-            x, y, width, height = cv2.boundingRect(contour)
-            if width <= 0 or height <= 0:
+        for candidate in external_contour_bbox_candidates(mask):
+            if candidate.area_ratio < 0.04:
                 continue
-
-            bbox_area = width * height
-            if bbox_area < image_area * 0.04:
+            if not (0.80 <= candidate.aspect_ratio <= 1.22):
                 continue
-
-            aspect_ratio = width / max(1, height)
-            if not (0.80 <= aspect_ratio <= 1.22):
+            if candidate.fill_ratio < 0.30:
                 continue
-
-            fill_ratio = cv2.contourArea(contour) / max(1, bbox_area)
-            if fill_ratio < 0.30:
-                continue
-
-            contour_center_x = x + width / 2
-            contour_center_y = y + height / 2
-            center_distance = float(np.hypot(contour_center_x - center_x, contour_center_y - center_y))
-
-            score = (bbox_area * fill_ratio) - (center_distance * 90)
+            score = (candidate.bbox_area * candidate.fill_ratio) - (candidate.center_distance * 90)
             if score > best_score:
                 best_score = score
-                best_bbox = (int(x), int(y), int(width), int(height))
+                best_bbox = candidate.bbox
 
         return best_bbox
 
@@ -709,10 +631,4 @@ class PatchesImageParser:
         return deduped
 
     def _build_grid_lines(self, axis_length: int, board_size: int) -> list[int]:
-        if axis_length <= 1:
-            return [0 for _ in range(board_size + 1)]
-
-        lines = np.rint(np.linspace(0, axis_length, board_size + 1)).astype(int)
-        lines[0] = 0
-        lines[-1] = axis_length
-        return [int(value) for value in lines]
+        return list(uniform_grid_bounds(width=axis_length, height=axis_length, board_size=board_size).rows)

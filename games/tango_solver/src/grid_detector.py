@@ -1,60 +1,51 @@
-from typing import List, Tuple
+from __future__ import annotations
+
+from typing import TypeAlias
+
 import numpy as np
+
+from core.commons import uniform_grid_bounds
+
+
+CellRect: TypeAlias = tuple[int, int, int, int]
 
 
 class GridDetector:
-    """
-    Grid detector for Tango board.
+    """Compatibility wrapper around the shared uniform-grid geometry."""
 
-    Divides the board image into a grid of size `grid_size` x `grid_size` and
-    returns the coordinates of each cell.
-    """
+    def __init__(self, grid_size: int = 6) -> None:
+        self.grid_size = int(grid_size)
 
-    def __init__(self, grid_size: int = 6):
-        self.grid_size = grid_size
+    def detect_grid(self, image: np.ndarray) -> list[list[CellRect]]:
+        grid = uniform_grid_bounds(
+            width=int(image.shape[1]),
+            height=int(image.shape[0]),
+            board_size=self.grid_size,
+        )
+        return [list(row) for row in grid.cells()]
 
-    def detect_grid(self, img: np.ndarray) -> List[List[Tuple[int, int, int, int]]]:
-        height, width = img.shape[:2]
-
-        cell_width = width // self.grid_size
-        cell_height = height // self.grid_size
-
-        grid_coords = []
-        for row in range(self.grid_size):
-            row_coords = []
-            for col in range(self.grid_size):
-                x = col * cell_width
-                y = row * cell_height
-                row_coords.append((x, y, cell_width, cell_height))
-            grid_coords.append(row_coords)
-
-        return grid_coords
-
-    def get_cell_image(self, img: np.ndarray, grid_coords: List[List[Tuple]], row: int, col: int) -> np.ndarray:
-        if 0 <= row < len(grid_coords) and 0 <= col < len(grid_coords[0]):
-            x, y, w, h = grid_coords[row][col]
-            return img[y:y+h, x:x+w]
-        else:
+    @staticmethod
+    def get_cell_image(image: np.ndarray, grid_coords: list[list[CellRect]], row: int, col: int) -> np.ndarray:
+        if row < 0 or col < 0:
             raise ValueError(f"Cell coordinates out of range: ({row}, {col})")
+        try:
+            x, y, width, height = grid_coords[row][col]
+        except IndexError as exc:
+            raise ValueError(f"Cell coordinates out of range: ({row}, {col})") from exc
+        return image[y : y + height, x : x + width]
 
-    def get_border_region(self, img: np.ndarray, grid_coords: List[List[Tuple]], pos1: Tuple[int, int], pos2: Tuple[int, int]) -> np.ndarray:
+    @staticmethod
+    def get_border_region(
+        image: np.ndarray,
+        grid_coords: list[list[CellRect]],
+        pos1: tuple[int, int],
+        pos2: tuple[int, int],
+    ) -> np.ndarray:
         row1, col1 = pos1
         row2, col2 = pos2
-
         if abs(row1 - row2) + abs(col1 - col2) != 1:
             raise ValueError(f"Cells {pos1} and {pos2} are not adjacent")
-
-        x1, y1, w1, h1 = grid_coords[row1][col1]
-
+        x, y, width, height = grid_coords[row1][col1]
         if row1 == row2:
-            border_x = x1 + w1 - 10
-            border_y = y1
-            border_w = 20
-            border_h = h1
-        else:
-            border_x = x1
-            border_y = y1 + h1 - 10
-            border_w = w1
-            border_h = 20
-
-        return img[border_y:border_y+border_h, border_x:border_x+border_w]
+            return image[y : y + height, x + width - 10 : x + width + 10]
+        return image[y + height - 10 : y + height + 10, x : x + width]

@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import glob
-import itertools
 import os
 import random
 import tempfile
-from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import TypedDict
@@ -13,6 +11,9 @@ from typing import TypedDict
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+
+from core.commons import BoardBBox, crop_board, external_contour_bbox_candidates, morphological_line_projections
+from core.vision import DistanceWeightedKnn, extract_line_groups, select_regular_line_subset
 
 
 BOARD_SIZE = 6
@@ -64,54 +65,6 @@ class _ParsedSudokuBoard(TypedDict):
     grid_lines: _GridLinesPayload
 
 
-@dataclass(slots=True)
-class _LineGroup:
-    start: int
-    end: int
-    strength: float
-
-    @property
-    def center(self) -> int:
-        return int((self.start + self.end) // 2)
-
-
-class _DistanceWeightedKnn:
-    def __init__(self, features: list[np.ndarray] | np.ndarray, labels: list[int] | np.ndarray, n_neighbors: int = 3) -> None:
-        self._features = np.asarray(features, dtype=np.float32)
-        self._labels = np.asarray(labels, dtype=np.int32)
-        self._n_neighbors = max(1, min(int(n_neighbors), len(self._labels)))
-        self.classes_ = np.unique(self._labels)
-        self._class_index = {int(value): index for index, value in enumerate(self.classes_)}
-
-    def predict_proba(self, features: np.ndarray) -> np.ndarray:
-        query_features = np.asarray(features, dtype=np.float32)
-        if query_features.ndim == 1:
-            query_features = query_features.reshape(1, -1)
-
-        probabilities = np.zeros((len(query_features), len(self.classes_)), dtype=np.float32)
-        for row_index, feature in enumerate(query_features):
-            distances = np.sum((self._features - feature) ** 2, axis=1)
-            nearest = np.argpartition(distances, self._n_neighbors - 1)[: self._n_neighbors]
-            nearest = nearest[np.argsort(distances[nearest])]
-            nearest_distances = distances[nearest]
-            nearest_labels = self._labels[nearest]
-
-            exact_matches = nearest_distances <= 1e-12
-            if np.any(exact_matches):
-                weights = exact_matches.astype(np.float32)
-            else:
-                weights = 1.0 / (np.sqrt(nearest_distances) + 1e-6)
-
-            for label, weight in zip(nearest_labels, weights):
-                probabilities[row_index, self._class_index[int(label)]] += float(weight)
-
-            total = float(np.sum(probabilities[row_index]))
-            if total > 0.0:
-                probabilities[row_index] /= total
-
-        return probabilities
-
-
 class _MiniSudokuOcr:
     def __init__(self) -> None:
         self._model = self._train_model()
@@ -127,9 +80,9 @@ class _MiniSudokuOcr:
         best_digit, best_confidence = ranked[0]
         return best_digit, best_confidence, ranked
 
-    def _train_model(self) -> _DistanceWeightedKnn:
+    def _train_model(self) -> DistanceWeightedKnn:
         features, labels = self._load_or_build_training_dataset()
-        return _DistanceWeightedKnn(features, labels, n_neighbors=3)
+        return DistanceWeightedKnn(np.asarray(features), np.asarray(labels), n_neighbors=3)
 
     def _load_or_build_training_dataset(self) -> tuple[list[np.ndarray], list[int]]:
         cache_path = self._dataset_cache_path()
@@ -323,40 +276,24 @@ class MiniSudokuImageParser:
         }
 
     def _extract_board_crop(self, image: np.ndarray) -> tuple[np.ndarray, dict[str, int]]:
-        image_height, image_width = image.shape[:2]
         bbox = self._detect_board_bbox(image)
         if bbox is None:
-            bbox = self._detect_board_bbox_from_line_projections(image)
+            projection_bbox = self._detect_board_bbox_from_line_projections(image)
+            if projection_bbox is not None:
+                bbox = BoardBBox(*projection_bbox)
 
         if bbox is None:
-            return image, {
-                "x": 0,
-                "y": 0,
-                "width": int(image_width),
-                "height": int(image_height),
-            }
+            bbox = BoardBBox.full_image(image)
 
-        x, y, width, height = bbox
-        trim = max(1, int(min(width, height) * 0.003))
-
-        x1 = max(0, x + trim)
-        y1 = max(0, y + trim)
-        x2 = min(image_width, x + width - trim)
-        y2 = min(image_height, y + height - trim)
-
-        if x2 - x1 < 120 or y2 - y1 < 120:
+        trim = max(1, int(min(bbox.width, bbox.height) * 0.003))
+        cropped = crop_board(image, bbox, inset_pixels=trim, min_width=120, min_height=120)
+        if cropped is None:
             raise ValueError("Detected board area is too small.")
 
-        crop = image[y1:y2, x1:x2]
-        metadata = {
-            "x": int(x1),
-            "y": int(y1),
-            "width": int(x2 - x1),
-            "height": int(y2 - y1),
-        }
-        return crop, metadata
+        crop, actual_bbox = cropped
+        return crop, actual_bbox.to_payload()
 
-    def _detect_board_bbox(self, image: np.ndarray) -> tuple[int, int, int, int] | None:
+    def _detect_board_bbox(self, image: np.ndarray) -> BoardBBox | None:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         blurred = cv2.GaussianBlur(gray, (5, 5), 0)
 
@@ -379,49 +316,32 @@ class MiniSudokuImageParser:
         masks.append(edges)
 
         image_height, image_width = gray.shape
-        image_area = image_height * image_width
-        center_x = image_width / 2
-        center_y = image_height / 2
-
         best_score = float("-inf")
-        best_bbox: tuple[int, int, int, int] | None = None
+        best_bbox: BoardBBox | None = None
 
         for mask in masks:
-            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            for contour in contours:
-                x, y, width, height = cv2.boundingRect(contour)
-                if width <= 0 or height <= 0:
+            for candidate in external_contour_bbox_candidates(mask):
+                bbox = candidate.bbox
+                if candidate.area_ratio < 0.05:
                     continue
-
-                bbox_area = width * height
-                if bbox_area < image_area * 0.05:
+                if not (0.72 <= candidate.aspect_ratio <= 1.32):
                     continue
-
-                aspect_ratio = width / height
-                if not (0.72 <= aspect_ratio <= 1.32):
+                if candidate.fill_ratio < 0.08:
                     continue
-
-                contour_area = cv2.contourArea(contour)
-                fill_ratio = contour_area / max(1, bbox_area)
-                if fill_ratio < 0.08:
-                    continue
-
-                contour_center_x = x + width / 2
-                contour_center_y = y + height / 2
-                center_distance = float(np.hypot(contour_center_x - center_x, contour_center_y - center_y))
-
                 touches_edge = (
-                    x <= 1
-                    or y <= 1
-                    or x + width >= image_width - 1
-                    or y + height >= image_height - 1
+                    bbox.x <= 1
+                    or bbox.y <= 1
+                    or bbox.x2 >= image_width - 1
+                    or bbox.y2 >= image_height - 1
                 )
                 edge_touch_penalty = 0.97 if touches_edge else 1.0
 
-                score = (bbox_area * fill_ratio * edge_touch_penalty) - (center_distance * 190)
+                score = (
+                    candidate.bbox_area * candidate.fill_ratio * edge_touch_penalty
+                ) - (candidate.center_distance * 190)
                 if score > best_score:
                     best_score = score
-                    best_bbox = (x, y, width, height)
+                    best_bbox = bbox
 
         return best_bbox
 
@@ -450,24 +370,17 @@ class MiniSudokuImageParser:
                     horizontal_kernel = max(12, int(width * frac))
                     vertical_kernel = max(12, int(height * frac))
 
-                    horizontal_lines = cv2.morphologyEx(
+                    projections = morphological_line_projections(
                         binary,
-                        cv2.MORPH_OPEN,
-                        cv2.getStructuringElement(cv2.MORPH_RECT, (horizontal_kernel, 1)),
+                        horizontal_kernel_length=horizontal_kernel,
+                        vertical_kernel_length=vertical_kernel,
                     )
-                    vertical_lines = cv2.morphologyEx(
-                        binary,
-                        cv2.MORPH_OPEN,
-                        cv2.getStructuringElement(cv2.MORPH_RECT, (1, vertical_kernel)),
+                    row_groups = extract_line_groups(projections.rows, 255 * max(8, width // 8))
+                    col_groups = extract_line_groups(projections.cols, 255 * max(8, height // 8))
+
+                    col_lines, col_score = select_regular_line_subset(
+                        col_groups, GRID_LINE_COUNT, strongest_limit=14, min_step=18, step_std_penalty=35, step_range_penalty=8
                     )
-
-                    row_projection = horizontal_lines.sum(axis=1)
-                    col_projection = vertical_lines.sum(axis=0)
-
-                    row_groups = self._extract_line_groups(row_projection, 255 * max(8, width // 8))
-                    col_groups = self._extract_line_groups(col_projection, 255 * max(8, height // 8))
-
-                    col_lines, col_score = self._select_regular_line_subset(col_groups, GRID_LINE_COUNT)
                     if col_lines is None:
                         continue
 
@@ -475,7 +388,9 @@ class MiniSudokuImageParser:
                     if col_step < 20:
                         continue
 
-                    row_lines, row_score = self._select_regular_line_subset(row_groups, GRID_LINE_COUNT)
+                    row_lines, row_score = select_regular_line_subset(
+                        row_groups, GRID_LINE_COUNT, strongest_limit=14, min_step=18, step_std_penalty=35, step_range_penalty=8
+                    )
 
                     if row_lines is not None:
                         row_step = (row_lines[-1] - row_lines[0]) / BOARD_SIZE
@@ -484,7 +399,7 @@ class MiniSudokuImageParser:
 
                     if row_lines is None or abs(row_step - col_step) > max(row_step, col_step) * 0.18:
                         inferred_rows, inferred_score = self._infer_lines_with_fixed_step(
-                            row_projection,
+                            projections.rows,
                             col_step,
                             GRID_LINE_COUNT,
                         )
@@ -554,25 +469,20 @@ class MiniSudokuImageParser:
                     horizontal_kernel = max(12, int(width * frac))
                     vertical_kernel = max(12, int(height * frac))
 
-                    horizontal_lines = cv2.morphologyEx(
+                    projections = morphological_line_projections(
                         binary,
-                        cv2.MORPH_OPEN,
-                        cv2.getStructuringElement(cv2.MORPH_RECT, (horizontal_kernel, 1)),
+                        horizontal_kernel_length=horizontal_kernel,
+                        vertical_kernel_length=vertical_kernel,
                     )
-                    vertical_lines = cv2.morphologyEx(
-                        binary,
-                        cv2.MORPH_OPEN,
-                        cv2.getStructuringElement(cv2.MORPH_RECT, (1, vertical_kernel)),
+                    row_groups = extract_line_groups(projections.rows, 255 * max(10, width // 5))
+                    col_groups = extract_line_groups(projections.cols, 255 * max(10, height // 5))
+
+                    row_lines, row_score = select_regular_line_subset(
+                        row_groups, GRID_LINE_COUNT, strongest_limit=14, min_step=18, step_std_penalty=35, step_range_penalty=8
                     )
-
-                    row_projection = horizontal_lines.sum(axis=1)
-                    col_projection = vertical_lines.sum(axis=0)
-
-                    row_groups = self._extract_line_groups(row_projection, 255 * max(10, width // 5))
-                    col_groups = self._extract_line_groups(col_projection, 255 * max(10, height // 5))
-
-                    row_lines, row_score = self._select_regular_line_subset(row_groups, GRID_LINE_COUNT)
-                    col_lines, col_score = self._select_regular_line_subset(col_groups, GRID_LINE_COUNT)
+                    col_lines, col_score = select_regular_line_subset(
+                        col_groups, GRID_LINE_COUNT, strongest_limit=14, min_step=18, step_std_penalty=35, step_range_penalty=8
+                    )
                     if row_lines is None or col_lines is None:
                         continue
 
@@ -593,63 +503,6 @@ class MiniSudokuImageParser:
             )
 
         return row_lines, col_lines
-
-    def _extract_line_groups(self, projection: np.ndarray, min_signal: float) -> list[_LineGroup]:
-        indices = np.where(projection > min_signal)[0]
-        if indices.size == 0:
-            return []
-
-        split_indices = np.where(np.diff(indices) > 1)[0] + 1
-        chunks = np.split(indices, split_indices)
-
-        groups: list[_LineGroup] = []
-        for chunk in chunks:
-            if chunk.size == 0:
-                continue
-            start = int(chunk[0])
-            end = int(chunk[-1])
-            strength = float(np.sum(projection[start : end + 1]))
-            groups.append(_LineGroup(start=start, end=end, strength=strength))
-
-        return groups
-
-    def _select_regular_line_subset(
-        self,
-        groups: list[_LineGroup],
-        expected_count: int,
-    ) -> tuple[list[int] | None, float | None]:
-        if len(groups) < expected_count:
-            return None, None
-
-        strongest = sorted(groups, key=lambda group: group.strength, reverse=True)[:14]
-        strongest = sorted(strongest, key=lambda group: group.center)
-        if len(strongest) < expected_count:
-            return None, None
-
-        best_lines: list[int] | None = None
-        best_score: float | None = None
-
-        for combo in itertools.combinations(range(len(strongest)), expected_count):
-            lines = [strongest[index].center for index in combo]
-            steps = np.diff(lines)
-            if steps.size != expected_count - 1:
-                continue
-            if int(np.min(steps)) < 18:
-                continue
-
-            steps_std = float(np.std(steps))
-            step_range = float(np.max(steps) - np.min(steps))
-            strength = float(sum(strongest[index].strength for index in combo))
-
-            score = strength * 0.001
-            score -= steps_std * 35
-            score -= step_range * 8
-
-            if best_score is None or score > best_score:
-                best_score = score
-                best_lines = lines
-
-        return best_lines, best_score
 
     def _infer_lines_with_fixed_step(
         self,

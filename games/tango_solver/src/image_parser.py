@@ -1,16 +1,16 @@
 from typing import List, Tuple, Optional, Dict, Any
-import itertools
 import cv2
 import numpy as np
 
+from core.commons import BoardBBox, morphological_line_projections, uniform_grid_bounds
+from core.vision import build_parsed_board_payload, extract_line_groups, select_regular_line_subset
+
 try:
     from .template_constraint_classifier import TemplateConstraintClassifier
-    from .grid_detector import GridDetector
     from .piece_detector import PieceDetector
 except ImportError:
     # Fallback for direct execution
     from template_constraint_classifier import TemplateConstraintClassifier
-    from grid_detector import GridDetector
     from piece_detector import PieceDetector
 
 
@@ -26,7 +26,6 @@ class TangoImageParser:
 
     def __init__(self):
         self.grid_size = 6
-        self.grid_detector = GridDetector()
         self.piece_detector = PieceDetector()
         self.constraint_classifier = TemplateConstraintClassifier()
 
@@ -40,14 +39,16 @@ class TangoImageParser:
 
             board_img, board_bbox = self._extract_board_crop(img_rgb)
 
-            grid_coords = self.grid_detector.detect_grid(board_img)
+            grid = uniform_grid_bounds(width=board_img.shape[1], height=board_img.shape[0], board_size=self.grid_size)
+            grid_coords = [list(row) for row in grid.cells()]
 
             board_state = self._extract_board_contents(board_img, grid_coords)
-
-            board_state['grid_coords'] = grid_coords
-            board_state['board_bbox'] = board_bbox
-
-            return board_state
+            return build_parsed_board_payload(
+                board_size=self.grid_size,
+                board_bbox=BoardBBox.from_mapping(board_bbox),
+                grid=grid,
+                extra_fields={**board_state, "grid_coords": grid_coords},
+            )
 
         except Exception as e:
             print(f"Error parsing image: {e}")
@@ -114,25 +115,22 @@ class TangoImageParser:
                     horizontal_kernel = max(10, int(image_width * frac))
                     vertical_kernel = max(10, int(image_height * frac))
 
-                    horizontal_lines = cv2.morphologyEx(
+                    projections = morphological_line_projections(
                         binary,
-                        cv2.MORPH_OPEN,
-                        cv2.getStructuringElement(cv2.MORPH_RECT, (horizontal_kernel, 1)),
+                        horizontal_kernel_length=horizontal_kernel,
+                        vertical_kernel_length=vertical_kernel,
                     )
-                    vertical_lines = cv2.morphologyEx(
-                        binary,
-                        cv2.MORPH_OPEN,
-                        cv2.getStructuringElement(cv2.MORPH_RECT, (1, vertical_kernel)),
-                    )
+                    row_groups = extract_line_groups(projections.rows, 255 * max(8, image_width // 9))
+                    col_groups = extract_line_groups(projections.cols, 255 * max(8, image_height // 9))
 
-                    row_projection = horizontal_lines.sum(axis=1)
-                    col_projection = vertical_lines.sum(axis=0)
-
-                    row_groups = self._extract_line_groups(row_projection, 255 * max(8, image_width // 9))
-                    col_groups = self._extract_line_groups(col_projection, 255 * max(8, image_height // 9))
-
-                    row_lines, row_score = self._select_regular_line_subset(row_groups, expected_line_count)
-                    col_lines, col_score = self._select_regular_line_subset(col_groups, expected_line_count)
+                    subset_options = {
+                        "strongest_limit": 14,
+                        "min_step": 12,
+                        "step_std_penalty": 32,
+                        "step_range_penalty": 8,
+                    }
+                    row_lines, row_score = select_regular_line_subset(row_groups, expected_line_count, **subset_options)
+                    col_lines, col_score = select_regular_line_subset(col_groups, expected_line_count, **subset_options)
                     if row_lines is None or col_lines is None:
                         continue
 
@@ -187,64 +185,6 @@ class TangoImageParser:
                         best_bbox = (x1, y1, x2 - x1, y2 - y1)
 
         return best_bbox
-
-    def _extract_line_groups(self, projection: np.ndarray, min_signal: float) -> List[Tuple[int, int, float]]:
-        indices = np.where(projection > min_signal)[0]
-        if indices.size == 0:
-            return []
-
-        split_indices = np.where(np.diff(indices) > 1)[0] + 1
-        chunks = np.split(indices, split_indices)
-
-        groups: List[Tuple[int, int, float]] = []
-        for chunk in chunks:
-            if chunk.size == 0:
-                continue
-
-            start = int(chunk[0])
-            end = int(chunk[-1])
-            strength = float(np.sum(projection[start : end + 1]))
-            groups.append((start, end, strength))
-
-        return groups
-
-    def _select_regular_line_subset(
-        self,
-        groups: List[Tuple[int, int, float]],
-        expected_count: int,
-    ) -> Tuple[Optional[List[int]], Optional[float]]:
-        if len(groups) < expected_count:
-            return None, None
-
-        strongest = sorted(groups, key=lambda group: group[2], reverse=True)[:14]
-        strongest = sorted(strongest, key=lambda group: (group[0] + group[1]) // 2)
-        if len(strongest) < expected_count:
-            return None, None
-
-        best_lines: Optional[List[int]] = None
-        best_score: Optional[float] = None
-
-        for combo in itertools.combinations(range(len(strongest)), expected_count):
-            lines = [int((strongest[index][0] + strongest[index][1]) // 2) for index in combo]
-            steps = np.diff(lines)
-            if steps.size != expected_count - 1:
-                continue
-            if int(np.min(steps)) < 12:
-                continue
-
-            steps_std = float(np.std(steps))
-            step_range = float(np.max(steps) - np.min(steps))
-            strength = float(sum(strongest[index][2] for index in combo))
-
-            score = strength * 0.001
-            score -= steps_std * 32
-            score -= step_range * 8
-
-            if best_score is None or score > best_score:
-                best_score = score
-                best_lines = lines
-
-        return best_lines, best_score
 
     def _extract_board_contents(self, img: np.ndarray, grid_coords: List[List[Tuple]]) -> Dict[str, Any]:
         board_state = {

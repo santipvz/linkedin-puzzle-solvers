@@ -8,6 +8,9 @@ from typing import Any
 import cv2
 import numpy as np
 
+from core.commons import BoardBBox, GridBounds, crop_board, external_contour_bbox_candidates, uniform_grid_bounds
+from core.vision import build_parsed_board_payload
+
 
 DEFAULT_BOARD_SIZE = 7
 AUTO_BOARD_SIZES = (6, 7, 8)
@@ -278,18 +281,19 @@ class ZipImageParser:
         for (row, col), value in clues.items():
             clue_grid[row][col] = int(value)
 
-        return {
-            "size": int(board_size),
-            "blocked_h": blocked_h,
-            "blocked_v": blocked_v,
-            "clues": clue_entries,
-            "clue_grid": clue_grid,
-            "board_bbox": bbox,
-            "grid_lines": {
-                "rows": [int(value) for value in y_lines],
-                "cols": [int(value) for value in x_lines],
+        grid = GridBounds(rows=tuple(y_lines), cols=tuple(x_lines))
+        return build_parsed_board_payload(
+            board_size=board_size,
+            board_bbox=BoardBBox.from_mapping(bbox),
+            grid=grid,
+            include_legacy_size=True,
+            extra_fields={
+                "blocked_h": blocked_h,
+                "blocked_v": blocked_v,
+                "clues": clue_entries,
+                "clue_grid": clue_grid,
             },
-        }
+        )
 
     def _detect_board_layout(
         self,
@@ -348,82 +352,37 @@ class ZipImageParser:
         return int(best_size), best_x_lines, best_y_lines, best_clues, best_entries, best_component_mask
 
     def _extract_board_crop(self, image: np.ndarray) -> tuple[np.ndarray, dict[str, int]]:
-        image_height, image_width = image.shape[:2]
         bbox = self._detect_board_bbox(image)
-
         if bbox is None:
-            return image, {
-                "x": 0,
-                "y": 0,
-                "width": int(image_width),
-                "height": int(image_height),
-            }
+            bbox = BoardBBox.full_image(image)
+        cropped = crop_board(image, bbox)
+        if cropped is None:
+            raise ValueError("Detected Zip board is outside the image.")
+        crop, actual_bbox = cropped
+        return crop, actual_bbox.to_payload()
 
-        x, y, width, height = bbox
-        x1 = max(0, x)
-        y1 = max(0, y)
-        x2 = min(image_width, x + width)
-        y2 = min(image_height, y + height)
-
-        crop = image[y1:y2, x1:x2]
-        metadata = {
-            "x": int(x1),
-            "y": int(y1),
-            "width": int(x2 - x1),
-            "height": int(y2 - y1),
-        }
-        return crop, metadata
-
-    def _detect_board_bbox(self, image: np.ndarray) -> tuple[int, int, int, int] | None:
+    def _detect_board_bbox(self, image: np.ndarray) -> BoardBBox | None:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         mask = (gray < OUTER_CONTOUR_THRESHOLD).astype(np.uint8) * 255
-
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not contours:
-            return None
-
-        image_height, image_width = gray.shape
-        image_area = image_height * image_width
-        center_x = image_width / 2
-        center_y = image_height / 2
-
         best_score = float("-inf")
-        best_bbox: tuple[int, int, int, int] | None = None
+        best_bbox: BoardBBox | None = None
 
-        for contour in contours:
-            x, y, width, height = cv2.boundingRect(contour)
-            if width <= 0 or height <= 0:
+        for candidate in external_contour_bbox_candidates(mask):
+            if candidate.area_ratio < 0.03:
                 continue
-
-            bbox_area = width * height
-            if bbox_area < image_area * 0.03:
+            if not (0.72 <= candidate.aspect_ratio <= 1.30):
                 continue
-
-            aspect_ratio = width / height
-            if not (0.72 <= aspect_ratio <= 1.30):
+            if candidate.fill_ratio < 0.35:
                 continue
-
-            fill_ratio = cv2.contourArea(contour) / max(1, bbox_area)
-            if fill_ratio < 0.35:
-                continue
-
-            contour_center_x = x + width / 2
-            contour_center_y = y + height / 2
-            center_distance = float(np.hypot(contour_center_x - center_x, contour_center_y - center_y))
-
-            score = (bbox_area * fill_ratio) - (center_distance * 80)
+            score = (candidate.bbox_area * candidate.fill_ratio) - (candidate.center_distance * 80)
             if score > best_score:
                 best_score = score
-                best_bbox = (int(x), int(y), int(width), int(height))
+                best_bbox = candidate.bbox
 
         return best_bbox
 
     def _build_grid_lines(self, axis_length: int, board_size: int) -> list[int]:
-        if axis_length <= 1:
-            return [0 for _ in range(board_size + 1)]
-
-        lines = np.rint(np.linspace(0, axis_length - 1, board_size + 1)).astype(int)
-        return [int(value) for value in lines]
+        return list(uniform_grid_bounds(width=axis_length, height=axis_length, board_size=board_size).rows)
 
     def _detect_walls(
         self,
