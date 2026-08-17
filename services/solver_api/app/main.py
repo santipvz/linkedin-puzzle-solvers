@@ -5,7 +5,6 @@ import copy
 from datetime import datetime, timezone
 import hashlib
 import importlib
-import io
 import json
 import os
 import subprocess
@@ -18,11 +17,9 @@ from typing import Any
 
 from fastapi import FastAPI, File, HTTPException, Header, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from PIL import Image
-
 from .puzzle_registry import PUZZLE_DEFINITIONS, get_puzzle_definition
 from .response_schemas import SolverResponse
-from .workers.common import BoardBBox, JsonDict
+from .workers.common import JsonDict
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -37,7 +34,7 @@ MAX_SOLVE_CACHE_ENTRIES = 96
 DATASET_CAPTURE_ENABLED = os.getenv("DATASET_CAPTURE_ENABLED", "1").strip().lower() not in {"0", "false", "no"}
 CORS_ALLOW_ORIGINS_RAW = os.getenv("CORS_ALLOW_ORIGINS", "*")
 CORS_ALLOW_ORIGIN_REGEX = (os.getenv("CORS_ALLOW_ORIGIN_REGEX") or "").strip() or None
-WORKER_MODE = os.getenv("SOLVER_WORKER_MODE", "inprocess").strip().lower()
+WORKER_MODE = os.getenv("SOLVER_WORKER_MODE", "subprocess").strip().lower()
 
 
 def _parse_cors_origins(raw_value: str) -> list[str]:
@@ -54,6 +51,7 @@ CORS_ALLOW_ORIGINS = _parse_cors_origins(CORS_ALLOW_ORIGINS_RAW)
 
 _solve_cache: OrderedDict[str, JsonDict] = OrderedDict()
 _worker_import_lock = threading.Lock()
+_capture_lock = threading.Lock()
 _worker_solve_functions: dict[str, Any] = {}
 
 
@@ -92,9 +90,9 @@ async def _read_upload_bytes(upload: UploadFile) -> bytes:
     return payload
 
 
-def _cache_key_for_upload(puzzle: str, payload: bytes) -> str:
+def _cache_key_for_upload(puzzle: str, cache_revision: int, payload: bytes) -> str:
     digest = hashlib.sha256(payload).hexdigest()
-    return f"{puzzle}:{digest}"
+    return f"{puzzle}:{cache_revision}:{digest}"
 
 
 def _cache_get(cache_key: str) -> JsonDict | None:
@@ -156,50 +154,6 @@ def _should_recompute_cached_response(puzzle_name: str, cached: JsonDict) -> boo
     return iterations == 0 and board_size > 0 and regions_detected == board_size
 
 
-def _extract_board_bbox(response: JsonDict) -> BoardBBox | None:
-    details = response.get("details") if isinstance(response, dict) else None
-    if not isinstance(details, dict):
-        return None
-
-    board_bbox = details.get("board_bbox")
-    if not isinstance(board_bbox, dict):
-        return None
-
-    try:
-        x = int(board_bbox.get("x", -1))
-        y = int(board_bbox.get("y", -1))
-        width = int(board_bbox.get("width", -1))
-        height = int(board_bbox.get("height", -1))
-    except (TypeError, ValueError):
-        return None
-
-    if x < 0 or y < 0 or width <= 0 or height <= 0:
-        return None
-
-    return {"x": x, "y": y, "width": width, "height": height}
-
-
-def _extract_board_only_image_payload(payload: bytes, response: JsonDict) -> bytes:
-    board_bbox = _extract_board_bbox(response)
-    if board_bbox is None:
-        return payload
-
-    try:
-        with Image.open(io.BytesIO(payload)) as image:
-            image_width, image_height = image.size
-            x1 = max(0, min(image_width - 1, int(board_bbox["x"])))
-            y1 = max(0, min(image_height - 1, int(board_bbox["y"])))
-            x2 = max(x1 + 1, min(image_width, int(board_bbox["x"] + board_bbox["width"])))
-            y2 = max(y1 + 1, min(image_height, int(board_bbox["y"] + board_bbox["height"])))
-
-            board = image.crop((x1, y1, x2, y2))
-            output = io.BytesIO()
-            board.save(output, format="PNG")
-            return output.getvalue()
-    except (OSError, ValueError):
-        return payload
-
-
 def _make_dataset_path_editable(path: Path) -> None:
     try:
         repo_stat = REPO_ROOT.stat()
@@ -216,7 +170,24 @@ def _make_dataset_path_editable(path: Path) -> None:
         pass
 
 
+def _image_suffix(payload: bytes) -> str:
+    if payload.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png"
+    if payload.startswith(b"\xff\xd8\xff"):
+        return ".jpg"
+    if payload.startswith(b"BM"):
+        return ".bmp"
+    if payload.startswith(b"RIFF") and payload[8:12] == b"WEBP":
+        return ".webp"
+    return ".img"
+
+
 def _archive_board_capture(puzzle: str, payload: bytes, response: JsonDict, from_cache: bool) -> None:
+    with _capture_lock:
+        _archive_board_capture_unlocked(puzzle, payload, response, from_cache)
+
+
+def _archive_board_capture_unlocked(puzzle: str, payload: bytes, response: JsonDict, from_cache: bool) -> None:
     if not DATASET_CAPTURE_ENABLED:
         return
 
@@ -229,23 +200,30 @@ def _archive_board_capture(puzzle: str, payload: bytes, response: JsonDict, from
     for directory in (CAPTURE_DATASET_DIR, CAPTURE_DATASET_DIR / puzzle, target_dir):
         _make_dataset_path_editable(directory)
 
-    image_path = target_dir / f"{digest}.png"
+    image_path = target_dir / f"{digest}{_image_suffix(payload)}"
     metadata_path = target_dir / f"{digest}.json"
 
-    if not image_path.exists():
-        image_payload = _extract_board_only_image_payload(payload, response)
-        image_path.write_bytes(image_payload)
+    existing_digest = hashlib.sha256(image_path.read_bytes()).hexdigest() if image_path.exists() else None
+    if existing_digest != digest:
+        image_temp_path = image_path.with_suffix(f"{image_path.suffix}.tmp")
+        image_temp_path.write_bytes(payload)
+        image_temp_path.replace(image_path)
         _make_dataset_path_editable(image_path)
+    artifact_digest = hashlib.sha256(image_path.read_bytes()).hexdigest()
 
     metadata: dict[str, Any] = {
         "puzzle": puzzle,
         "sha256": digest,
+        "original_sha256": digest,
+        "artifact_sha256": artifact_digest,
+        "artifact_filename": image_path.name,
         "captured_at": now.isoformat(),
         "from_cache": bool(from_cache),
         "solved": bool(response.get("solved")),
         "error": response.get("error"),
         "board_size": response.get("board_size"),
         "details": response.get("details"),
+        "words": response.get("words"),
     }
 
     if metadata_path.exists():
@@ -261,7 +239,9 @@ def _archive_board_capture(puzzle: str, payload: bytes, response: JsonDict, from
         metadata["first_captured_at"] = metadata["captured_at"]
         metadata["seen_count"] = 1
 
-    metadata_path.write_text(json.dumps(metadata, ensure_ascii=True, indent=2), encoding="utf-8")
+    metadata_temp_path = metadata_path.with_suffix(".json.tmp")
+    metadata_temp_path.write_text(json.dumps(metadata, ensure_ascii=True, indent=2), encoding="utf-8")
+    metadata_temp_path.replace(metadata_path)
     _make_dataset_path_editable(metadata_path)
 
 
@@ -307,13 +287,6 @@ def _run_solver_worker_subprocess(worker_filename: str, image_path: Path) -> Jso
     except json.JSONDecodeError as exc:
         sample = result.stdout.strip()[:600]
         raise HTTPException(status_code=500, detail=f"Worker produced invalid JSON: {sample}") from exc
-
-
-def _worker_module_name(worker_filename: str) -> str:
-    module_stem = Path(worker_filename).stem
-    if not module_stem:
-        raise HTTPException(status_code=500, detail=f"Invalid worker filename: {worker_filename}")
-    return f"services.solver_api.app.workers.{module_stem}"
 
 
 def _worker_module_name_candidates(worker_filename: str) -> list[str]:
@@ -387,13 +360,14 @@ async def _solve_with_worker(
     worker_filename: str,
     image: UploadFile,
     puzzle_name: str,
+    cache_revision: int,
     capture_board_start: bool,
 ) -> JsonDict:
     if image.content_type and not image.content_type.startswith("image/"):
         raise HTTPException(status_code=415, detail="Only image uploads are supported.")
 
     payload = await _read_upload_bytes(image)
-    cache_key = _cache_key_for_upload(puzzle_name, payload)
+    cache_key = _cache_key_for_upload(puzzle_name, cache_revision, payload)
     cached = _cache_get(cache_key)
     if cached is not None and not _should_recompute_cached_response(puzzle_name, cached):
         response = cached
@@ -433,6 +407,7 @@ def _build_solve_handler(puzzle_key: str):
             definition.worker_filename,
             image,
             definition.key,
+            definition.cache_revision,
             capture_board_start=_should_capture_board_start(board_capture),
         )
 

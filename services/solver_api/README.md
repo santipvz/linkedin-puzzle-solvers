@@ -1,6 +1,6 @@
 # Solver API
 
-FastAPI service that exposes solvers for Queens, Tango, Mini Sudoku, Zip, and Patches.
+FastAPI service that exposes solvers for Queens, Tango, Mini Sudoku, Zip, Patches, and Wend.
 
 ## Run Modes
 
@@ -52,6 +52,7 @@ See `deploy/local/README.md` for full operational commands.
 - `POST /solve/sudoku`
 - `POST /solve/zip`
 - `POST /solve/patches`
+- `POST /solve/wend`
 
 All solve endpoints accept multipart form data with field name `image`.
 
@@ -67,9 +68,11 @@ If running in Docker mode, change port `8000` -> `18000`.
 
 ## Notes
 
-- Each puzzle solver runs in an isolated subprocess worker.
-- Solve responses are cached by image hash in memory.
+- Workers run in isolated subprocesses by default with a hard timeout.
+- Set `SOLVER_WORKER_MODE=inprocess` only for trusted development workloads; legacy import contexts serialize that mode.
+- Solve responses are cached in memory by puzzle revision and image hash.
 - Dataset capture is enabled for start-board requests by default.
 - Default capture path: `datasets/<puzzle>/<YYYY-MM-DD>/`.
+- Captures preserve the complete uploaded image so parser regressions remain reproducible.
 - Disable capture with `DATASET_CAPTURE_ENABLED=0`.
 - CORS defaults to `*`; override with `CORS_ALLOW_ORIGINS` (comma-separated) and optional `CORS_ALLOW_ORIGIN_REGEX`.

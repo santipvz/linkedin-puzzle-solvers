@@ -12,21 +12,20 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from services.solver_api.app.main import app
-
-
-SAMPLES: tuple[tuple[str, str], ...] = (
-    ("queens", "games/queen_solver/examples/sample1.png"),
-    ("tango", "games/tango_solver/examples/sample1.png"),
-    ("patches", "games/patches_solver/examples/sample1.png"),
-)
+from services.solver_api.app.puzzle_registry import PUZZLE_DEFINITIONS
 
 
 def main() -> int:
     client = TestClient(app)
 
-    for puzzle, sample_path in SAMPLES:
+    for definition in PUZZLE_DEFINITIONS:
+        puzzle = definition.key
+        sample_path = definition.sample_image
         absolute_path = REPO_ROOT / sample_path
         if not absolute_path.exists():
+            if definition.sample_required:
+                print(f"[error] {puzzle}: missing required sample {sample_path}")
+                return 1
             print(f"[skip] {puzzle}: missing sample {sample_path}")
             continue
 
@@ -43,6 +42,9 @@ def main() -> int:
         payload = response.json()
         if payload.get("puzzle") != puzzle:
             print(f"[error] {puzzle}: unexpected payload puzzle={payload.get('puzzle')!r}")
+            return 1
+        if not payload.get("solved"):
+            print(f"[error] {puzzle}: sample was not solved: {payload.get('error')}")
             return 1
 
         print(f"[ok] {puzzle}: solved={payload.get('solved')}")

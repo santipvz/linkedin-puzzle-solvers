@@ -11,6 +11,7 @@ class PuzzleDefinition:
     expected_board_size: int
     sample_required: bool = True
     smoke_samples: tuple[str, ...] = ()
+    cache_revision: int = 1
 
     @property
     def endpoint_path(self) -> str:
@@ -69,7 +70,8 @@ PUZZLE_DEFINITIONS: tuple[PuzzleDefinition, ...] = (
         worker_filename="solve_wend_worker.py",
         sample_image="games/wend_solver/examples/sample1.png",
         expected_board_size=6,
-        sample_required=False,
+        sample_required=True,
+        cache_revision=2,
     ),
 )
 
