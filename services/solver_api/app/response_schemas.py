@@ -5,7 +5,7 @@ from typing import Literal, NotRequired, TypedDict
 from .workers.common import BoardBBox, JsonValue
 
 
-PuzzleKey = Literal["queens", "tango", "sudoku", "zip", "patches"]
+PuzzleKey = Literal["queens", "tango", "sudoku", "zip", "patches", "wend"]
 
 
 class GridCell(TypedDict):
@@ -52,3 +52,4 @@ class SolverResponse(TypedDict):
     fixed_pieces: NotRequired[list[dict[str, JsonValue]]]
     constraints: NotRequired[list[dict[str, JsonValue]]]
     logs: NotRequired[str]
+    words: NotRequired[list[dict[str, JsonValue]]]

@@ -64,6 +64,13 @@ PUZZLE_DEFINITIONS: tuple[PuzzleDefinition, ...] = (
             "games/patches_solver/examples/sample3.png",
         ),
     ),
+    PuzzleDefinition(
+        key="wend",
+        worker_filename="solve_wend_worker.py",
+        sample_image="games/wend_solver/examples/sample1.png",
+        expected_board_size=6,
+        sample_required=False,
+    ),
 )
 
 
