@@ -113,7 +113,7 @@ function executeContentScript(tabId, frameId = 0) {
     chrome.scripting.executeScript(
       {
         target,
-        files: ["puzzle_registry.js", "content.js"],
+        files: ["puzzle_registry.js", "wend_paths.js", "content.js"],
       },
       () => {
         const error = chrome.runtime.lastError;
@@ -307,6 +307,24 @@ async function loadPreferences() {
     normalizeDelay(stored[STORAGE_INTER_MOVE_DELAY_KEY], DEFAULT_INTER_MOVE_DELAY_MS)
   );
   tangoApplyModeSelect.value = normalizeTangoApplyMode(stored[STORAGE_TANGO_APPLY_MODE_KEY]);
+}
+
+async function selectPuzzleFromActiveTab() {
+  const detectPuzzleTypeFromUrl = puzzleRegistry.detectPuzzleTypeFromUrl;
+  if (typeof detectPuzzleTypeFromUrl !== "function") {
+    return;
+  }
+
+  const tab = await getActiveTab();
+  const detectedPuzzleType = detectPuzzleTypeFromUrl(tab.url || "");
+  if (!detectedPuzzleType) {
+    return;
+  }
+
+  const hasOption = Array.from(puzzleTypeSelect.options).some((option) => option.value === detectedPuzzleType);
+  if (hasOption) {
+    puzzleTypeSelect.value = detectedPuzzleType;
+  }
 }
 
 function setBusy(isBusy) {
@@ -540,6 +558,8 @@ applyButton.addEventListener("click", () => runAction(handleApply));
 clearOverlayButton.addEventListener("click", () => runAction(handleClearOverlay));
 
 populatePuzzleTypeOptions();
-loadPreferences().catch((error) => {
-  setStatus(error.message || String(error), true);
-});
+loadPreferences()
+  .then(() => selectPuzzleFromActiveTab())
+  .catch((error) => {
+    setStatus(error.message || String(error), true);
+  });

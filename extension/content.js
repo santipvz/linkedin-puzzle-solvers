@@ -85,7 +85,7 @@ function removeQuickSolveWidget() {
 async function onQuickSolveClick() {
   const puzzleType = detectPuzzleTypeFromPage();
   if (!puzzleType) {
-    setQuickSolveStatus("Open Queens, Tango, Mini Sudoku, Zip, or Patches page.", true);
+    setQuickSolveStatus("Open Queens, Tango, Mini Sudoku, Zip, Patches, or Wend page.", true);
     return;
   }
 
@@ -886,37 +886,8 @@ function renderZipOverlay(root, selection, result) {
 }
 
 function buildWendWordList(result) {
-  const boardSize = Number(result?.board_size);
-  const rawWords = Array.isArray(result?.words) ? result.words : [];
-  if (!boardSize || !rawWords.length) {
-    return [];
-  }
-
-  return rawWords
-    .map((entry) => {
-      const word = typeof entry?.word === "string" ? entry.word : "";
-      const path = Array.isArray(entry?.path) ? entry.path : [];
-      const normalizedPath = path
-        .map((step) => {
-          const row = Number(step?.row);
-          const col = Number(step?.col);
-          if (!Number.isInteger(row) || !Number.isInteger(col)) {
-            return null;
-          }
-          if (row < 0 || col < 0 || row >= boardSize || col >= boardSize) {
-            return null;
-          }
-          return { row, col };
-        })
-        .filter(Boolean);
-
-      if (!word || normalizedPath.length < 2) {
-        return null;
-      }
-
-      return { word, path: normalizedPath };
-    })
-    .filter(Boolean);
+  const normalizeWords = globalThis.WendPaths?.normalizeWords;
+  return typeof normalizeWords === "function" ? normalizeWords(result) : [];
 }
 
 function renderWendOverlay(root, selection, result) {
@@ -2250,7 +2221,8 @@ async function applyPatchesSolution(result, selection, settings) {
       clickCount += 1;
     }
 
-    await sleep(Math.max(35, applySettings.interMoveDelayMs));
+    // Patches updates its drag state asynchronously; rapid consecutive drags are dropped.
+    await sleep(Math.max(150, applySettings.interMoveDelayMs));
   }
 
   if (appliedCount === 0) {
@@ -2304,10 +2276,10 @@ async function applyWendSolution(result, selection, settings) {
     await sleep(Math.max(80, applySettings.interMoveDelayMs));
   }
 
-  if (appliedCount === 0) {
+  if (appliedCount !== words.length) {
     return {
       ok: false,
-      error: "Could not dispatch Wend drag gestures to word paths.",
+      error: `Applied ${appliedCount} of ${words.length} Wend word paths.`,
       appliedCount,
     };
   }

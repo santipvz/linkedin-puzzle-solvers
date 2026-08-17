@@ -6,7 +6,7 @@ Browser extension for solving LinkedIn daily puzzles through the local solver AP
 
 - Manual board selection on the active tab.
 - Auto board detection (top page + iframe-aware).
-- Solve via API endpoints for Queens, Tango, Mini Sudoku, Zip, and Patches.
+- Solve via API endpoints for Queens, Tango, Mini Sudoku, Zip, Patches, and Wend.
 - Overlay preview for detected moves.
 - Auto-apply support:
   - Queens: click-based input.
@@ -14,6 +14,7 @@ Browser extension for solving LinkedIn daily puzzles through the local solver AP
   - Mini Sudoku: strict cell-target + keyboard input.
   - Zip: start click + arrow keys.
   - Patches: rectangle drag from corner to corner.
+  - Wend: progressive drag through each solved word path.
 - Popup actions: `Select Board`, `Auto Detect`, `Solve`, `Apply`, `Solve + Apply`.
 - In-page quick solve widget (`Solve <Game>`).
 
@@ -79,6 +80,7 @@ Notes:
    - `https://www.linkedin.com/games/mini-sudoku/`
    - `https://www.linkedin.com/games/zip/`
    - `https://www.linkedin.com/games/patches/`
+   - `https://www.linkedin.com/games/wend/`
 2. Click the extension icon.
 3. Set the API URL (`8000` for Uvicorn or `18000` for Docker).
 4. Select puzzle type (or let quick widget auto-detect).

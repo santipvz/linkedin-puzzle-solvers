@@ -482,7 +482,7 @@ function executeContentScript(tabId, frameId = 0) {
       chrome.scripting.executeScript(
         {
           target,
-          files: ["puzzle_registry.js", "content.js"],
+          files: ["puzzle_registry.js", "wend_paths.js", "content.js"],
         },
         () => {
           const error = chrome.runtime.lastError;
@@ -506,13 +506,20 @@ function executeContentScript(tabId, frameId = 0) {
           return;
         }
 
-        chrome.tabs.executeScript(tabId, { ...sharedDetails, file: "content.js" }, () => {
+        chrome.tabs.executeScript(tabId, { ...sharedDetails, file: "wend_paths.js" }, () => {
           const secondError = chrome.runtime.lastError;
           if (secondError) {
             reject(new Error(secondError.message));
             return;
           }
-          resolve();
+          chrome.tabs.executeScript(tabId, { ...sharedDetails, file: "content.js" }, () => {
+            const thirdError = chrome.runtime.lastError;
+            if (thirdError) {
+              reject(new Error(thirdError.message));
+              return;
+            }
+            resolve();
+          });
         });
       });
       return;
@@ -983,7 +990,7 @@ async function getViewportFallbackSelection(tabId, tab) {
 }
 
 async function detectSelectionForQuickSolve(tabId, puzzleType, frameContext, tab) {
-  const existing = puzzleType === "tango" ? null : await getTopBoardSelection(tabId);
+  const existing = ["tango", "sudoku"].includes(puzzleType) ? null : await getTopBoardSelection(tabId);
 
   if (existing) {
     const normalizedExisting = maybeNormalizeSelectionForPuzzle(puzzleType, existing, frameContext?.iframeRect);
@@ -1535,7 +1542,7 @@ async function autoDetectBoardSelection(message, sender) {
   const tab = await tabsGet(tabId);
   const puzzleType = resolvePuzzleTypeForTab(message.puzzleType, tab.url);
   if (!puzzleType) {
-    throw new Error("Open LinkedIn Queens, Tango, Mini Sudoku, Zip, or Patches page first.");
+    throw new Error("Open LinkedIn Queens, Tango, Mini Sudoku, Zip, Patches, or Wend page first.");
   }
 
   const frameContext = await getGameFrameContext(tabId, puzzleType);
@@ -1594,7 +1601,7 @@ async function applySolvedPayload(message, sender) {
   const tab = await tabsGet(tabId);
   const puzzleType = resolvePuzzleTypeForTab(message.puzzleType, tab.url);
   if (!puzzleType) {
-    throw new Error("Open LinkedIn Queens, Tango, Mini Sudoku, Zip, or Patches page first.");
+    throw new Error("Open LinkedIn Queens, Tango, Mini Sudoku, Zip, Patches, or Wend page first.");
   }
 
   if (!message || !message.result || typeof message.result !== "object") {
