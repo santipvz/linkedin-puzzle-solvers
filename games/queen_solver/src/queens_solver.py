@@ -13,7 +13,6 @@ import numpy as np
 from src.core.models import BoardInfo, PuzzleState, SolverResult
 from src.solver.queens_solver import BacktrackingQueensSolver
 from src.solver.validator import QueensSolutionValidator
-from src.utils.visualizer import QueensResultVisualizer
 from src.vision.board_detector import EdgeDetectionBoardDetector
 from src.vision.region_extractor import ColorBasedRegionExtractor
 
@@ -39,7 +38,6 @@ class QueensSolver:
         self.region_extractor = ColorBasedRegionExtractor()
         self.puzzle_solver = BacktrackingQueensSolver()
         self.solution_validator = QueensSolutionValidator()
-        self.visualizer = QueensResultVisualizer()
 
         # State variables
         self.puzzle_state: Optional[PuzzleState] = None
@@ -292,16 +290,19 @@ class QueensSolver:
         return validation_errors
 
     def _generate_results(self, image: np.ndarray, output_dir: str,
-                         validation_errors: List[str], filename_prefix: str) -> None:
+                          validation_errors: List[str], filename_prefix: str) -> None:
         """Generate visualization and save results."""
         try:
+            from src.utils.visualizer import QueensResultVisualizer
+
+            visualizer = QueensResultVisualizer()
             grid_lines = (
                 self.puzzle_state.board_info.horizontal_lines,
                 self.puzzle_state.board_info.vertical_lines,
             )
 
             # Create main visualization
-            result_image = self.visualizer.visualize(
+            result_image = visualizer.visualize(
                 image,
                 self.puzzle_state.solution,
                 grid_lines,
@@ -315,7 +316,7 @@ class QueensSolver:
             cv2.imwrite(main_result_path, result_image)
 
             # Create detailed report
-            self.visualizer.create_detailed_report(
+            visualizer.create_detailed_report(
                 image,
                 self.puzzle_state.solution,
                 grid_lines,
