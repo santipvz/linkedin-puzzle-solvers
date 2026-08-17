@@ -12,7 +12,7 @@ Thanks for your interest in improving this project.
 git checkout -b feat/your-change-name
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ```
 
 ## Run the Project Locally
@@ -35,7 +35,13 @@ docker compose up -d --build
 
 ## Validation Checklist
 
-Before opening a PR, run these checks from repository root.
+Before opening a PR, run the canonical quality command from repository root.
+
+```bash
+python3 scripts/quality_check.py
+```
+
+The command includes pytest, linting, compilation, worker/API smoke checks, registry consistency, and extension syntax. Individual checks can also be run directly.
 
 1. Smoke checks for all puzzle workers:
 
@@ -49,6 +55,7 @@ python3 scripts/smoke_check.py
 node --check extension/background.js
 node --check extension/content.js
 node --check extension/popup.js
+node --check extension/puzzle_registry.js
 ```
 
 3. Verify health endpoint for your selected API mode:
