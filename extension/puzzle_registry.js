@@ -30,6 +30,12 @@
       frameSlug: "patches",
       urlNeedles: ["/games/patches", "/games/view/patches"],
     },
+    {
+      key: "wend",
+      label: "Wend",
+      frameSlug: "wend",
+      urlNeedles: ["/games/wend", "/games/view/wend"],
+    },
   ];
 
   const byKey = {};

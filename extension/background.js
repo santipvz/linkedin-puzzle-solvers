@@ -607,7 +607,7 @@ function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
 
-async function cropCapturedImage(dataUrl, selection) {
+async function cropCapturedImage(dataUrl, selection, options = {}) {
   const sourceBlob = await dataUrlToBlob(dataUrl);
   const normalized = normalizeSelection(selection);
 
@@ -617,10 +617,11 @@ async function cropCapturedImage(dataUrl, selection) {
 
   const bitmap = await createImageBitmap(sourceBlob);
 
+  const extraBottom = Number(options.extraBottomRatio) || 0;
   const sx = Math.floor(normalized.x * normalized.devicePixelRatio);
   const sy = Math.floor(normalized.y * normalized.devicePixelRatio);
   const sw = Math.floor(normalized.width * normalized.devicePixelRatio);
-  const sh = Math.floor(normalized.height * normalized.devicePixelRatio);
+  const sh = Math.floor(normalized.height * (1 + extraBottom) * normalized.devicePixelRatio);
 
   const sourceX = clamp(sx, 0, bitmap.width - 1);
   const sourceY = clamp(sy, 0, bitmap.height - 1);
@@ -650,6 +651,8 @@ async function callSolverApi(apiBaseUrl, puzzleType, imageBlob, options = {}) {
       ? "zip"
       : puzzleType === "patches"
       ? "patches"
+      : puzzleType === "wend"
+      ? "wend"
       : "queens";
   const endpoint = `${normalizeApiBase(apiBaseUrl)}/solve/${safePuzzleType}`;
 
@@ -702,7 +705,9 @@ async function solveBoardCore({ tabId, puzzleType, apiBaseUrl, selection }) {
     const tangoSelection = normalizeSelection(tangoSolved.selection) || normalizedSelection;
     refinedSelection = refineSelectionWithBoardBbox(tangoSelection, result) || tangoSelection;
   } else {
-    const boardImage = await cropCapturedImage(screenshotDataUrl, normalizedSelection);
+    const boardImage = await cropCapturedImage(screenshotDataUrl, normalizedSelection, {
+      extraBottomRatio: puzzleType === "wend" ? 0.45 : 0,
+    });
     result = await callSolverApi(apiBaseUrl, puzzleType, boardImage, {
       captureBoardStart: true,
     });
@@ -721,6 +726,8 @@ async function solveBoardCore({ tabId, puzzleType, apiBaseUrl, selection }) {
       ? "zip"
       : puzzleType === "patches"
       ? "patches"
+      : puzzleType === "wend"
+      ? "wend"
       : "queens",
   };
 }
@@ -1358,7 +1365,7 @@ async function quickSolveFromPage(message, sender) {
   const puzzleType = resolvePuzzleTypeForTab(message.puzzleType, tab.url);
 
   if (!puzzleType) {
-    throw new Error("Open LinkedIn Queens, Tango, Mini Sudoku, Zip, or Patches page first.");
+    throw new Error("Open LinkedIn Queens, Tango, Mini Sudoku, Zip, Patches, or Wend page first.");
   }
 
   const quickSettings = await loadQuickSettings();

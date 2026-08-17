@@ -885,6 +885,98 @@ function renderZipOverlay(root, selection, result) {
   root.appendChild(endDot);
 }
 
+function buildWendWordList(result) {
+  const boardSize = Number(result?.board_size);
+  const rawWords = Array.isArray(result?.words) ? result.words : [];
+  if (!boardSize || !rawWords.length) {
+    return [];
+  }
+
+  return rawWords
+    .map((entry) => {
+      const word = typeof entry?.word === "string" ? entry.word : "";
+      const path = Array.isArray(entry?.path) ? entry.path : [];
+      const normalizedPath = path
+        .map((step) => {
+          const row = Number(step?.row);
+          const col = Number(step?.col);
+          if (!Number.isInteger(row) || !Number.isInteger(col)) {
+            return null;
+          }
+          if (row < 0 || col < 0 || row >= boardSize || col >= boardSize) {
+            return null;
+          }
+          return { row, col };
+        })
+        .filter(Boolean);
+
+      if (!word || normalizedPath.length < 2) {
+        return null;
+      }
+
+      return { word, path: normalizedPath };
+    })
+    .filter(Boolean);
+}
+
+function renderWendOverlay(root, selection, result) {
+  const boardSize = Number(result?.board_size);
+  const words = buildWendWordList(result);
+  if (!boardSize || !words.length) {
+    return;
+  }
+
+  const cellWidth = selection.width / boardSize;
+  const cellHeight = selection.height / boardSize;
+  const palette = ["#14b8a6", "#db2777", "#f97316", "#84cc16", "#3b82f6", "#a855f7"];
+
+  for (let wordIndex = 0; wordIndex < words.length; wordIndex += 1) {
+    const entry = words[wordIndex];
+    const color = palette[wordIndex % palette.length];
+    const centers = entry.path.map((step) => ({
+      x: selection.x + (step.col + 0.5) * cellWidth,
+      y: selection.y + (step.row + 0.5) * cellHeight,
+    }));
+
+    for (let index = 0; index < centers.length - 1; index += 1) {
+      const current = centers[index];
+      const next = centers[index + 1];
+      const dx = next.x - current.x;
+      const dy = next.y - current.y;
+      const length = Math.hypot(dx, dy);
+      const angle = Math.atan2(dy, dx);
+
+      const segment = document.createElement("div");
+      segment.style.position = "fixed";
+      segment.style.left = `${current.x}px`;
+      segment.style.top = `${current.y}px`;
+      segment.style.width = `${length}px`;
+      segment.style.height = "10px";
+      segment.style.transformOrigin = "0 50%";
+      segment.style.transform = `translateY(-5px) rotate(${angle}rad)`;
+      segment.style.borderRadius = "999px";
+      segment.style.background = color;
+      segment.style.opacity = "0.72";
+      segment.style.boxShadow = "0 0 0 2px rgba(255, 255, 255, 0.8)";
+      root.appendChild(segment);
+    }
+
+    const end = centers[centers.length - 1];
+    const label = document.createElement("div");
+    label.textContent = entry.word;
+    label.style.position = "fixed";
+    label.style.left = `${end.x - 24}px`;
+    label.style.top = `${end.y - 14}px`;
+    label.style.padding = "3px 6px";
+    label.style.borderRadius = "999px";
+    label.style.font = "700 10px/1 sans-serif";
+    label.style.color = "#111827";
+    label.style.background = "rgba(255, 255, 255, 0.88)";
+    label.style.border = `2px solid ${color}`;
+    root.appendChild(label);
+  }
+}
+
 function buildPatchesRegionList(result) {
   const boardSize = Number(result?.board_size);
   const rawRegions =
@@ -1037,6 +1129,11 @@ function renderSolutionOverlay(puzzleType, result, selection) {
     return;
   }
 
+  if (puzzleType === "wend") {
+    renderWendOverlay(root, normalized, result);
+    return;
+  }
+
   renderQueensOverlay(root, normalized, result);
 }
 
@@ -1103,6 +1200,41 @@ function dragViewportPoints(startX, startY, endX, endY, steps = 6) {
   const endedMouse = dispatchMouseEventAtViewportPoint("mouseup", endX, endY, 0, 0);
   dispatchMouseEventAtViewportPoint("click", endX, endY, 0, 0);
 
+  return endedPointer || endedMouse;
+}
+
+async function dragViewportPath(points, stepsPerSegment = 5) {
+  if (!Array.isArray(points) || points.length < 2) {
+    return false;
+  }
+
+  const first = points[0];
+  const last = points[points.length - 1];
+  const safeSteps = Math.max(1, Math.min(10, Number(stepsPerSegment) || 5));
+
+  const startedPointer = dispatchMouseEventAtViewportPoint("pointerdown", first.x, first.y, 0, 1);
+  const startedMouse = dispatchMouseEventAtViewportPoint("mousedown", first.x, first.y, 0, 1);
+  if (!startedPointer && !startedMouse) {
+    return false;
+  }
+
+  await sleep(16);
+
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const current = points[index];
+    const next = points[index + 1];
+    for (let step = 1; step <= safeSteps; step += 1) {
+      const ratio = step / safeSteps;
+      const x = current.x + (next.x - current.x) * ratio;
+      const y = current.y + (next.y - current.y) * ratio;
+      dispatchMouseEventAtViewportPoint("pointermove", x, y, 0, 1);
+      dispatchMouseEventAtViewportPoint("mousemove", x, y, 0, 1);
+      await sleep(8);
+    }
+  }
+
+  const endedPointer = dispatchMouseEventAtViewportPoint("pointerup", last.x, last.y, 0, 0);
+  const endedMouse = dispatchMouseEventAtViewportPoint("mouseup", last.x, last.y, 0, 0);
   return endedPointer || endedMouse;
 }
 
@@ -2138,6 +2270,56 @@ async function applyPatchesSolution(result, selection, settings) {
   };
 }
 
+async function applyWendSolution(result, selection, settings) {
+  const applySettings = normalizeApplySettings(settings);
+  const normalized = normalizeSelection(selection || boardSelection);
+  if (!normalized) {
+    return { ok: false, error: "Board selection is required before applying Wend paths." };
+  }
+
+  const boardSize = Number(result?.board_size);
+  if (!boardSize) {
+    return { ok: false, error: "Invalid board size in Wend solution." };
+  }
+
+  const words = buildWendWordList(result);
+  if (!words.length) {
+    return { ok: false, error: "No Wend word paths are available." };
+  }
+
+  const cellWidth = normalized.width / boardSize;
+  const cellHeight = normalized.height / boardSize;
+  let appliedCount = 0;
+
+  for (const entry of words) {
+    const points = entry.path.map((step) => ({
+      x: normalized.x + (step.col + 0.5) * cellWidth,
+      y: normalized.y + (step.row + 0.5) * cellHeight,
+    }));
+
+    if (await dragViewportPath(points, 4)) {
+      appliedCount += 1;
+    }
+
+    await sleep(Math.max(80, applySettings.interMoveDelayMs));
+  }
+
+  if (appliedCount === 0) {
+    return {
+      ok: false,
+      error: "Could not dispatch Wend drag gestures to word paths.",
+      appliedCount,
+    };
+  }
+
+  return {
+    ok: true,
+    appliedCount,
+    clickCount: appliedCount,
+    strategy: "word-path-drag",
+  };
+}
+
 async function applySolution(puzzleType, result, selection, settings) {
   if (puzzleType === "tango") {
     return applyTangoSolution(result, selection, settings);
@@ -2153,6 +2335,10 @@ async function applySolution(puzzleType, result, selection, settings) {
 
   if (puzzleType === "patches") {
     return applyPatchesSolution(result, selection, settings);
+  }
+
+  if (puzzleType === "wend") {
+    return applyWendSolution(result, selection, settings);
   }
 
   return applyQueensSolution(result, selection, settings);

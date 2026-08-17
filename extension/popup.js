@@ -225,6 +225,10 @@ function summarizeResult(puzzleType, result) {
     lines.push(`Moves: ${result.moves.length}`);
   }
 
+  if (Array.isArray(result.words) && result.words.length > 0) {
+    lines.push(`Words: ${result.words.map((entry) => entry.word).filter(Boolean).join(", ")}`);
+  }
+
   if (result.details && typeof result.details === "object") {
     for (const [key, value] of Object.entries(result.details)) {
       if (value && typeof value === "object") {
