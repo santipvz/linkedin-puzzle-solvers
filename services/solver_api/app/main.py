@@ -60,7 +60,7 @@ _worker_solve_functions: dict[str, Any] = {}
 app = FastAPI(
     title="LinkedIn Puzzle Solver API",
     version="0.1.0",
-    description="Local API wrapper for Queens, Tango, Mini Sudoku, Zip, and Patches image solvers.",
+    description="Local API wrapper for Queens, Tango, Mini Sudoku, Zip, Patches, and Wend image solvers.",
 )
 
 app.add_middleware(
