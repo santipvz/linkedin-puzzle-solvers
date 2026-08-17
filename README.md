@@ -31,6 +31,7 @@
   <img alt="Mini Sudoku" src="https://img.shields.io/badge/Mini%20Sudoku-16A34A?style=for-the-badge">
   <img alt="Zip" src="https://img.shields.io/badge/Zip-F97316?style=for-the-badge">
   <img alt="Patches" src="https://img.shields.io/badge/Patches-E11D48?style=for-the-badge">
+  <img alt="Wend" src="https://img.shields.io/badge/Wend-14B8A6?style=for-the-badge">
 </p>
 
 <p align="center">
@@ -61,9 +62,13 @@
     </td>
   </tr>
   <tr>
-    <td colspan="2">
+    <td width="50%">
       <h3 align="center">Patches</h3>
-      <p align="center"><img src="docs/assets/readme/patches.gif" alt="Patches solver demo" width="680"></p>
+      <img src="docs/assets/readme/patches.gif" alt="Patches solver demo">
+    </td>
+    <td width="50%">
+      <h3 align="center">Wend</h3>
+      <img src="docs/assets/readme/wend.gif" alt="Wend solver demo">
     </td>
   </tr>
 </table>
