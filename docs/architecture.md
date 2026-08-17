@@ -7,7 +7,7 @@ This document describes the current end-to-end architecture after the modulariza
 - Keep puzzle-specific heuristics inside each solver package.
 - Move puzzle-agnostic logic to shared modules.
 - Keep API contracts stable while refactoring internals.
-- Validate every refactor with compile, tests, smoke checks, and dataset benchmarks.
+- Validate every refactor with compile, tests, smoke checks, and available dataset benchmarks.
 
 ## Layered Architecture
 
@@ -22,8 +22,9 @@ This document describes the current end-to-end architecture after the modulariza
   - `games/*_solver/src/image_parser.py` parses board state from image.
   - `games/*_solver/src/*solver*.py` computes solution/moves.
 - Shared core modules:
-  - `core/commons/board_detection.py` for deterministic board and grid detection.
+  - `core/commons/board_detection.py` for validated geometry, cropping, contour measurements, and projections.
   - `core/vision/line_projection.py` for projection/line grouping helpers.
+  - `core/vision/ocr.py` for reusable template matching and KNN classification.
   - `core/vision/parsed_board_payload.py` for common parser metadata payload construction.
 - Data and operations:
   - `datasets/` stores captured datasets.
@@ -54,12 +55,14 @@ flowchart LR
         W3[Sudoku Worker]
         W4[Zip Worker]
         W5[Patches Worker]
+        W6[Wend Worker]
     end
 
     subgraph CORE[Shared Core\ncore/*]
         C0[commons/board_detection.py]
         C1[line_projection.py]
         C2[parsed_board_payload.py]
+        C3[ocr.py]
     end
 
     subgraph GAMES[Puzzle Packages\ngames/*_solver/src]
@@ -79,34 +82,40 @@ flowchart LR
     R --> W3
     R --> W4
     R --> W5
+    R --> W6
 
     W1 --> W0
     W2 --> W0
     W3 --> W0
     W4 --> W0
     W5 --> W0
+    W6 --> W0
 
     W1 --> P1
     W2 --> P1
     W3 --> P1
     W4 --> P1
     W5 --> P1
+    W6 --> P1
 
     P1 --> C1
     P1 --> C2
     P1 --> C0
+    P1 --> C3
     P1 --> S1
     S1 --> W1
     S1 --> W2
     S1 --> W3
     S1 --> W4
     S1 --> W5
+    S1 --> W6
 
     W1 -->|JSON solution| E
     W2 -->|JSON solution| E
     W3 -->|JSON solution| E
     W4 -->|JSON solution| E
     W5 -->|JSON solution| E
+    W6 -->|JSON solution| E
 
     E -. capture/benchmark inputs .-> D1
     D2 --> API
@@ -117,6 +126,7 @@ flowchart LR
 
 ## Current Decoupling Status
 
-- Shared parser metadata payload builder is used by Sudoku, Zip, Patches, and Tango parsers.
-- Worker-side shared helpers centralize board-size inference and grid normalization.
-- Puzzle-specific OCR and solving logic remains isolated per game package.
+- Shared parser metadata is used by Tango, Zip, Patches, and Wend.
+- Shared geometry/cropping is used by Patches, Sudoku, Zip, and Wend; line projections are shared by Tango and Sudoku.
+- Shared OCR math is used by Sudoku, Patches, and Wend, while segmentation and interpretation remain puzzle-specific.
+- Board-selection policy, thresholds, clue semantics, and solving logic remain inside each game package.

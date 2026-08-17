@@ -128,6 +128,7 @@ Supported URLs:
 - `https://www.linkedin.com/games/mini-sudoku/`
 - `https://www.linkedin.com/games/zip/`
 - `https://www.linkedin.com/games/patches/`
+- `https://www.linkedin.com/games/wend/`
 
 ## How It Works
 
@@ -155,8 +156,8 @@ python3 scripts/quality_check.py
 # Run API tests
 python3 -m unittest discover -s services/solver_api/tests -p "test_*.py"
 
-# Run puzzle tests
-python3 -m pytest games/queen_solver/tests games/tango_solver/tests games/patches_solver/tests
+# Run unit and integration tests
+python3 -m pytest
 
 # Check extension JavaScript syntax
 node --check extension/background.js
@@ -170,6 +171,7 @@ node --check extension/popup.js
 - API details: `services/solver_api/README.md`
 - Docker deployment: `deploy/local/README.md`
 - Architecture notes: `docs/architecture.md`
+- Wend solver details: `games/wend_solver/README.md`
 - Contributing: `CONTRIBUTING.md`
 
 ## License
