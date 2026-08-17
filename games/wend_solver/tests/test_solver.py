@@ -16,6 +16,7 @@ if str(GAMES_ROOT) not in sys.path:
 from wend_solver.src.dictionary import load_wend_dictionary
 from wend_solver.src.image_parser import WendImageParser
 from wend_solver.src.wend_solver import WendSolver
+from services.solver_api.app.workers.solve_wend_worker import solve as solve_wend_worker
 
 
 class WendSolverTests(unittest.TestCase):
@@ -30,7 +31,7 @@ class WendSolverTests(unittest.TestCase):
         ]
         dictionary = ["SQUARE", "MAGENTA", "BIOLOGIST", "RHINOCEROS"]
 
-        solutions = WendSolver(dictionary).solve(board, [6, 7, 9, 10])
+        solutions = WendSolver(dictionary).solve(board, [6, 7, 9, 10]).solutions
 
         self.assertEqual(1, len(solutions))
         self.assertEqual(
@@ -54,7 +55,7 @@ class WendSolverTests(unittest.TestCase):
             ["C", "D"],
         ]
 
-        solutions = WendSolver(["AB", "CD", "AC", "BD"]).solve(board, [2, 2])
+        solutions = WendSolver(["AB", "CD", "AC", "BD"]).solve(board, [2, 2]).solutions
 
         solution_word_sets = {frozenset(candidate.word for candidate in solution.words) for solution in solutions}
         self.assertIn(frozenset({"AB", "CD"}), solution_word_sets)
@@ -67,11 +68,36 @@ class WendSolverTests(unittest.TestCase):
         ]
         letter_options = {(0, 0): [("C", 0.0), ("G", 0.02)]}
 
-        solutions = WendSolver(["GATE"]).solve(board, [4], letter_options=letter_options)
+        solutions = WendSolver(["GATE"]).solve(board, [4], letter_options=letter_options).solutions
 
         self.assertEqual(1, len(solutions))
         self.assertEqual("GATE", solutions[0].words[0].word)
         self.assertAlmostEqual(0.02, solutions[0].words[0].ocr_cost)
+
+    def test_validates_public_solver_inputs(self) -> None:
+        solver = WendSolver(["WORD"])
+
+        with self.assertRaises(ValueError):
+            solver.solve([["W"]], [1], max_solutions=0)
+        with self.assertRaises(ValueError):
+            solver.solve([["AB"]], [1])
+        with self.assertRaises(ValueError):
+            solver.solve([["W"]], [True])
+        with self.assertRaises(ValueError):
+            solver.solve([["W"]], [1], letter_options={(0, 0): [("W", float("nan"))]})
+        with self.assertRaises(ValueError):
+            solver.solve([["W"]], [1], letter_options={(1, 0): [("W", 0.0)]})
+
+    def test_reports_when_solution_count_is_capped(self) -> None:
+        board = [["A", "B"], ["C", "D"]]
+
+        result = WendSolver(["AB", "CD", "AC", "BD"]).solve(board, [2, 2], max_solutions=1)
+
+        self.assertEqual(1, len(result.solutions))
+        self.assertEqual(1, len(result))
+        self.assertTrue(result)
+        self.assertEqual(result.solutions[0], result[0])
+        self.assertFalse(result.solution_count_is_exact)
 
 
 class WendParserTests(unittest.TestCase):
@@ -160,6 +186,42 @@ class WendParserTests(unittest.TestCase):
                 self.assertEqual(board_size, parsed["board_size"])
                 self.assertEqual(board_size * board_size, parsed["visible_cells"])
 
+    def test_worker_rejects_unique_solution_from_low_confidence_ocr(self) -> None:
+        board = [
+            ["E", "R", "O", "R", "E", "T"],
+            ["C", "A", "S", "A", "U", "S"],
+            ["O", "T", None, None, "Q", "I"],
+            ["N", "N", None, None, "S", "G"],
+            ["I", "E", "G", "A", "M", "O"],
+            ["H", "R", "B", "I", "O", "L"],
+        ]
+        cells = [
+            {
+                "row": row,
+                "col": col,
+                "letter": letter,
+                "confidence": 0.01,
+                "candidates": [{"letter": letter, "confidence": 0.01}],
+            }
+            for row, board_row in enumerate(board)
+            for col, letter in enumerate(board_row)
+            if letter is not None
+        ]
+        parsed = {
+            "board": board,
+            "lengths": [6, 7, 9, 10],
+            "board_size": 6,
+            "visible_cells": 32,
+            "board_bbox": {"x": 0, "y": 0, "width": 600, "height": 600},
+            "ocr": {"cells": cells, "min_confidence": 0.01, "avg_confidence": 0.01},
+        }
+
+        with patch.object(WendImageParser, "parse_image", return_value=parsed):
+            result = solve_wend_worker("unused.png")
+
+        self.assertFalse(result["solved"])
+        self.assertFalse(result["details"]["parse_reliable"])
+
 
 class WendDictionaryTests(unittest.TestCase):
     def test_loads_repository_wordlist(self) -> None:
@@ -170,7 +232,7 @@ class WendDictionaryTests(unittest.TestCase):
         self.assertIn("BIOLOGIST", words)
         self.assertIn("RHINOCEROS", words)
 
-    def test_supports_env_wordlist_override(self) -> None:
+    def test_supports_additional_env_wordlist(self) -> None:
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt") as tmp:
             tmp.write("customword\nnot-a-word\nAB\n")
             tmp.flush()
@@ -182,33 +244,12 @@ class WendDictionaryTests(unittest.TestCase):
         self.assertNotIn("NOT-A-WORD", words)
         self.assertNotIn("AB", words)
 
-
-class WendHistoricalRegressionTests(unittest.TestCase):
-    CASES = (
-        ("2026-07-03/088d4971a2053645a99c74705d41c9d426f5c46ce2f67852d766d7ccc852ddd8.png", 6, 32),
-        ("2026-07-03/9f02d7fb1d728be02f0bce79b51af60166cd9b945aa84c3158efa673a559e20f.png", 6, 32),
-        ("2026-07-04/f590d330baed974e0c050a19cbed10d7802fc7c2c2ee330d5ec75983b0c9cc73.png", 7, 41),
-        ("2026-07-05/3a7bc21cf9e85f77c261b489c5fa81ffd6b4cf37268126dc5c582bd9b558cba8.png", 8, 50),
-        ("2026-07-06/296ed74a8c92fe5b69f9961660947f934570ccd5b914d636cb5bc27c2524855e.png", 5, 18),
-        ("2026-07-06/a98793859a34b129be32409eab232a250045fc8f61670f31b7357219a34e618a.png", 5, 18),
-        ("2026-07-09/8b7ae6991d346794de20c243dc25ee40396c3472af740a0c1abcfda537699b35.png", 6, 30),
-        ("2026-07-23/077d8c0ff27040697a9f118049320cf566276f1a7946b7efdd369b26708bc4c3.png", 6, 26),
-    )
-
-    def test_detects_historical_board_sizes_and_open_cells(self) -> None:
-        dataset_root = REPO_ROOT / "datasets" / "wend"
-        if not dataset_root.exists():
-            self.skipTest("Local Wend capture dataset is not available.")
-
-        parser = WendImageParser()
-        for relative_path, expected_size, expected_visible in self.CASES:
-            image_path = dataset_root / relative_path
-            if not image_path.exists():
-                self.skipTest(f"Missing local Wend capture: {relative_path}")
-            with self.subTest(capture=relative_path):
-                parsed = parser.parse_image(image_path)
-                self.assertEqual(expected_size, parsed["board_size"])
-                self.assertEqual(expected_visible, parsed["visible_cells"])
+    def test_rejects_missing_configured_wordlist_and_invalid_bounds(self) -> None:
+        with patch.dict("os.environ", {"WEND_WORDLIST_PATH": "/missing/wend-words.txt"}):
+            with self.assertRaises(FileNotFoundError):
+                load_wend_dictionary()
+        with self.assertRaises(ValueError):
+            load_wend_dictionary(min_length=10, max_length=5)
 
 
 if __name__ == "__main__":

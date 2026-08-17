@@ -3,7 +3,6 @@ from __future__ import annotations
 import glob
 import os
 import tempfile
-from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -12,6 +11,9 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from core.commons import BoardBBox, crop_board, external_contour_bbox_candidates, load_bgr_image, uniform_grid_bounds
+from core.vision import CosineTemplateMatcher, OcrPrediction, build_parsed_board_payload
+
 
 MIN_BOARD_SIZE = 5
 MAX_BOARD_SIZE = 8
@@ -19,40 +21,33 @@ OCR_SIZE = 42
 OCR_DARK_THRESHOLD = 120
 
 
-@dataclass(frozen=True, slots=True)
-class _LetterPrediction:
-    letter: str
-    confidence: float
-    candidates: list[tuple[str, float]]
-
-
 class _LetterOcr:
     def __init__(self) -> None:
         self._letters = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
-        self._features, self._labels = self._load_or_build_templates()
+        features, labels = self._load_or_build_templates()
+        self._matcher = CosineTemplateMatcher(features, labels)
 
-    def predict(self, cell_gray: np.ndarray) -> _LetterPrediction | None:
+    def predict(self, cell_gray: np.ndarray) -> OcrPrediction[str] | None:
         normalized = self._normalize_letter(cell_gray)
         if normalized is None:
             return None
+        return self._matcher.predict(normalized, limit=5)
 
-        feature = normalized.reshape(-1).astype(np.float32)
-        input_norm = float(np.linalg.norm(feature))
-        if input_norm <= 0.0:
-            return None
-
-        template_norms = np.linalg.norm(self._features, axis=1)
-        scores = (self._features @ feature) / np.maximum(template_norms * input_norm, 1e-6)
-
-        best_by_letter: dict[str, float] = {letter: 0.0 for letter in self._letters}
-        for label, score in zip(self._labels, scores):
-            current = best_by_letter.get(label, 0.0)
-            if float(score) > current:
-                best_by_letter[label] = float(score)
-
-        ranked = sorted(best_by_letter.items(), key=lambda item: item[1], reverse=True)
-        best_letter, best_score = ranked[0]
-        return _LetterPrediction(best_letter, float(best_score), ranked[:5])
+    def predict_many(self, cells_gray: list[np.ndarray]) -> tuple[OcrPrediction[str] | None, ...]:
+        results: list[OcrPrediction[str] | None] = [None] * len(cells_gray)
+        normalized_features: list[np.ndarray] = []
+        normalized_indices: list[int] = []
+        for index, cell_gray in enumerate(cells_gray):
+            normalized = self._normalize_letter(cell_gray)
+            if normalized is None:
+                continue
+            normalized_features.append(normalized.reshape(-1))
+            normalized_indices.append(index)
+        if normalized_features:
+            predictions = self._matcher.predict_many(np.asarray(normalized_features, dtype=np.float32), limit=5)
+            for index, prediction in zip(normalized_indices, predictions):
+                results[index] = prediction
+        return tuple(results)
 
     def _load_or_build_templates(self) -> tuple[np.ndarray, list[str]]:
         cache_path = Path(tempfile.gettempdir()) / "linkedin_puzzle_solvers_wend_letters_v1.npz"
@@ -164,38 +159,39 @@ def _get_ocr() -> _LetterOcr:
 
 class WendImageParser:
     def parse_image(self, image_path: str | Path) -> dict[str, Any]:
-        image = cv2.imread(str(image_path))
-        if image is None:
-            raise ValueError(f"Could not load image: {image_path}")
+        image = load_bgr_image(image_path)
 
         board_crop, bbox = self._extract_board_crop(image)
         lengths = self._parse_lengths(image, bbox)
         board_size, board, cell_predictions = self._parse_best_board(board_crop, lengths)
 
         visible_cells = sum(1 for row in board for value in row if value is not None)
-        return {
-            "board": board,
-            "lengths": lengths,
-            "board_size": board_size,
-            "board_bbox": bbox,
-            "visible_cells": visible_cells,
-            "ocr": {
+        grid = uniform_grid_bounds(width=board_crop.shape[1], height=board_crop.shape[0], board_size=board_size)
+        return build_parsed_board_payload(
+            board_size=board_size,
+            board_bbox=bbox,
+            grid=grid,
+            extra_fields={
+                "board": board,
+                "lengths": lengths,
+                "visible_cells": visible_cells,
+                "ocr": {
                 "cells": cell_predictions,
                 "min_confidence": min((float(cell["confidence"]) for cell in cell_predictions), default=0.0),
                 "avg_confidence": float(np.mean([float(cell["confidence"]) for cell in cell_predictions])) if cell_predictions else 0.0,
+                },
             },
-        }
+        )
 
     def _extract_board_crop(self, image: np.ndarray) -> tuple[np.ndarray, dict[str, int]]:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         dark = cv2.inRange(gray, 0, 90)
         dark = cv2.morphologyEx(dark, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8), iterations=2)
-        contours, _ = cv2.findContours(dark, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         height, width = gray.shape
 
-        best: tuple[float, int, int, int, int] | None = None
-        for contour in contours:
-            x, y, w, h = cv2.boundingRect(contour)
+        best: tuple[float, BoardBBox] | None = None
+        for candidate in external_contour_bbox_candidates(dark):
+            y, w, h = candidate.bbox.y, candidate.bbox.width, candidate.bbox.height
             if w < width * 0.25 or h < height * 0.25:
                 continue
             if w < min(width, height) * 0.65 or h < min(width, height) * 0.65:
@@ -205,27 +201,22 @@ class WendImageParser:
                 continue
             score = float(w * h) - abs(w - h) * 1000.0 - y * 0.1
             if best is None or score > best[0]:
-                best = (score, x, y, w, h)
+                best = (score, candidate.bbox)
 
         if best is None and 0.85 <= width / max(height, 1) <= 1.15:
-            x = 0
-            y = 0
-            w = width
-            h = height
+            bbox = BoardBBox.full_image(image)
         elif best is None:
             side = min(width, height)
-            x = max(0, (width - side) // 2)
-            y = 0
-            w = h = side
+            bbox = BoardBBox(x=max(0, (width - side) // 2), y=0, width=side, height=side)
         else:
-            _, x, y, w, h = best
+            _, bbox = best
 
-        pad = max(0, int(min(w, h) * 0.01))
-        x1 = max(0, x + pad)
-        y1 = max(0, y + pad)
-        x2 = min(width, x + w - pad)
-        y2 = min(height, y + h - pad)
-        return image[y1:y2, x1:x2], {"x": int(x1), "y": int(y1), "width": int(x2 - x1), "height": int(y2 - y1)}
+        pad = max(0, int(min(bbox.width, bbox.height) * 0.01))
+        cropped = crop_board(image, bbox, inset_pixels=pad)
+        if cropped is None:
+            raise ValueError("Detected Wend board is outside the image.")
+        board_crop, actual_bbox = cropped
+        return board_crop, actual_bbox.to_payload()
 
     def _parse_best_board(
         self,
@@ -271,52 +262,50 @@ class WendImageParser:
         board_size: int,
     ) -> tuple[list[list[str | None]], list[dict[str, Any]]]:
         gray = cv2.cvtColor(board_crop, cv2.COLOR_BGR2GRAY)
-        height, width = gray.shape
         ocr = _get_ocr()
-        board: list[list[str | None]] = []
+        grid = uniform_grid_bounds(width=gray.shape[1], height=gray.shape[0], board_size=board_size)
+        cells = grid.cells()
+        board: list[list[str | None]] = [[None for _ in range(board_size)] for _ in range(board_size)]
         predictions: list[dict[str, Any]] = []
+        visible_cells: list[tuple[int, int, np.ndarray]] = []
 
         for row in range(board_size):
-            board_row: list[str | None] = []
             for col in range(board_size):
-                x1 = int(round(col * width / board_size))
-                x2 = int(round((col + 1) * width / board_size))
-                y1 = int(round(row * height / board_size))
-                y2 = int(round((row + 1) * height / board_size))
-                cell = gray[y1:y2, x1:x2]
+                x, y, width, height = cells[row][col]
+                cell = gray[y : y + height, x : x + width]
                 center = cell[cell.shape[0] // 4 : cell.shape[0] * 3 // 4, cell.shape[1] // 4 : cell.shape[1] * 3 // 4]
                 if float(np.mean(center)) < 190 and float(np.std(center)) < 28:
-                    board_row.append(None)
                     continue
+                visible_cells.append((row, col, cell))
 
-                prediction = ocr.predict(cell)
-                if prediction is None:
-                    board_row.append("?")
-                    predictions.append(
-                        {
-                            "row": row,
-                            "col": col,
-                            "letter": "?",
-                            "confidence": 0.0,
-                            "candidates": [],
-                        }
-                    )
-                    continue
-
-                board_row.append(prediction.letter)
+        ocr_predictions = ocr.predict_many([cell for _, _, cell in visible_cells])
+        for (row, col, _cell), prediction in zip(visible_cells, ocr_predictions):
+            if prediction is None:
+                board[row][col] = "?"
                 predictions.append(
                     {
                         "row": row,
                         "col": col,
-                        "letter": prediction.letter,
-                        "confidence": prediction.confidence,
-                        "candidates": [
-                            {"letter": letter, "confidence": confidence}
-                            for letter, confidence in prediction.candidates
-                        ],
+                        "letter": "?",
+                        "confidence": 0.0,
+                        "candidates": [],
                     }
                 )
-            board.append(board_row)
+                continue
+
+            board[row][col] = prediction.value
+            predictions.append(
+                {
+                    "row": row,
+                    "col": col,
+                    "letter": prediction.value,
+                    "confidence": prediction.confidence,
+                    "candidates": [
+                        {"letter": candidate.value, "confidence": candidate.confidence}
+                        for candidate in prediction.candidates
+                    ],
+                }
+            )
 
         return board, predictions
 

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from dataclasses import dataclass
-from typing import Iterable, Mapping, Sequence, TypeAlias
+import math
+from typing import Iterable, Iterator, Mapping, Sequence, TypeAlias, overload
 
 
 Cell: TypeAlias = tuple[int, int]
@@ -28,9 +29,43 @@ class WendSolution:
     words: tuple[WendPathCandidate, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class WendSolveResult:
+    solutions: tuple[WendSolution, ...]
+    solution_count_is_exact: bool
+    solution_limit: int
+
+    def __bool__(self) -> bool:
+        return bool(self.solutions)
+
+    def __len__(self) -> int:
+        return len(self.solutions)
+
+    def __iter__(self) -> Iterator[WendSolution]:
+        return iter(self.solutions)
+
+    @overload
+    def __getitem__(self, index: int) -> WendSolution: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> tuple[WendSolution, ...]: ...
+
+    def __getitem__(self, index: int | slice) -> WendSolution | tuple[WendSolution, ...]:
+        return self.solutions[index]
+
+
 class WendSolver:
     def __init__(self, dictionary: Iterable[str]) -> None:
-        self.dictionary = tuple(self._normalize_word(word) for word in dictionary)
+        normalized: set[str] = set()
+        for word in dictionary:
+            candidate = self._normalize_word(word)
+            if not candidate or not candidate.isascii() or not candidate.isalpha():
+                raise ValueError(f"Invalid Wend dictionary word: {word!r}")
+            normalized.add(candidate)
+        if not normalized:
+            raise ValueError("Wend dictionary cannot be empty.")
+        self.dictionary = tuple(sorted(normalized))
+        self._tries: dict[frozenset[int], dict[str, object]] = {}
 
     def solve(
         self,
@@ -39,11 +74,13 @@ class WendSolver:
         *,
         letter_options: LetterOptions | None = None,
         max_solutions: int = 25,
-    ) -> list[WendSolution]:
+    ) -> WendSolveResult:
+        if isinstance(max_solutions, bool) or not isinstance(max_solutions, int) or max_solutions <= 0:
+            raise ValueError("max_solutions must be a positive integer.")
         normalized_board = self._normalize_board(board)
-        target_lengths = tuple(int(length) for length in lengths)
+        target_lengths = tuple(self._normalize_length(length) for length in lengths)
         if not target_lengths:
-            return []
+            return WendSolveResult((), True, max_solutions)
 
         all_cells = frozenset(
             (row_index, col_index)
@@ -52,7 +89,7 @@ class WendSolver:
             if value is not None
         )
         if sum(target_lengths) != len(all_cells):
-            return []
+            return WendSolveResult((), True, max_solutions)
 
         length_counts = Counter(target_lengths)
         candidates = self.find_candidates(normalized_board, length_counts.keys(), letter_options=letter_options)
@@ -62,7 +99,7 @@ class WendSolver:
 
         for length in length_counts:
             if not candidates_by_length[length]:
-                return []
+                return WendSolveResult((), True, max_solutions)
 
         solutions: list[WendSolution] = []
         cell_indices = {cell: index for index, cell in enumerate(sorted(all_cells))}
@@ -76,8 +113,8 @@ class WendSolver:
             for cell in candidate.path:
                 candidates_by_cell[cell].append(candidate)
 
-        best_cost_by_state: dict[tuple[int, tuple[tuple[int, int], ...]], float] = {}
         solution_costs: list[float] = []
+        search_exhaustive = True
 
         def backtrack(
             used_mask: int,
@@ -85,13 +122,10 @@ class WendSolver:
             chosen: list[WendPathCandidate],
             cost: float,
         ) -> None:
-            state = (used_mask, tuple(sorted((length, count) for length, count in remaining.items() if count > 0)))
-            previous_cost = best_cost_by_state.get(state)
-            if previous_cost is not None and cost > previous_cost + 1e-9:
-                return
-            best_cost_by_state[state] = min(cost, previous_cost) if previous_cost is not None else cost
+            nonlocal search_exhaustive
 
             if len(solution_costs) >= max_solutions and cost >= solution_costs[-1] - 1e-9:
+                search_exhaustive = False
                 return
 
             if not remaining:
@@ -142,7 +176,7 @@ class WendSolver:
                 chosen.pop()
 
         backtrack(0, length_counts, [], 0.0)
-        return solutions
+        return WendSolveResult(tuple(solutions), search_exhaustive, max_solutions)
 
     def find_candidates(
         self,
@@ -152,7 +186,7 @@ class WendSolver:
         letter_options: LetterOptions | None = None,
     ) -> list[WendPathCandidate]:
         normalized_board = self._normalize_board(board)
-        target_lengths = {int(length) for length in lengths}
+        target_lengths = {self._normalize_length(length) for length in lengths}
         if not target_lengths:
             return []
 
@@ -208,6 +242,16 @@ class WendSolver:
         letter_options: LetterOptions | None,
     ) -> dict[Cell, tuple[tuple[str, float], ...]]:
         normalized: dict[Cell, tuple[tuple[str, float], ...]] = {}
+        visible_cells = {
+            (row_index, col_index)
+            for row_index, row in enumerate(board)
+            for col_index, value in enumerate(row)
+            if value is not None
+        }
+        if letter_options is not None:
+            invalid_cells = set(letter_options) - visible_cells
+            if invalid_cells:
+                raise ValueError(f"OCR options reference invalid board cells: {sorted(invalid_cells)!r}")
         for row_index, row in enumerate(board):
             for col_index, value in enumerate(row):
                 if value is None:
@@ -217,9 +261,12 @@ class WendSolver:
                 options: dict[str, float] = {}
                 for letter, cost in supplied:
                     normalized_letter = cls._normalize_word(letter)
-                    if len(normalized_letter) != 1 or not normalized_letter.isalpha():
-                        continue
-                    options[normalized_letter] = min(float(cost), options.get(normalized_letter, float("inf")))
+                    if len(normalized_letter) != 1 or not normalized_letter.isascii() or not normalized_letter.isalpha():
+                        raise ValueError(f"Invalid OCR letter option at {cell}: {letter!r}")
+                    normalized_cost = float(cost)
+                    if not math.isfinite(normalized_cost) or normalized_cost < 0.0:
+                        raise ValueError(f"Invalid OCR cost at {cell}: {cost!r}")
+                    options[normalized_letter] = min(normalized_cost, options.get(normalized_letter, float("inf")))
                 if value != "?":
                     options[value] = min(0.0, options.get(value, float("inf")))
                 elif not options:
@@ -228,6 +275,10 @@ class WendSolver:
         return normalized
 
     def _build_trie(self, target_lengths: set[int]) -> dict[str, object]:
+        cache_key = frozenset(target_lengths)
+        cached = self._tries.get(cache_key)
+        if cached is not None:
+            return cached
         trie: dict[str, object] = {}
         for word in self.dictionary:
             if len(word) not in target_lengths:
@@ -239,6 +290,7 @@ class WendSolver:
                     raise TypeError("Invalid trie node")
                 node = child
             node[_END] = word
+        self._tries[cache_key] = trie
         return trie
 
     @staticmethod
@@ -263,8 +315,27 @@ class WendSolver:
         for row in board:
             if len(row) != width:
                 raise ValueError("Board must be rectangular.")
-            normalized.append([None if value is None else cls._normalize_word(value) for value in row])
+            normalized_row: list[str | None] = []
+            for value in row:
+                if value is None:
+                    normalized_row.append(None)
+                    continue
+                normalized_value = cls._normalize_word(value)
+                if normalized_value != "?" and (
+                    len(normalized_value) != 1
+                    or not normalized_value.isascii()
+                    or not normalized_value.isalpha()
+                ):
+                    raise ValueError(f"Invalid Wend board cell: {value!r}")
+                normalized_row.append(normalized_value)
+            normalized.append(normalized_row)
         return normalized
+
+    @staticmethod
+    def _normalize_length(value: object) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError(f"Invalid Wend word length: {value!r}")
+        return value
 
     @staticmethod
     def _normalize_word(value: str) -> str:

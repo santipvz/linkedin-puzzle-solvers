@@ -12,5 +12,6 @@ errors/
 !docs/assets/readme/*.svg
 !games/patches_solver/examples/*.png
 !games/patches_solver/assets/*.png
+!games/wend_solver/examples/*.png
 deploy/local/.env
 datasets/

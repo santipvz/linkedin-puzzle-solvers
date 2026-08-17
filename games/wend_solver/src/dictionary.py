@@ -8,7 +8,6 @@ from typing import Iterable
 DEFAULT_MIN_WORD_LENGTH = 3
 DEFAULT_MAX_WORD_LENGTH = 16
 ENV_WORDLIST_PATH = "WEND_WORDLIST_PATH"
-FALLBACK_WORDS = ("SQUARE", "MAGENTA", "BIOLOGIST", "RHINOCEROS")
 
 
 def load_wend_dictionary(
@@ -17,25 +16,25 @@ def load_wend_dictionary(
     min_length: int = DEFAULT_MIN_WORD_LENGTH,
     max_length: int = DEFAULT_MAX_WORD_LENGTH,
 ) -> list[str]:
+    if min_length < 1 or min_length > max_length:
+        raise ValueError("Wend dictionary length bounds are invalid.")
+
     words: set[str] = set()
     for path in _candidate_paths(extra_paths):
         words.update(_load_words_from_path(path, min_length=min_length, max_length=max_length))
 
-    words.update(FALLBACK_WORDS)
+    if not words:
+        raise ValueError("Wend dictionary contains no usable words.")
     return sorted(words)
 
 
 def _candidate_paths(extra_paths: Iterable[str | Path]) -> list[Path]:
     candidates: list[Path] = []
+    candidates.append(Path(__file__).resolve().parents[1] / "data" / "words.txt")
     env_path = os.getenv(ENV_WORDLIST_PATH)
     if env_path:
         candidates.append(Path(env_path).expanduser())
-
-    candidates.append(Path(__file__).resolve().parents[1] / "data" / "words.txt")
     candidates.extend(Path(path).expanduser() for path in extra_paths)
-
-    # Development fallback only. The repository wordlist above is the portable source.
-    candidates.extend((Path("/usr/share/dict/words"), Path("/usr/share/dict/american-english")))
 
     unique: list[Path] = []
     seen: set[str] = set()
@@ -50,13 +49,13 @@ def _candidate_paths(extra_paths: Iterable[str | Path]) -> list[Path]:
 
 def _load_words_from_path(path: Path, *, min_length: int, max_length: int) -> set[str]:
     if not path.exists() or not path.is_file():
-        return set()
+        raise FileNotFoundError(f"Wend dictionary not found: {path}")
 
     words: set[str] = set()
     try:
         lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
-    except OSError:
-        return set()
+    except OSError as exc:
+        raise OSError(f"Could not read Wend dictionary: {path}") from exc
 
     for line in lines:
         word = line.strip().upper()
