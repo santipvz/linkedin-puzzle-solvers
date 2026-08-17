@@ -1,127 +1,37 @@
-import sys
-import os
-from pathlib import Path
-import cv2
+from __future__ import annotations
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-from image_parser import TangoImageParser
+from games.tango_solver.src.image_parser import TangoImageParser
+from games.tango_solver.src.tango_solver import TangoSolver
 
 
-def test_image_loading_and_parsing(image_path):
-    """
-    Test: Verify that image loads and parses correctly.
-    """
-    print("🧪 Test: Image loading and parsing")
-    print("-" * 50)
+def test_sample_parser_contract_and_solver(image_path: str) -> None:
+    board_state = TangoImageParser().parse_image(image_path)
 
-    if not os.path.exists(image_path):
-        print(f"❌ Image not found: {image_path}")
-        return False
+    assert board_state is not None
+    fixed_pieces = board_state["fixed_pieces"]
+    empty_cells = board_state["empty_cells"]
+    constraints = board_state["constraints"]
+    positions = {(piece["row"], piece["col"]) for piece in fixed_pieces}
+    positions.update(tuple(position) for position in empty_cells)
+    assert len(fixed_pieces) + len(empty_cells) == 36
+    assert len(positions) == 36
+    assert fixed_pieces or constraints
+    assert all(piece["piece_type"] in (0, 1) for piece in fixed_pieces)
+    assert all(0 <= piece["row"] < 6 and 0 <= piece["col"] < 6 for piece in fixed_pieces)
 
-    try:
-        # Verify OpenCV can load the image
-        img = cv2.imread(image_path)
-        if img is None:
-            print("❌ OpenCV could not load image")
-            return False
+    for constraint in constraints:
+        assert constraint["type"] in ("=", "x")
+        row_delta = abs(constraint["pos1"][0] - constraint["pos2"][0])
+        col_delta = abs(constraint["pos1"][1] - constraint["pos2"][1])
+        assert row_delta + col_delta == 1
 
-        print(f"✅ Image loaded: {img.shape}")
-
-        # Verify parser can process the image
-        parser = TangoImageParser()
-        board_state = parser.parse_image(image_path)
-
-        if board_state is None:
-            print("❌ Error in image parsing")
-            return False
-
-        print("✅ Parsing successful")
-        print(f"   • Valid data structure: {type(board_state)}")
-        print(f"   • Keys found: {list(board_state.keys())}")
-
-        return True
-
-    except Exception as e:
-        print(f"❌ Error during loading/parsing: {e}")
-        return False
+    solver = TangoSolver()
+    for piece in fixed_pieces:
+        solver.add_fixed_piece(piece["row"], piece["col"], piece["piece_type"])
+    for constraint in constraints:
+        solver.add_constraint(constraint["type"], constraint["pos1"], constraint["pos2"])
+    assert solver.solve()
 
 
-def test_edge_cases_and_robustness(image_path):
-    """
-    Test: Edge cases and general system robustness.
-    """
-    print("\n🧪 Test: Edge cases and robustness")
-    print("-" * 50)
-
-    try:
-        parser = TangoImageParser()
-
-        # Test with non-existent image
-        result = parser.parse_image("non_existent_image.png")
-        if result is None:
-            print("✅ Correctly handles non-existent image")
-        else:
-            print("⚠️  Should return None for non-existent image")
-
-        # Test with current image (should work)
-        board_state = parser.parse_image(image_path)
-        if board_state:
-            print("✅ Processes valid image correctly")
-
-            # Verify consistency across multiple parses
-            board_state2 = parser.parse_image(image_path)
-            if board_state2:
-                # Compare results (should be equal)
-                same_pieces = len(board_state['fixed_pieces']) == len(board_state2['fixed_pieces'])
-                same_constraints = len(board_state['constraints']) == len(board_state2['constraints'])
-
-                if same_pieces and same_constraints:
-                    print("✅ Consistent results across multiple parses")
-                else:
-                    print("⚠️  Inconsistent results between parses")
-
-        return True
-
-    except Exception as e:
-        print(f"❌ Error in edge cases: {e}")
-        return False
-
-
-if __name__ == "__main__":
-    import sys
-
-    # Determine image to use
-    if len(sys.argv) > 1:
-        image_path = sys.argv[1]
-    else:
-        image_path = None
-        if not image_path:
-            print("❌ No image found. Please provide image path as argument.")
-            print("Usage: python3 -m tests.test_image_parser [image_path]")
-            sys.exit(1)
-
-    print("🎯 IMAGE PARSER TESTS")
-    print("=" * 50)
-
-    # Run tests
-    tests = [
-        test_image_loading_and_parsing,
-        test_edge_cases_and_robustness,
-    ]
-
-    passed = 0
-    total = len(tests)
-
-    for test_func in tests:
-        try:
-            if test_func(image_path):
-                passed += 1
-        except Exception as e:
-            print(f"❌ Unexpected error: {e}")
-
-    print(f"\n📊 Results: {passed}/{total} tests passed")
-    success = passed == total
-    print("✅ All tests passed!" if success else "❌ Some tests failed")
-
-    sys.exit(0 if success else 1)
+def test_missing_image_returns_none() -> None:
+    assert TangoImageParser().parse_image("missing-tango-image.png") is None
