@@ -9,14 +9,11 @@ Game rules:
 5. "x" clues indicate adjacent cells must have different types
 """
 
-try:
-    from .visualizer import BoardVisualizer
-except ImportError:
-    from visualizer import BoardVisualizer
+from .ports import FrameRecorder
 
 
 class TangoSolver:
-    def __init__(self):
+    def __init__(self, visualizer: FrameRecorder | None = None):
         self.size = 6
         self.board = [[None for _ in range(self.size)] for _ in range(self.size)]
         self.constraints = []
@@ -25,7 +22,7 @@ class TangoSolver:
         self._constraints_by_cell = None
 
         # Visualization settings
-        self._visualizer = None
+        self._visualizer = visualizer
         self._create_gif = False
         self._gif_speed = 400
 
@@ -166,9 +163,10 @@ class TangoSolver:
         return result
 
     def _enable_gif_creation(self, gif_speed=400):
+        if self._visualizer is None:
+            raise ValueError("GIF creation requires an injected frame recorder.")
         self._create_gif = True
         self._gif_speed = gif_speed
-        self._visualizer = BoardVisualizer()
         self._visualizer.save_frame(
             self.board,
             self.constraints,

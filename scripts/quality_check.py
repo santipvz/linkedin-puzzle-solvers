@@ -7,6 +7,7 @@ import subprocess
 COMMANDS: tuple[tuple[str, ...], ...] = (
     ("python3", "-m", "ruff", "check", "."),
     ("python3", "scripts/check_puzzle_registry_sync.py"),
+    ("python3", "scripts/check_architecture.py"),
     ("python3", "-m", "compileall", "-q", "services/solver_api/app", "games", "core", "scripts"),
     ("python3", "-m", "pytest", "--durations=10"),
     ("python3", "scripts/smoke_check.py"),
@@ -22,6 +23,7 @@ COMMANDS: tuple[tuple[str, ...], ...] = (
         "extension/tests/puzzle_registry.test.js",
         "extension/tests/wend_paths.test.js",
         "extension/tests/sudoku_apply.test.js",
+        "scripts/tests/gitflow.test.js",
     ),
 )
 
