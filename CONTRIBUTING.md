@@ -44,6 +44,8 @@ This runs architecture checks, lint, tests, and worker/API smoke checks. For app
 
 Use merge commits for releases and synchronization to preserve branch ancestry. CI checks PR branch names and targets. Follow the [release guide](docs/release.md) for versions and tags.
 
+Only `main` and `develop` are permanent. GitHub automatically deletes topic branches after merge. Run `git fetch --prune` and delete the merged local branch with `git branch -d <branch>`.
+
 ## Submit
 
 Use the issue and PR templates. Keep changes focused, explain the resulting behavior, and record validation. Follow the [architecture boundaries](docs/architecture.md); add a regression test for fixes. Never commit credentials or private captures.
