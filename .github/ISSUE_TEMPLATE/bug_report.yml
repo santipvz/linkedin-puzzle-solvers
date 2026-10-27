@@ -1,0 +1,33 @@
+name: Bug report
+description: Report a parsing, solving, apply, or setup problem.
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: dropdown
+    id: puzzle
+    attributes:
+      label: Puzzle or component
+      options: [Queens, Tango, Mini Sudoku, Zip, Patches, Wend, Extension, API, CI or setup]
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happened?
+      description: Include the expected result and any error message.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Add a board screenshot or capture if relevant; exclude private information.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: "Browser/version, OS, API mode (Docker or Python), commit/version."
+    validations:
+      required: true

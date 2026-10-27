@@ -6,15 +6,17 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from services.solver_api.app.main import _archive_board_capture, _cache_key_for_upload, _parse_cors_origins, app
+from services.solver_api.app.adapters.captures import FileCaptureStore
+from services.solver_api.app.application.solve_puzzle import cache_key
+from services.solver_api.app.main import app
 from services.solver_api.app.puzzle_registry import PUZZLE_DEFINITIONS
+from services.solver_api.app.settings import parse_cors_origins
 
 
 class PuzzleRegistryTests(unittest.TestCase):
@@ -35,8 +37,8 @@ class PuzzleRegistryTests(unittest.TestCase):
         payload = b"same image"
 
         self.assertNotEqual(
-            _cache_key_for_upload("wend", 1, payload),
-            _cache_key_for_upload("wend", 2, payload),
+            cache_key("wend", 1, payload),
+            cache_key("wend", 2, payload),
         )
 
 
@@ -51,12 +53,12 @@ class ApiRouteRegistrationTests(unittest.TestCase):
 
 class CorsParsingTests(unittest.TestCase):
     def test_parse_cors_origins_defaults(self) -> None:
-        self.assertEqual(["*"], _parse_cors_origins(""))
-        self.assertEqual(["*"], _parse_cors_origins("*"))
-        self.assertEqual(["*"], _parse_cors_origins("foo,*,bar"))
+        self.assertEqual(["*"], parse_cors_origins(""))
+        self.assertEqual(["*"], parse_cors_origins("*"))
+        self.assertEqual(["*"], parse_cors_origins("foo,*,bar"))
 
     def test_parse_cors_origins_list(self) -> None:
-        parsed = _parse_cors_origins("https://a.example, https://b.example")
+        parsed = parse_cors_origins("https://a.example, https://b.example")
         self.assertEqual(["https://a.example", "https://b.example"], parsed)
 
 
@@ -74,8 +76,7 @@ class DatasetCaptureTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             capture_root = Path(temp_dir)
-            with patch("services.solver_api.app.main.CAPTURE_DATASET_DIR", capture_root):
-                _archive_board_capture("wend", payload, response, from_cache=False)
+            FileCaptureStore(capture_root, REPO_ROOT).save("wend", payload, response, from_cache=False)
             image_path = next(capture_root.glob("wend/*/*.png"))
             metadata_path = image_path.with_suffix(".json")
             captured_payload = image_path.read_bytes()

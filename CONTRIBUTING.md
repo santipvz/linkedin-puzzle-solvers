@@ -1,107 +1,49 @@
 # Contributing
 
-Thanks for your interest in improving this project.
+## Develop
 
-## Development Setup
-
-1. Fork and clone the repository.
-2. Create a feature branch from `main`.
-3. Set up the solver API (Uvicorn mode recommended while developing).
+Use Python 3.12 and Node 20+. Start work from `develop`:
 
 ```bash
-git checkout -b feat/your-change-name
+git fetch origin
+git switch develop
+git pull --ff-only
+git switch -c feature/my-change
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt
 ```
 
-## Run the Project Locally
+For native OCR on Debian/Ubuntu, install `fonts-dejavu-core`, `fonts-liberation`, and `fonts-noto-core`. The [CI container](docs/ci.md) includes them.
 
-### API with Uvicorn
-
-```bash
-cd services/solver_api
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
-```
-
-### API with Docker
+Run the development API from the repository root:
 
 ```bash
-cd deploy/local
-cp .env.example .env
-mkdir -p ../../datasets
-docker compose up -d --build
+uvicorn services.solver_api.app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-## Validation Checklist
+Use API URL `http://127.0.0.1:8000` in the [extension](extension/README.md).
 
-Before opening a PR, run the canonical quality command from repository root.
+## Validate
 
 ```bash
 python3 scripts/quality_check.py
 ```
 
-The command includes pytest, linting, compilation, worker/API smoke checks, registry consistency, and extension syntax. Individual checks can also be run directly.
+This runs architecture checks, lint, tests, and worker/API smoke checks. For apply changes, also test the affected game in the browser. See [CI](docs/ci.md) for the container command.
 
-1. Smoke checks for all puzzle workers:
+## Gitflow
 
-```bash
-python3 scripts/smoke_check.py
-```
+| Branch | Purpose | PR target |
+| --- | --- | --- |
+| `main` | Released code | — |
+| `develop` | Integration; default branch | — |
+| `feature/*`, `bugfix/*` | Branch from `develop` | `develop` |
+| `release/*` | Prepare a release from `develop` | `main`, then sync back to `develop` |
+| `hotfix/*` | Urgent fix from `main` | `main`, then sync back to `develop` |
 
-2. Extension script syntax checks:
+Use merge commits for releases and synchronization to preserve branch ancestry. CI checks PR branch names and targets. Follow the [release guide](docs/release.md) for versions and tags.
 
-```bash
-node --check extension/background.js
-node --check extension/content.js
-node --check extension/popup.js
-node --check extension/puzzle_registry.js
-```
+## Submit
 
-3. Verify health endpoint for your selected API mode:
-
-```bash
-curl http://127.0.0.1:8000/health
-# or Docker mode
-curl http://127.0.0.1:18000/health
-```
-
-4. Manual browser test on at least one LinkedIn puzzle page.
-
-## Continuous Integration
-
-CI runs once per pull request and on pushes to `main`. A newer commit cancels an older run for the same PR or branch.
-
-The workflow caches two source-free Docker images: `ci` contains Python, Node, OCR fonts, and test tools; `dependencies` contains only the production environment. The cache key includes the Dockerfile, `.dockerignore`, and all three requirements files. The first run builds and saves the images; later runs load them and mount the current checkout to run `scripts/quality_check.py`, without reinstalling packages or rebuilding the environment. Cache eviction causes a normal rebuild. Bump `solver-ci-v1` in the workflow to refresh base images without changing requirements.
-
-Every run also packages the current source using the saved production environment and checks the resulting API image. The Dockerfile's default target remains the production image used by Compose; CI selects the cached base through `RUNTIME_BASE`.
-
-Run the containerized checks locally with:
-
-```bash
-docker build --target ci -f deploy/local/Dockerfile -t solver-ci-env .
-docker run --rm --user "$(id -u):$(id -g)" --volume "$PWD:/app" solver-ci-env
-```
-
-## Pull Request Guidelines
-
-- Keep changes focused and scoped.
-- Add or update documentation when behavior changes.
-- Use clear commit messages in imperative style (for example: `fix: improve sudoku apply targeting`).
-- Include a short test note in your PR description (what you ran and the result).
-
-## Reporting Issues
-
-When filing an issue, include:
-
-- Browser and version.
-- OS and architecture.
-- Puzzle type and URL.
-- API mode (`uvicorn` or Docker).
-- Steps to reproduce.
-- Relevant logs and screenshots.
-
-## Security
-
-Do not commit secrets, tokens, or private endpoints.
-If you discover a security issue, please report it privately before opening a public issue.
+Use the issue and PR templates. Keep changes focused, explain the resulting behavior, and record validation. Follow the [architecture boundaries](docs/architecture.md); add a regression test for fixes. Never commit credentials or private captures.

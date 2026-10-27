@@ -3,10 +3,11 @@ import os
 import argparse
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from src.image_parser import TangoImageParser
-from src.tango_solver import TangoSolver
+from games.tango_solver.src.image_parser import TangoImageParser
+from games.tango_solver.src.tango_solver import TangoSolver
+from games.tango_solver.src.visualizer import BoardVisualizer
 
 
 def solve_puzzle(image_path, create_gif=False, gif_speed=1, gif_output=None, verbose=False, show_details=False):
@@ -26,7 +27,7 @@ def solve_puzzle(image_path, create_gif=False, gif_speed=1, gif_output=None, ver
         print(f"✅ Found {len(board_state['fixed_pieces'])} fixed pieces")
         print(f"✅ Found {len(board_state['constraints'])} constraints")
 
-    solver = TangoSolver()
+    solver = TangoSolver(visualizer=BoardVisualizer() if create_gif else None)
 
     for piece in board_state['fixed_pieces']:
         solver.add_fixed_piece(piece['row'], piece['col'], piece['piece_type'])
