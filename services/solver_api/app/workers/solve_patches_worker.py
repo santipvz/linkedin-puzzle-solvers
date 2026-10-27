@@ -78,10 +78,12 @@ class _SolveResultLike(Protocol):
     iterations: int
     error: str | None
     relaxed_square_clues: int
+    solution_count: int
+    solution_count_is_exact: bool
 
 
 class _SolverLike(Protocol):
-    def solve(self, board_size: int, clues: list[object]) -> _SolveResultLike: ...
+    def solve(self, board_size: int, clues: list[object], *, max_solutions: int = 1) -> _SolveResultLike: ...
 
 
 class _ParserLike(Protocol):
@@ -305,7 +307,9 @@ def _attempt_solve_for_board_size(
 
     solver = solver_cls()
     clues = _build_solver_clues(parsed["clues"])
-    solve_result = solver.solve(board_size=int(parsed["board_size"]), clues=clues)
+    numbered_count = sum(clue.get("value") is not None for clue in parsed["clues"])
+    sparse_numbers = numbered_count < max(3, int(parsed["board_size"]) - 3)
+    solve_result = solver.solve(board_size=int(parsed["board_size"]), clues=clues, max_solutions=2 if sparse_numbers else 1)
 
     recovered_clues: list[_RecoveredClueChange] = []
     recovery_attempts = 0
@@ -350,6 +354,22 @@ def _attempt_solve_for_board_size(
     }
 
 
+def _has_verified_sparse_solution(attempt: _AttemptPayload) -> bool:
+    result = attempt["solve_result"]
+    clues = attempt["parsed"]["clues"]
+    numbered = [clue for clue in clues if clue.get("value") is not None]
+    return bool(
+        result.solved
+        and result.solution_count_is_exact
+        and result.solution_count == 1
+        and result.relaxed_square_clues == 0
+        and not attempt["recovered_clues"]
+        and numbered
+        and all(float(clue.get("confidence") or 0.0) >= 0.9 for clue in numbered)
+        and all(clue.get("shape") in {"square", "wide", "tall"} for clue in clues if clue.get("value") is None)
+    )
+
+
 def _is_confident_patches_attempt(attempt: _AttemptPayload) -> bool:
     solve_result = attempt["solve_result"]
     parsed = attempt["parsed"]
@@ -361,7 +381,8 @@ def _is_confident_patches_attempt(attempt: _AttemptPayload) -> bool:
         solve_result.solved
         and 5 <= board_size <= 9
         and clue_count >= max(4, board_size)
-        and numbered_clue_count >= min_numbered_clues
+        and (numbered_clue_count >= min_numbered_clues or _has_verified_sparse_solution(attempt))
+        and parsed.get("board_bbox") is not None
     )
 
 
@@ -467,12 +488,7 @@ def solve(image_path: Path) -> JsonDict:
     clue_count = int(len(parsed["clues"]))
     numbered_clue_count = int(sum(1 for clue in parsed["clues"] if clue.get("value") is not None))
     min_numbered_clues = max(3, board_size - 3)
-    parse_reliable = bool(
-        solve_result.solved
-        and clue_count >= max(4, board_size)
-        and numbered_clue_count >= min_numbered_clues
-        and parsed.get("board_bbox") is not None
-    )
+    parse_reliable = _is_confident_patches_attempt(best_attempt)
 
     solved_payload = bool(solve_result.solved and parse_reliable)
     if not solved_payload:
@@ -495,6 +511,10 @@ def solve(image_path: Path) -> JsonDict:
             "numbered_clue_count": numbered_clue_count,
             "min_numbered_clues": min_numbered_clues,
             "raw_solver_solved": bool(solve_result.solved),
+            "solution_count": int(solve_result.solution_count),
+            "solution_count_is_exact": bool(solve_result.solution_count_is_exact),
+            "unique_solution": bool(solve_result.solution_count_is_exact and solve_result.solution_count == 1),
+            "sparse_clues_verified": bool(numbered_clue_count < min_numbered_clues and _has_verified_sparse_solution(best_attempt)),
             "relaxed_square_clues": int(solve_result.relaxed_square_clues),
             "parse_reliable": parse_reliable,
             "ocr_recovery_applied": bool(recovered_clues),

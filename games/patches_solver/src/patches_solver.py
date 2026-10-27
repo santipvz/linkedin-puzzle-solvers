@@ -42,6 +42,8 @@ class PatchesSolveResult:
     iterations: int
     error: str | None = None
     relaxed_square_clues: int = 0
+    solution_count: int = 0
+    solution_count_is_exact: bool = True
 
 
 @dataclass(slots=True)
@@ -62,13 +64,15 @@ class PatchesSolver:
     def iterations(self) -> int:
         return self._iterations
 
-    def solve(self, board_size: int, clues: Iterable[PatchesClue | PatchesClueInput]) -> PatchesSolveResult:
+    def solve(self, board_size: int, clues: Iterable[PatchesClue | PatchesClueInput], *, max_solutions: int = 1) -> PatchesSolveResult:
+        if isinstance(max_solutions, bool) or not isinstance(max_solutions, int) or max_solutions < 1:
+            raise ValueError("max_solutions must be a positive integer.")
         normalized_size = int(board_size)
         normalized_clues, error = self._normalize_clues(clues)
         if error:
             return PatchesSolveResult(solved=False, regions=None, iterations=0, error=error)
 
-        primary_result = self._solve_once(normalized_size, normalized_clues)
+        primary_result = self._solve_once(normalized_size, normalized_clues, max_solutions)
         if primary_result.solved:
             return primary_result
 
@@ -77,7 +81,7 @@ class PatchesSolver:
             return primary_result
 
         relaxed_clues = [replace(clue, shape="any") if clue.shape == "square" else clue for clue in normalized_clues]
-        relaxed_result = self._solve_once(normalized_size, relaxed_clues)
+        relaxed_result = self._solve_once(normalized_size, relaxed_clues, max_solutions)
         relaxed_result.relaxed_square_clues = len(square_indexes)
         relaxed_result.iterations += primary_result.iterations
 
@@ -88,7 +92,7 @@ class PatchesSolver:
         primary_result.iterations += relaxed_result.iterations
         return primary_result
 
-    def _solve_once(self, board_size: int, clues: list[PatchesClue]) -> PatchesSolveResult:
+    def _solve_once(self, board_size: int, clues: list[PatchesClue], max_solutions: int) -> PatchesSolveResult:
         if board_size <= 0:
             return PatchesSolveResult(
                 solved=False,
@@ -160,8 +164,11 @@ class PatchesSolver:
         self._iterations = 0
         assigned: list[_CandidateRegion | None] = [None for _ in range(clue_count)]
         failed_states: set[tuple[int, tuple[int, ...]]] = set()
+        solution_count = 0
+        first_assignment: list[_CandidateRegion | None] | None = None
 
         def search(occupied_mask: int, remaining_indexes: tuple[int, ...]) -> bool:
+            nonlocal solution_count, first_assignment
             self._iterations += 1
 
             state_key = (occupied_mask, remaining_indexes)
@@ -169,7 +176,11 @@ class PatchesSolver:
                 return False
 
             if not remaining_indexes:
-                return occupied_mask == all_mask
+                if occupied_mask == all_mask:
+                    solution_count += 1
+                    if first_assignment is None:
+                        first_assignment = list(assigned)
+                return solution_count >= max_solutions
 
             remaining_cell_count = total_cells - occupied_mask.bit_count()
 
@@ -216,17 +227,21 @@ class PatchesSolver:
                 )
             )
 
+            count_before = solution_count
             for candidate in best_candidates:
                 assigned[best_index] = candidate
                 if search(occupied_mask | candidate.mask, next_remaining):
                     return True
                 assigned[best_index] = None
 
-            failed_states.add(state_key)
+            # Only cache unsatisfiable states. Different earlier rectangle choices
+            # can reach the same occupied mask and yield distinct valid tilings.
+            if solution_count == count_before:
+                failed_states.add(state_key)
             return False
 
-        solved = search(occupied_mask=0, remaining_indexes=tuple(range(clue_count)))
-        if not solved:
+        search_capped = search(occupied_mask=0, remaining_indexes=tuple(range(clue_count)))
+        if first_assignment is None:
             return PatchesSolveResult(
                 solved=False,
                 regions=None,
@@ -235,7 +250,7 @@ class PatchesSolver:
             )
 
         regions: list[PatchesRegion] = []
-        for clue, candidate in zip(clues, assigned):
+        for clue, candidate in zip(clues, first_assignment):
             if candidate is None:
                 return PatchesSolveResult(
                     solved=False,
@@ -261,6 +276,8 @@ class PatchesSolver:
             regions=regions,
             iterations=self._iterations,
             error=None,
+            solution_count=solution_count,
+            solution_count_is_exact=not search_capped,
         )
 
     def _build_candidates_for_clue(
