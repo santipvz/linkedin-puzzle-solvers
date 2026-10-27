@@ -7,7 +7,7 @@ from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from ..application.solve_puzzle import SolvePuzzle
-from ..domain.errors import EmptyImage, ImageTooLarge, SolverError, SolverTimeout, UnknownPuzzle, UnsupportedImage, WorkerFailure
+from ..domain.errors import EmptyImage, ImageTooLarge, SolverBusy, SolverError, SolverTimeout, UnknownPuzzle, UnsupportedImage, WorkerFailure
 from ..domain.models import JsonDict, SolveRequest
 
 
@@ -17,6 +17,7 @@ ERROR_STATUS = {
     UnsupportedImage: 415,
     UnknownPuzzle: 404,
     SolverTimeout: 504,
+    SolverBusy: 503,
     WorkerFailure: 500,
 }
 
@@ -29,7 +30,7 @@ def create_http_app(
 ) -> FastAPI:
     app = FastAPI(
         title="LinkedIn Puzzle Solver API",
-        version="0.1.0",
+        version="0.2.0",
         description="Local API wrapper for Queens, Tango, Mini Sudoku, Zip, Patches, and Wend image solvers.",
     )
     app.add_middleware(
@@ -59,7 +60,8 @@ def create_http_app(
             try:
                 return await asyncio.to_thread(service.execute, request)
             except SolverError as exc:
-                raise HTTPException(status_code=ERROR_STATUS.get(type(exc), 500), detail=str(exc)) from exc
+                headers = {"Retry-After": "2"} if isinstance(exc, SolverBusy) else None
+                raise HTTPException(status_code=ERROR_STATUS.get(type(exc), 500), detail=str(exc), headers=headers) from exc
 
         solve.__name__ = f"solve_{puzzle}"
         return solve

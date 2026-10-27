@@ -23,9 +23,19 @@
     </label>
 
     <label class="field">
+      <span>Solver service</span>
+      <select id="apiMode">
+        <option value="local">Local / custom API</option>
+        <option value="online">Online</option>
+      </select>
+    </label>
+
+    <label class="field">
       <span>API URL</span>
       <input id="apiUrl" type="text" value="http://127.0.0.1:8000" autocomplete="off">
     </label>
+
+    <p id="serviceNote" class="service-note">Local mode solves on your computer.</p>
 
     <div class="actions">
       <button id="selectBoard" type="button">Select Board</button>
@@ -68,6 +78,7 @@
   </main>
 
   <script src="puzzle_registry.js"></script>
+  <script src="api_config.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

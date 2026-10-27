@@ -1,1 +1,2 @@
 -r services/solver_api/requirements.txt
+matplotlib==3.10.1

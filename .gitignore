@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .venv/
+.vercel/
 errors/
 *.zip
 *.png
@@ -15,3 +16,4 @@ errors/
 !games/wend_solver/examples/*.png
 deploy/local/.env
 datasets/
+.env*

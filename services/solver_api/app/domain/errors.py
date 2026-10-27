@@ -22,5 +22,9 @@ class SolverTimeout(SolverError):
     pass
 
 
+class SolverBusy(SolverError):
+    pass
+
+
 class WorkerFailure(SolverError):
     pass

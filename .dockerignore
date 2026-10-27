@@ -1,5 +1,7 @@
 .git
 .github
+.vercel
+.env*
 __pycache__
 **/__pycache__
 **/tests

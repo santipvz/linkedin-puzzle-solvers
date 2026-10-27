@@ -17,9 +17,11 @@ def create_app(settings: Settings | None = None):
             workers_directory=Path(__file__).parent / "workers",
             mode=settings.worker_mode,
             timeout=settings.worker_timeout,
+            max_concurrent_workers=settings.max_concurrent_workers,
         ),
         cache=MemorySolutionCache(),
         captures=FileCaptureStore(settings.capture_directory, settings.repo_root, settings.capture_enabled),
         cache_revisions={puzzle.key: puzzle.cache_revision for puzzle in PUZZLE_DEFINITIONS},
+        max_upload_bytes=settings.max_upload_bytes,
     )
     return create_http_app(service, tuple(service.cache_revisions), settings.cors_origins, settings.cors_origin_regex)
