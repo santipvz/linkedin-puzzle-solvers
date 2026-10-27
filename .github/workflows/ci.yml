@@ -2,67 +2,56 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   solver-and-extension-smoke:
     runs-on: ubuntu-latest
-    env:
-      MPLBACKEND: Agg
-      PYTHONHASHSEED: "0"
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      # Store complete environments, rather than reinstalling packages or
+      # rebuilding their Docker layers for each source-only PR.
+      - name: Restore CI environments
+        id: environments
+        uses: actions/cache@v4
         with:
-          python-version: "3.12"
+          path: ${{ runner.temp }}/solver-ci-images.tar
+          key: solver-ci-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('deploy/local/Dockerfile', '.dockerignore', 'requirements.txt', 'requirements-dev.txt', 'services/solver_api/requirements.txt') }}
 
-      - name: Install Python dependencies
+      - name: Load cached CI environments
+        if: steps.environments.outputs.cache-hit == 'true'
+        env:
+          IMAGE_ARCHIVE: ${{ runner.temp }}/solver-ci-images.tar
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements-dev.txt
+          docker load --input "$IMAGE_ARCHIVE"
 
-      - name: Install OCR template fonts
+      - name: Build CI environments on cache miss
+        if: steps.environments.outputs.cache-hit != 'true'
+        env:
+          IMAGE_ARCHIVE: ${{ runner.temp }}/solver-ci-images.tar
         run: |
-          sudo apt-get update
-          sudo apt-get install -y fonts-dejavu-core fonts-liberation fonts-noto-core
+          docker build --target ci -f deploy/local/Dockerfile -t solver-ci-env .
+          docker build --target dependencies -f deploy/local/Dockerfile -t solver-runtime-env .
+          docker save --output "$IMAGE_ARCHIVE" solver-ci-env solver-runtime-env
 
-      - name: Lint Python modules
+      - name: Run all quality checks in the cached environment
         run: |
-          python -m ruff check .
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            --volume "$PWD:/app" \
+            solver-ci-env
 
-      - name: Compile Python modules
+      # Reuse the saved production environment and only copy the current source.
+      # This still validates the actual Dockerfile and .dockerignore on every PR.
+      - name: Verify runtime image with cached dependencies
         run: |
-          python -m compileall -q core games services/solver_api/app scripts
-
-      - name: Run Python test suite
-        run: |
-          python -m pytest --durations=10
-
-      - name: Run solver smoke checks
-        run: |
-          python scripts/check_puzzle_registry_sync.py
-          python scripts/smoke_check.py
-          python scripts/api_endpoint_smoke.py
-
-      - name: Build runtime image
-        run: |
-          docker build -f deploy/local/Dockerfile -t linkedin-puzzle-solvers-ci .
-          docker run --rm linkedin-puzzle-solvers-ci python -c "import cv2; from app.main import app; assert app.title"
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Check extension JavaScript syntax
-        run: |
-          node --check extension/background.js
-          node --check extension/content.js
-          node --check extension/popup.js
-          node --check extension/puzzle_registry.js
-          node --check extension/wend_paths.js
-          node --test extension/tests/*.test.js
+          docker build --build-arg RUNTIME_BASE=solver-runtime-env -f deploy/local/Dockerfile -t solver-runtime-packaging .
+          docker run --rm solver-runtime-packaging python -c "import cv2; from app.main import app; assert app.title"
