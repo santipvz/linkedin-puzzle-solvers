@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 import tomllib
 from unittest.mock import patch
 
@@ -19,6 +20,12 @@ def test_vercel_and_docker_install_the_same_runtime_dependencies():
     project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
     docker = (REPO_ROOT / "services/solver_api/requirements.txt").read_text().splitlines()
     assert sorted(project["project"]["dependencies"]) == sorted(line for line in docker if line.strip())
+
+
+def test_release_versions_match_across_the_extension_api_and_vercel_metadata():
+    project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
+    manifest = json.loads((REPO_ROOT / "extension/manifest.json").read_text())
+    assert project["project"]["version"] == manifest["version"] == create_app().version
 
 
 def test_serverless_defaults_keep_uploads_below_platform_limit_and_disable_archiving():
