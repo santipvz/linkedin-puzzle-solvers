@@ -59,6 +59,7 @@ PUZZLE_DEFINITIONS: tuple[PuzzleDefinition, ...] = (
         sample_image="games/patches_solver/examples/sample1.png",
         expected_board_size=6,
         sample_required=False,
+        cache_revision=2,
         smoke_samples=(
             "games/patches_solver/examples/sample1.png",
             "games/patches_solver/examples/sample2.png",

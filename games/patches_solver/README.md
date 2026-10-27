@@ -24,6 +24,9 @@ Available board captures:
 - `games/patches_solver/examples/sample1.png`
 - `games/patches_solver/examples/sample2.png`
 - `games/patches_solver/examples/sample3.png`
+- `games/patches_solver/examples/sample4.png`: 8x8 board with 14 clues and only four numbered clues.
+
+Boards with fewer numbered clues than the usual OCR threshold are accepted only when a capped search proves that the original clues have exactly one tiling, without relaxing shapes or changing OCR values. Multiple or unproven solutions remain blocked.
 
 ## Tests
 
