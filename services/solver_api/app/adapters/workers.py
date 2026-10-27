@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -9,7 +10,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from ..domain.errors import SolverError, SolverTimeout, WorkerFailure
+from ..domain.errors import SolverBusy, SolverError, SolverTimeout, WorkerFailure
 from ..domain.models import JsonDict
 
 
@@ -18,22 +19,30 @@ _IMPORT_LOCK = threading.Lock()
 
 
 class WorkerSolver:
-    def __init__(self, worker_filenames: dict[str, str], workers_directory: Path, mode: str = "subprocess", timeout: int = 60) -> None:
+    def __init__(self, worker_filenames: dict[str, str], workers_directory: Path, mode: str = "subprocess", timeout: int = 60,
+                 max_concurrent_workers: int = 0) -> None:
         self.worker_filenames = dict(worker_filenames)
         self.workers_directory = workers_directory
         self.mode = mode
         self.timeout = timeout
         self._solve_functions: dict[str, Any] = {}
+        self._slots = threading.BoundedSemaphore(max_concurrent_workers) if max_concurrent_workers else None
 
     def solve(self, puzzle: str, image: bytes, filename: str | None) -> JsonDict:
-        path = self._write_temp_image(image, filename)
+        if self._slots is not None and not self._slots.acquire(blocking=False):
+            raise SolverBusy("Solver is busy. Try again in a moment.")
         try:
-            response = self._run_solver_worker(self.worker_filenames[puzzle], path)
-            if not isinstance(response, dict):
-                raise WorkerFailure("Worker returned an invalid response.")
-            return response
+            path = self._write_temp_image(image, filename)
+            try:
+                response = self._run_solver_worker(self.worker_filenames[puzzle], path)
+                if not isinstance(response, dict):
+                    raise WorkerFailure("Worker returned an invalid response.")
+                return response
+            finally:
+                path.unlink(missing_ok=True)
         finally:
-            path.unlink(missing_ok=True)
+            if self._slots is not None:
+                self._slots.release()
 
     def _write_temp_image(self, payload: bytes, filename: str | None) -> Path:
         suffix = Path(filename or "").suffix.lower()
@@ -60,6 +69,11 @@ class WorkerSolver:
                 text=True,
                 timeout=self.timeout,
                 check=False,
+                # Serverless runtimes inject their dependency directory into
+                # sys.path; subprocesses need the same import path explicitly.
+                env={**os.environ, "PYTHONPATH": os.pathsep.join(dict.fromkeys(
+                    [path for path in sys.path if path] + os.environ.get("PYTHONPATH", "").split(os.pathsep)
+                ))},
             )
         except subprocess.TimeoutExpired as exc:
             raise SolverTimeout(f"Solver timed out after {self.timeout} seconds.") from exc

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import glob
 import os
 import random
 import tempfile
@@ -14,6 +13,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from core.commons import BoardBBox, crop_board, external_contour_bbox_candidates, morphological_line_projections
 from core.vision import DistanceWeightedKnn, extract_line_groups, select_regular_line_subset
+from core.ocr_fonts import font_fingerprint, ocr_font_paths
 
 
 BOARD_SIZE = 6
@@ -138,7 +138,8 @@ class _MiniSudokuOcr:
         return features, labels
 
     def _dataset_cache_path(self) -> Path:
-        return Path(tempfile.gettempdir()) / "linkedin_puzzle_solvers_sudoku_ocr_v3.npz"
+        fingerprint = font_fingerprint(self._candidate_font_paths())
+        return Path(tempfile.gettempdir()) / f"linkedin_puzzle_solvers_sudoku_ocr_v4_{fingerprint}.npz"
 
     def _candidate_font_paths(self) -> list[str]:
         patterns = [
@@ -163,11 +164,10 @@ class _MiniSudokuOcr:
         )
 
         collected: list[str] = []
-        for pattern in patterns:
-            for path in sorted(glob.glob(pattern)):
-                filename = os.path.basename(path).lower()
-                if any(keyword in filename for keyword in style_keywords):
-                    collected.append(path)
+        for path in ocr_font_paths(patterns, ("NotoSans*.ttf", "DejaVuSans*.ttf")):
+            filename = os.path.basename(path).lower()
+            if any(keyword in filename for keyword in style_keywords):
+                collected.append(path)
 
         unique_paths: list[str] = []
         seen: set[str] = set()

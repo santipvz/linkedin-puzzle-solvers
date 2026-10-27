@@ -14,6 +14,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from core.commons import BoardBBox, GridBounds, crop_board, external_contour_bbox_candidates, uniform_grid_bounds
 from core.vision import DistanceWeightedKnn, build_parsed_board_payload, extract_line_groups
+from core.ocr_fonts import font_fingerprint, ocr_font_paths
 
 
 DEFAULT_BOARD_SIZE = 6
@@ -242,7 +243,7 @@ class _PatchesClueOcr:
         if cached is not None:
             return cached
 
-        font_paths = [path for path in FONT_CANDIDATES if Path(path).exists()]
+        font_paths = ocr_font_paths(FONT_CANDIDATES, ("DejaVuSans-Bold.ttf", "DejaVuSans.ttf", "LiberationSans*.ttf"))
         if not font_paths:
             raise RuntimeError("Could not find any system font for patches OCR templates.")
 
@@ -276,7 +277,8 @@ class _PatchesClueOcr:
         return DistanceWeightedKnn(feature_array, label_array, n_neighbors=3)
 
     def _classifier_cache_path(self) -> Path:
-        return Path(tempfile.gettempdir()) / "linkedin_puzzle_solvers_patches_ocr_v2.npz"
+        paths = ocr_font_paths(FONT_CANDIDATES, ("DejaVuSans-Bold.ttf", "DejaVuSans.ttf", "LiberationSans*.ttf"))
+        return Path(tempfile.gettempdir()) / f"linkedin_puzzle_solvers_patches_ocr_v3_{font_fingerprint(paths)}.npz"
 
     def _load_cached_classifier(self) -> DistanceWeightedKnn | None:
         cache_path = self._classifier_cache_path()

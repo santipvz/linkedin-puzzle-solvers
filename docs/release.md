@@ -22,4 +22,4 @@ git switch --detach v<version>
 
 Attach the zip to the GitHub release. For a local installation, use `extension/` from `main` or the release tag, reload the extension, and refresh the game tabs.
 
-Merging into `main` does not update installed extensions or publish to browser stores. Store publication and Firefox signing are separate manual steps; no workflow currently automates them. The API is deployed with [Docker Compose](../deploy/local/README.md).
+Merging into `main` does not update installed extensions or publish to browser stores. Store publication and Firefox signing are separate manual steps; no workflow currently automates them. Deploy the API locally with [Docker Compose](../deploy/local/README.md), or promote the tagged release to the [Vercel online service](vercel.md). Keep the hosted API compatible with existing extension releases.
