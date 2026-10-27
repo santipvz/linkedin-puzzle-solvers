@@ -201,7 +201,7 @@ test("a single existing note is not mistaken for an already filled cell", async 
 
 function createBackground() {
   const context = vm.createContext({ chrome: { runtime: { onMessage: { addListener() {} } } } });
-  for (const file of ["puzzle_registry.js", "background.js"]) {
+  for (const file of ["puzzle_registry.js", "api_config.js", "background.js"]) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, "..", file), "utf8"), context);
   }
   context.buildApplyTargets = async () => [{ frameId: 1, selection: {} }, { frameId: 2, selection: {} }];

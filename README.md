@@ -82,6 +82,8 @@
 
 Use the stable `main` branch or a release tag. `develop` contains work for the next release.
 
+For online solving, load the extension as in step 2 and select **Online** in its popup. No local API is needed; the board image is sent to our hosted service. For local processing, follow all three steps below.
+
 1. Start the API from the repository root:
 
    ```bash
@@ -100,7 +102,7 @@ The API health check is [localhost:18000/health](http://127.0.0.1:18000/health).
 ## Documentation
 
 - [Extension usage and troubleshooting](extension/README.md)
-- [Docker configuration](deploy/local/README.md) · [API endpoints and settings](services/solver_api/README.md)
+- [Docker configuration](deploy/local/README.md) · [Vercel deployment](docs/vercel.md) · [API endpoints and settings](services/solver_api/README.md)
 - [Contributing and Gitflow](CONTRIBUTING.md) · [Architecture](docs/architecture.md) · [Releases](docs/release.md)
 
 MIT license. See [LICENSE](LICENSE).

@@ -52,6 +52,12 @@ select {
   margin: 12px 0;
 }
 
+.service-note {
+  font-size: 12px;
+  color: #334e68;
+  margin: 0 0 10px;
+}
+
 .settings {
   margin: 8px 0 12px;
   padding: 10px;

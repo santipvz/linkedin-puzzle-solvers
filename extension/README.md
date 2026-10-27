@@ -22,7 +22,9 @@ Install from the stable `main` branch or a release tag. `develop` contains work 
 
 ## Step 1: Start the Solver API (Choose One)
 
-The extension needs a running API backend.
+Choose **Online** in the popup to use the hosted service without installing Python or Docker. The board image is sent to our API over HTTPS and is not archived. Existing local URLs are preserved; choose **Local / custom API** to use your own service as described below. See [Vercel deployment](../docs/vercel.md).
+
+The following options run the API on your computer.
 
 ### Option A: Uvicorn (port 8000)
 

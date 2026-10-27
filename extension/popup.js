@@ -1,5 +1,6 @@
-const DEFAULT_API_URL = "http://127.0.0.1:8000";
+const DEFAULT_API_URL = globalThis.SolverApiConfig.localUrl;
 const STORAGE_API_KEY = "solver_api_url";
+const STORAGE_CUSTOM_API_KEY = "solver_custom_api_url";
 const STORAGE_PUZZLE_KEY = "solver_puzzle_type";
 const STORAGE_AUTO_CLOSE_KEY = "solver_auto_close_after_apply";
 const STORAGE_INTER_CLICK_DELAY_KEY = "solver_inter_click_delay_ms";
@@ -11,6 +12,17 @@ const DEFAULT_INTER_CLICK_DELAY_MS = 45;
 const DEFAULT_INTER_MOVE_DELAY_MS = 40;
 const puzzleTypeSelect = document.getElementById("puzzleType");
 const apiUrlInput = document.getElementById("apiUrl");
+const apiModeSelect = document.getElementById("apiMode");
+const serviceNote = document.getElementById("serviceNote");
+let customApiUrl = DEFAULT_API_URL;
+
+function updateServiceMode() {
+  const online = apiModeSelect.value === "online";
+  apiUrlInput.readOnly = online;
+  serviceNote.textContent = online
+    ? "Online sends the board image to our service. Images are not archived."
+    : "Use your local service or enter your own API URL.";
+}
 const selectBoardButton = document.getElementById("selectBoard");
 const autoDetectButton = document.getElementById("autoDetect");
 const solveButton = document.getElementById("solveBoard");
@@ -275,6 +287,7 @@ async function savePreferences() {
 
   await storageSet({
     [STORAGE_API_KEY]: apiUrlInput.value.trim() || DEFAULT_API_URL,
+    [STORAGE_CUSTOM_API_KEY]: apiModeSelect.value === "online" ? customApiUrl : apiUrlInput.value.trim() || DEFAULT_API_URL,
     [STORAGE_PUZZLE_KEY]: puzzleTypeSelect.value,
     [STORAGE_AUTO_CLOSE_KEY]: applySettings.autoCloseAfterApply,
     [STORAGE_INTER_CLICK_DELAY_KEY]: applySettings.interClickDelayMs,
@@ -286,6 +299,7 @@ async function savePreferences() {
 async function loadPreferences() {
   const stored = await storageGet([
     STORAGE_API_KEY,
+    STORAGE_CUSTOM_API_KEY,
     STORAGE_PUZZLE_KEY,
     STORAGE_AUTO_CLOSE_KEY,
     STORAGE_INTER_CLICK_DELAY_KEY,
@@ -294,6 +308,9 @@ async function loadPreferences() {
   ]);
 
   apiUrlInput.value = stored[STORAGE_API_KEY] || DEFAULT_API_URL;
+  apiModeSelect.value = globalThis.SolverApiConfig.isOnline(apiUrlInput.value) ? "online" : "local";
+  customApiUrl = stored[STORAGE_CUSTOM_API_KEY] || (apiModeSelect.value === "local" ? apiUrlInput.value : DEFAULT_API_URL);
+  updateServiceMode();
   puzzleTypeSelect.value = stored[STORAGE_PUZZLE_KEY] || "queens";
 
   const autoCloseStored = stored[STORAGE_AUTO_CLOSE_KEY];
@@ -328,6 +345,8 @@ async function selectPuzzleFromActiveTab() {
 }
 
 function setBusy(isBusy) {
+  apiModeSelect.disabled = isBusy;
+  apiUrlInput.disabled = isBusy;
   selectBoardButton.disabled = isBusy;
   autoDetectButton.disabled = isBusy;
   solveButton.disabled = isBusy;
@@ -549,6 +568,21 @@ async function runAction(action) {
     setBusy(false);
   }
 }
+
+apiModeSelect.addEventListener("change", () => {
+  if (apiModeSelect.value === "online") {
+    customApiUrl = apiUrlInput.value;
+    apiUrlInput.value = globalThis.SolverApiConfig.onlineUrl;
+  } else {
+    apiUrlInput.value = customApiUrl;
+  }
+  updateServiceMode();
+  savePreferences().catch((error) => setStatus(error.message, true));
+});
+apiUrlInput.addEventListener("change", () => {
+  customApiUrl = apiUrlInput.value;
+  savePreferences().catch((error) => setStatus(error.message, true));
+});
 
 selectBoardButton.addEventListener("click", () => runAction(handleSelectBoard));
 autoDetectButton.addEventListener("click", () => runAction(handleAutoDetect));

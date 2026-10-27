@@ -13,7 +13,7 @@
   ],
   "background": {
     "service_worker": "background.js",
-    "scripts": ["background.js"]
+    "scripts": ["puzzle_registry.js", "api_config.js", "background.js"]
   },
   "action": {
     "default_title": "Puzzle Solver",

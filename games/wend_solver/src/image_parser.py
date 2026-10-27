@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import glob
-import hashlib
-import os
 import tempfile
 from functools import lru_cache
 from pathlib import Path
@@ -14,6 +11,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from core.commons import BoardBBox, crop_board, external_contour_bbox_candidates, load_bgr_image, uniform_grid_bounds
 from core.vision import CosineTemplateMatcher, OcrPrediction, build_parsed_board_payload
+from core.ocr_fonts import font_fingerprint, ocr_font_paths
 
 
 MIN_BOARD_SIZE = 5
@@ -92,11 +90,7 @@ class _LetterOcr:
     def _template_cache_path(font_paths: list[str]) -> Path:
         # Installed fonts affect OCR predictions. Rebuild after adding/updating a
         # font instead of silently retaining a template bank from an older runtime.
-        signatures = []
-        for font_path in font_paths:
-            stat = Path(font_path).stat()
-            signatures.append(f"{font_path}:{stat.st_size}:{stat.st_mtime_ns}")
-        fingerprint = hashlib.sha256("\n".join(signatures).encode()).hexdigest()[:16]
+        fingerprint = font_fingerprint(font_paths)
         return Path(tempfile.gettempdir()) / f"linkedin_puzzle_solvers_wend_letters_v2_{fingerprint}.npz"
 
     def _render_letter(self, letter: str, font: ImageFont.FreeTypeFont, offset_x: int, offset_y: int) -> np.ndarray:
@@ -161,10 +155,7 @@ class _LetterOcr:
             "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
             "/usr/share/fonts/truetype/noto/NotoSans-*.ttf",
         ]
-        paths: list[str] = []
-        for pattern in patterns:
-            paths.extend(sorted(glob.glob(pattern)))
-        return list(dict.fromkeys(path for path in paths if os.path.exists(path)))
+        return ocr_font_paths(patterns, ("DejaVuSans*.ttf", "LiberationSans*.ttf", "NotoSans*.ttf"))
 
 
 @lru_cache(maxsize=1)

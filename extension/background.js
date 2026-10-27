@@ -1,8 +1,8 @@
 if (typeof importScripts === "function") {
-  importScripts("puzzle_registry.js");
+  importScripts("puzzle_registry.js", "api_config.js");
 }
 
-const DEFAULT_API_BASE = "http://127.0.0.1:8000";
+const DEFAULT_API_BASE = globalThis.SolverApiConfig.localUrl;
 const DEFAULT_INTER_CLICK_DELAY_MS = 45;
 const DEFAULT_INTER_MOVE_DELAY_MS = 40;
 const DEFAULT_TANGO_APPLY_MODE = "left-cycle";
@@ -656,6 +656,20 @@ async function cropCapturedImage(dataUrl, selection, options = {}) {
 }
 
 async function callSolverApi(apiBaseUrl, puzzleType, imageBlob, options = {}) {
+  if (globalThis.SolverApiConfig.isOnline(apiBaseUrl) && imageBlob.size > globalThis.SolverApiConfig.maxOnlineUploadBytes) {
+    // JPEG keeps image dimensions intact, so board coordinates still line up.
+    const bitmap = await createImageBitmap(imageBlob);
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    const context = canvas.getContext("2d");
+    context.fillStyle = "white";
+    context.fillRect(0, 0, bitmap.width, bitmap.height);
+    context.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    imageBlob = await canvas.convertToBlob({ type: "image/jpeg", quality: 0.9 });
+    if (imageBlob.size > globalThis.SolverApiConfig.maxOnlineUploadBytes) {
+      throw new Error("Board image is too large for the online service. Select a smaller area or use a local API.");
+    }
+  }
   const safePuzzleType =
     puzzleType === "tango"
       ? "tango"
@@ -671,7 +685,8 @@ async function callSolverApi(apiBaseUrl, puzzleType, imageBlob, options = {}) {
   const endpoint = `${normalizeApiBase(apiBaseUrl)}/solve/${safePuzzleType}`;
 
   const formData = new FormData();
-  formData.append("image", imageBlob, `${safePuzzleType}_board.png`);
+  const extension = imageBlob.type === "image/jpeg" ? "jpg" : "png";
+  formData.append("image", imageBlob, `${safePuzzleType}_board.${extension}`);
 
   const headers = {};
   if (options.captureBoardStart) {
