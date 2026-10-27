@@ -42,5 +42,3 @@ def should_recompute(puzzle_name: str, cached: JsonDict) -> bool:
 
     # Old queens pre-validation false negatives fail before backtracking starts.
     return iterations == 0 and board_size > 0 and regions_detected == board_size
-
-
