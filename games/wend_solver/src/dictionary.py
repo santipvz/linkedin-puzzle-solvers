@@ -31,6 +31,7 @@ def load_wend_dictionary(
 def _candidate_paths(extra_paths: Iterable[str | Path]) -> list[Path]:
     candidates: list[Path] = []
     candidates.append(Path(__file__).resolve().parents[1] / "data" / "words.txt")
+    candidates.append(Path(__file__).resolve().parents[1] / "data" / "supplemental_words.txt")
     env_path = os.getenv(ENV_WORDLIST_PATH)
     if env_path:
         candidates.append(Path(env_path).expanduser())

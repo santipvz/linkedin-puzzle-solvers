@@ -71,7 +71,7 @@ PUZZLE_DEFINITIONS: tuple[PuzzleDefinition, ...] = (
         sample_image="games/wend_solver/examples/sample1.png",
         expected_board_size=6,
         sample_required=True,
-        cache_revision=2,
+        cache_revision=4,
     ),
 )
 

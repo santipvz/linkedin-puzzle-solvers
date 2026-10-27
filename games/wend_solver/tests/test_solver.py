@@ -10,12 +10,13 @@ from PIL import Image, ImageDraw, ImageFont
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 GAMES_ROOT = REPO_ROOT / "games"
-if str(GAMES_ROOT) not in sys.path:
-    sys.path.insert(0, str(GAMES_ROOT))
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-from wend_solver.src.dictionary import load_wend_dictionary
-from wend_solver.src.image_parser import WendImageParser
-from wend_solver.src.wend_solver import WendSolver
+from games.wend_solver.src.dictionary import load_wend_dictionary
+from games.wend_solver.src.image_parser import WendImageParser, _LetterOcr
+from games.wend_solver.src.wend_solver import WendSolver
+from services.solver_api.app.workers import solve_wend_worker as wend_worker
 from services.solver_api.app.workers.solve_wend_worker import solve as solve_wend_worker
 
 
@@ -101,6 +102,94 @@ class WendSolverTests(unittest.TestCase):
 
 
 class WendParserTests(unittest.TestCase):
+    def test_worker_solves_recent_captures_without_inventing_ocr_ambiguity(self) -> None:
+        captures = {
+            "sample3.png": {"TIE", "PEER", "UNIFORM", "ALIKE"},
+            "sample4.png": {"ATOM", "BIOME", "HYBRID", "PHYSICS"},
+            "sample5.png": {"AGILE", "CONTEST", "USE", "POSE"},
+            "sample6.png": {"PUPPY", "PET", "PEPPER", "TYPO"},
+        }
+        for filename, expected in captures.items():
+            with self.subTest(filename=filename):
+                result = solve_wend_worker(GAMES_ROOT / "wend_solver" / "examples" / filename)
+                self.assertTrue(result["solved"], result.get("error"))
+                self.assertEqual(expected, {entry["word"] for entry in result["words"]})
+                self.assertEqual("exact_letters_exact_cover", result["details"]["search_mode"])
+                self.assertTrue(result["details"]["solution_count_is_exact"])
+                self.assertEqual([0.0], result["details"]["solution_costs"])
+                self.assertEqual([], result["details"]["ocr_corrections"])
+
+    @staticmethod
+    def _recovery_board() -> dict:
+        board = [[None] * 5 for _ in range(5)]
+        board[0][:2] = ["C", "A"]
+        board[1][:2] = ["E", "T"]
+        cells = [
+            {"row": row, "col": col, "letter": letter, "confidence": 0.96,
+             "candidates": [{"letter": letter, "confidence": 0.96}]}
+            for row, entries in enumerate(board)
+            for col, letter in enumerate(entries) if letter is not None
+        ]
+        cells[0]["candidates"].extend([
+            {"letter": "G", "confidence": 0.94}, {"letter": "H", "confidence": 0.93},
+        ])
+        return {"board": board, "lengths": [4], "board_size": 5, "visible_cells": 4,
+                "ocr": {"cells": cells, "min_confidence": 0.96, "avg_confidence": 0.96}}
+
+    def test_worker_still_recovers_a_wrong_letter_when_exact_search_fails(self) -> None:
+        with patch.object(WendImageParser, "parse_image", return_value=self._recovery_board()), \
+                patch.object(wend_worker, "_get_solver", return_value=WendSolver(["GATE"])):
+            result = solve_wend_worker("unused.png")
+        self.assertTrue(result["solved"], result.get("error"))
+        self.assertEqual("weighted_ocr_exact_cover", result["details"]["search_mode"])
+        self.assertEqual([{"row": 0, "col": 0, "from": "C", "to": "G"}], result["details"]["ocr_corrections"])
+
+    def test_worker_rejects_ambiguous_ocr_recovery(self) -> None:
+        with patch.object(WendImageParser, "parse_image", return_value=self._recovery_board()), \
+                patch.object(wend_worker, "_get_solver", return_value=WendSolver(["GATE", "HATE"])):
+            result = solve_wend_worker("unused.png")
+        self.assertFalse(result["solved"])
+        self.assertEqual(2, result["details"]["solution_count"])
+        self.assertEqual([], result["words"])
+
+    def test_worker_rejects_ambiguity_in_exact_letters_without_trying_recovery(self) -> None:
+        parsed = self._recovery_board()
+        parsed["board"][0][:2] = ["A", "B"]
+        parsed["board"][1][:2] = ["C", "D"]
+        parsed["lengths"] = [2, 2]
+        solver = WendSolver(["AB", "CD", "AC", "BD"])
+        with patch.object(WendImageParser, "parse_image", return_value=parsed), \
+                patch.object(wend_worker, "_get_solver", return_value=solver), \
+                patch.object(solver, "solve", wraps=solver.solve) as solve:
+            result = solve_wend_worker("unused.png")
+        self.assertFalse(result["solved"])
+        self.assertEqual(2, result["details"]["solution_count"])
+        self.assertEqual(1, solve.call_count)
+
+    def test_worker_solves_seven_by_seven_capture_with_correct_r(self) -> None:
+        result = solve_wend_worker(GAMES_ROOT / "wend_solver" / "examples" / "sample2.png")
+        self.assertTrue(result["solved"], result.get("error"))
+        self.assertEqual(7, result["board_size"])
+        self.assertEqual("R", result["details"]["parsed_board"][1][4])
+        self.assertTrue(result["details"]["unique_solution"])
+        self.assertEqual([], result["details"]["ocr_corrections"])
+        self.assertEqual({"KNOT", "DWELL", "EQUINOX", "DRAWBACK", "ENDURANCE", "WORKSTATION"},
+                         {entry["word"] for entry in result["words"]})
+        paths = [(cell["row"], cell["col"]) for word in result["words"] for cell in word["path"]]
+        self.assertEqual(44, len(paths))
+        self.assertEqual(44, len(set(paths)))
+
+    def test_template_cache_changes_with_the_available_fonts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            first = Path(tmp) / "first.ttf"
+            second = Path(tmp) / "second.ttf"
+            first.write_bytes(b"font-one")
+            second.write_bytes(b"font-two")
+            original = _LetterOcr._template_cache_path([str(first)])
+            self.assertNotEqual(original, _LetterOcr._template_cache_path([str(first), str(second)]))
+            first.write_bytes(b"font-one-updated")
+            self.assertNotEqual(original, _LetterOcr._template_cache_path([str(first)]))
+
     def test_parses_synthetic_example_capture(self) -> None:
         board = [
             ["E", "R", "O", "R", "E", "T"],
@@ -231,6 +320,8 @@ class WendDictionaryTests(unittest.TestCase):
         self.assertIn("MAGENTA", words)
         self.assertIn("BIOLOGIST", words)
         self.assertIn("RHINOCEROS", words)
+        self.assertIn("BIOME", words)
+        self.assertIn("BIOMES", words)
 
     def test_supports_additional_env_wordlist(self) -> None:
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt") as tmp:

@@ -550,8 +550,15 @@ async function sendTabMessageWithInjection(tabId, message, options = {}) {
 
 async function safeSendTabMessage(tabId, message, options = {}) {
   try {
-    return await sendTabMessageWithInjection(tabId, message, options);
+    const response = await sendTabMessageWithInjection(tabId, message, options);
+    if (message.type === "applySolution" && message.puzzleType === "sudoku" && !response) {
+      return { ok: false, deliveryUnknown: true, error: "Sudoku apply did not acknowledge the request. Stopped to avoid replaying moves." };
+    }
+    return response;
   } catch (error) {
+    if (message.type === "applySolution" && message.puzzleType === "sudoku") {
+      return { ok: false, deliveryUnknown: !isNoReceiverError(error), error: error.message || String(error) };
+    }
     return null;
   }
 }
@@ -1184,7 +1191,7 @@ function shouldRetrySudokuApplyWithoutSelection(response) {
     return true;
   }
 
-  if (response.ok) {
+  if (response.ok || response.inProgress || response.deliveryUnknown) {
     return false;
   }
 
@@ -1236,6 +1243,11 @@ async function applySolutionForSelection(
       { frameId: target.frameId }
     );
 
+    // A partial write or an uncertain delivery must never be replayed in another frame.
+    if (puzzleType === "sudoku" && response && !shouldRetrySudokuApplyWithoutSelection(response)) {
+      return response;
+    }
+
     const shouldRetryWithoutSelection =
       puzzleType === "sudoku" && shouldRetrySudokuApplyWithoutSelection(response);
 
@@ -1248,6 +1260,10 @@ async function applySolutionForSelection(
         },
         { frameId: target.frameId }
       );
+
+      if (fallbackResponse && !shouldRetrySudokuApplyWithoutSelection(fallbackResponse)) {
+        return fallbackResponse;
+      }
 
       if (fallbackResponse && fallbackResponse.ok) {
         response = fallbackResponse;
@@ -1298,6 +1314,10 @@ async function applySolutionForSelection(
         },
         { frameId }
       );
+
+      if (fallbackResponse && !shouldRetrySudokuApplyWithoutSelection(fallbackResponse)) {
+        return fallbackResponse;
+      }
 
       if (fallbackResponse && fallbackResponse.ok) {
         response = fallbackResponse;

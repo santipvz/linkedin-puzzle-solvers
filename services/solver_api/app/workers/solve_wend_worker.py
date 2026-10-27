@@ -23,7 +23,7 @@ from games.wend_solver.src.wend_solver import WendSolver
 OCR_ALTERNATE_SCORE_DELTA = 0.14
 MIN_OCR_CELL_CONFIDENCE = 0.35
 MIN_OCR_AVG_CONFIDENCE = 0.72
-PIPELINE_REVISION = 2
+PIPELINE_REVISION = 4
 
 
 @lru_cache(maxsize=1)
@@ -115,13 +115,22 @@ def solve(image_path: str | Path) -> JsonDict:
         solver = _get_solver()
         typed_board = board
         typed_lengths = [int(length) for length in lengths]
-        letter_options = _ocr_letter_options(parsed)
+        # OCR alternatives are a recovery path. Expanding a readable board up
+        # front invents ambiguity even when its original letters have one cover.
+        search_mode = "exact_letters_exact_cover"
         solve_result = solver.solve(
             typed_board,
             typed_lengths,
-            letter_options=letter_options,
             max_solutions=10,
         )
+        if not solve_result:
+            search_mode = "weighted_ocr_exact_cover"
+            solve_result = solver.solve(
+                typed_board,
+                typed_lengths,
+                letter_options=_ocr_letter_options(parsed),
+                max_solutions=10,
+            )
         solutions = solve_result.solutions
         solved_board = [list(row) for row in typed_board]
         ocr_corrections: list[JsonDict] = []
@@ -197,7 +206,7 @@ def solve(image_path: str | Path) -> JsonDict:
                 "board": solved_board,
                 "parsed_board": board,
                 "ocr_corrections": ocr_corrections,
-                "search_mode": "weighted_ocr_exact_cover",
+                "search_mode": search_mode,
                 "board_bbox": parsed.get("board_bbox"),
                 "ocr": parsed.get("ocr"),
             },
