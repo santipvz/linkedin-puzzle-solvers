@@ -5,6 +5,7 @@ let quickSolveButton = null;
 let quickSolveStatus = null;
 let quickSolveBusy = false;
 let quickSolveObservedUrl = "";
+let sudokuApplyBusy = false;
 
 const puzzleRegistry = globalThis.PuzzleRegistry;
 if (!puzzleRegistry) {
@@ -1284,10 +1285,11 @@ function isLikelySudokuCellElement(element, selection, cellWidth, cellHeight) {
     return false;
   }
 
-  const minWidth = Math.max(6, cellWidth * 0.22);
-  const minHeight = Math.max(6, cellHeight * 0.22);
-  const maxWidth = Math.max(cellWidth * 2.4, 18);
-  const maxHeight = Math.max(cellHeight * 2.4, 18);
+  // A digit span or a multi-cell wrapper is not a cell.
+  const minWidth = cellWidth * 0.7;
+  const minHeight = cellHeight * 0.7;
+  const maxWidth = cellWidth * 1.3;
+  const maxHeight = cellHeight * 1.3;
 
   if (rect.width < minWidth || rect.height < minHeight) {
     return false;
@@ -1307,14 +1309,16 @@ function findSudokuCellElementAtPoint(x, y, selection, cellWidth, cellHeight) {
   }
 
   let current = point.element;
+  let geometricFallback = null;
   for (let depth = 0; current && depth < 8; depth += 1) {
     if (isLikelySudokuCellElement(current, selection, cellWidth, cellHeight)) {
-      return current;
+      if (current.getAttribute("data-cell-idx") !== null) return current;
+      if (!geometricFallback) geometricFallback = current;
     }
     current = current.parentElement;
   }
 
-  return null;
+  return geometricFallback;
 }
 
 function inferSudokuGridPositionFromCell(cellElement, selection, cellWidth, cellHeight, boardSize) {
@@ -1347,113 +1351,85 @@ function inferSudokuGridPositionFromCell(cellElement, selection, cellWidth, cell
   return { row, col };
 }
 
-function buildSudokuPointCandidates(baseX, baseY, cellWidth, cellHeight, selection) {
-  const factors = [
-    [0, 0],
-    [0.18, 0],
-    [-0.18, 0],
-    [0, 0.18],
-    [0, -0.18],
-    [0.14, 0.14],
-    [0.14, -0.14],
-    [-0.14, 0.14],
-    [-0.14, -0.14],
-  ];
-
-  const points = [];
-  const seen = new Set();
-
-  for (const [fx, fy] of factors) {
-    const x = baseX + fx * cellWidth;
-    const y = baseY + fy * cellHeight;
-    if (!isPointInsideSelection(x, y, selection, 1)) {
-      continue;
-    }
-
-    const key = `${Math.round(x)}:${Math.round(y)}`;
-    if (seen.has(key)) {
-      continue;
-    }
-
-    seen.add(key);
-    points.push({ x, y });
-  }
-
-  if (!points.length && isPointInsideSelection(baseX, baseY, selection, 0)) {
-    points.push({ x: baseX, y: baseY });
-  }
-
-  return points;
+function readSudokuCellValue(cell, boardSize) {
+  // Notes are candidates, never a committed value (even when only one is present).
+  if (cell.querySelector(".sudoku-cell-notes")) return 0;
+  const text = String(cell.textContent || "").trim();
+  if (!text) return 0;
+  if (!/^[1-9]$/.test(text)) return null;
+  const value = Number(text);
+  return value <= boardSize ? value : null;
 }
 
-function findKeyboardTarget(element) {
-  let current = element instanceof Element ? element : null;
-
-  for (let depth = 0; current && depth < 8; depth += 1) {
-    if (typeof current.dispatchEvent === "function") {
-      return current;
-    }
-    current = current.parentElement;
-  }
-
-  return null;
-}
-
-function scoreSudokuSelectionCandidate(candidate, boardSize, moves) {
-  const normalized = normalizeSelection(candidate);
-  if (!normalized || !boardSize || !Array.isArray(moves) || !moves.length) {
-    return 0;
-  }
-
+function getSudokuSnapshot(selection, boardSize) {
+  const normalized = normalizeSelection(selection);
+  if (!normalized) return null;
   const cellWidth = normalized.width / boardSize;
   const cellHeight = normalized.height / boardSize;
-  let matchedCount = 0;
+  const cells = [];
+  const seen = new Set();
+  const geometry = [];
+  const values = [];
 
-  for (const move of moves) {
-    const baseX = normalized.x + (move.col + 0.5) * cellWidth;
-    const baseY = normalized.y + (move.row + 0.5) * cellHeight;
-    const pointCandidates = buildSudokuPointCandidates(baseX, baseY, cellWidth, cellHeight, normalized);
-    let matchedMove = false;
-
-    for (const point of pointCandidates) {
-      const cellElement = findSudokuCellElementAtPoint(point.x, point.y, normalized, cellWidth, cellHeight);
-      const inferredPosition = inferSudokuGridPositionFromCell(cellElement, normalized, cellWidth, cellHeight, boardSize);
-      if (inferredPosition && inferredPosition.row === move.row && inferredPosition.col === move.col) {
-        matchedMove = true;
-        break;
+  for (let row = 0; row < boardSize; row += 1) {
+    for (let col = 0; col < boardSize; col += 1) {
+      const x = normalized.x + (col + 0.5) * cellWidth;
+      const y = normalized.y + (row + 0.5) * cellHeight;
+      const cell = findSudokuCellElementAtPoint(x, y, normalized, cellWidth, cellHeight);
+      const position = inferSudokuGridPositionFromCell(cell, normalized, cellWidth, cellHeight, boardSize);
+      if (!cell || !cell.isConnected || seen.has(cell) || !position || position.row !== row || position.col !== col) {
+        return null;
       }
-    }
-
-    if (matchedMove) {
-      matchedCount += 1;
+      const cellIndex = cell.getAttribute("data-cell-idx");
+      if (cellIndex !== null && Number(cellIndex) !== row * boardSize + col) return null;
+      const rect = cell.getBoundingClientRect();
+      if (Math.abs(rect.left + rect.width / 2 - x) > cellWidth * 0.25 ||
+          Math.abs(rect.top + rect.height / 2 - y) > cellHeight * 0.25) {
+        return null;
+      }
+      const value = readSudokuCellValue(cell, boardSize);
+      if (value === null) return null;
+      seen.add(cell);
+      cells.push(cell);
+      values.push(value);
+      geometry.push(...[rect.left, rect.top, rect.width, rect.height].map(Math.round));
     }
   }
+  return { cells, values, geometry: geometry.join(":") };
+}
 
-  return matchedCount;
+function scoreSudokuSelectionCandidate(candidate, boardSize) {
+  return getSudokuSnapshot(candidate, boardSize) ? boardSize * boardSize : 0;
 }
 
 async function getReadySudokuSelectionCandidates(selection, boardSize, moves) {
-  let candidates = buildApplySelectionCandidates("sudoku", selection);
-
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    const scoredCandidates = candidates
-      .map((entry, index) => ({
-        ...entry,
-        index,
-        strictPreflightCount: scoreSudokuSelectionCandidate(entry.selection, boardSize, moves),
-      }))
-      .filter((entry) => entry.strictPreflightCount > 0)
-      .sort((a, b) => b.strictPreflightCount - a.strictPreflightCount || a.index - b.index);
-
-    if (scoredCandidates.length > 0) {
-      return scoredCandidates;
+  let previousGeometry = new Set();
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const ready = [];
+    const currentGeometry = new Set();
+    for (const entry of buildApplySelectionCandidates("sudoku", selection)) {
+      if (!scoreSudokuSelectionCandidate(entry.selection, boardSize, moves)) continue;
+      const snapshot = getSudokuSnapshot(entry.selection, boardSize);
+      if (!snapshot) continue;
+      currentGeometry.add(snapshot.geometry);
+      if (previousGeometry.has(snapshot.geometry)) ready.push(entry);
     }
-
-    await sleep(120);
-    candidates = buildApplySelectionCandidates("sudoku", selection);
+    if (ready.length) return ready;
+    previousGeometry = currentGeometry;
+    await sleep(100);
   }
-
   return [];
+}
+
+function isSudokuCellSelected(cell) {
+  if (cell.getAttribute("data-cell-idx") !== null) {
+    return cell.classList.contains("sudoku-cell-active");
+  }
+  return cell.getAttribute("aria-selected") === "true";
+}
+
+function sudokuNotesEnabled() {
+  return Boolean(document.querySelector('[data-control-btn="notes"] .sudoku-under-board__text--active'));
 }
 
 function focusKeyboardTarget(target) {
@@ -1517,13 +1493,6 @@ function dispatchKeyboardKey(key, code, keyCode, options = {}) {
   }
 
   return true;
-}
-
-function dispatchDigitKey(digitValue, target = null) {
-  const key = String(digitValue);
-  const keyCode = key.charCodeAt(0);
-  const code = `Digit${key}`;
-  return dispatchKeyboardKey(key, code, keyCode, { includeKeypress: true, target });
 }
 
 function dispatchArrowKey(direction) {
@@ -1849,205 +1818,125 @@ async function applyTangoSolution(result, selection, settings) {
 }
 
 async function applySudokuSolution(result, selection, settings) {
-  const applySettings = normalizeApplySettings(settings);
-
-  const boardSize = Number(result?.board_size);
-  if (!boardSize) {
-    return { ok: false, error: "Invalid board size in solution." };
+  if (sudokuApplyBusy) {
+    return { ok: false, error: "Sudoku apply is already in progress.", inProgress: true };
   }
+  sudokuApplyBusy = true;
+  try {
+    return await applyVerifiedSudokuSolution(result, selection, settings);
+  } finally {
+    sudokuApplyBusy = false;
+  }
+}
 
+async function applyVerifiedSudokuSolution(result, selection, settings) {
+  const applySettings = normalizeApplySettings(settings);
+  const boardSize = Number(result?.board_size);
+  if (boardSize !== 6) return { ok: false, error: "Invalid Mini Sudoku board size." };
   const moves = Array.isArray(result?.moves) ? result.moves : [];
   if (!moves.length) {
-    if (result?.solved) {
-      return {
-        ok: true,
-        appliedCount: 0,
-        clickCount: 0,
-        keyCount: 0,
-        strategy: "already-filled",
-      };
+    return result?.solved
+      ? { ok: true, appliedCount: 0, clickCount: 0, keyCount: 0, strategy: "already-filled" }
+      : { ok: false, error: "No Sudoku solution moves are available." };
+  }
+  const actionableMoves = moves.map((move) => ({ row: Number(move?.row), col: Number(move?.col), value: Number(move?.value) }));
+  const coordinates = new Set();
+  for (const move of actionableMoves) {
+    const coordinate = `${move.row}:${move.col}`;
+    if (!Number.isInteger(move.row) || !Number.isInteger(move.col) || !Number.isInteger(move.value) ||
+        move.row < 0 || move.row >= boardSize || move.col < 0 || move.col >= boardSize ||
+        move.value < 1 || move.value > boardSize || coordinates.has(coordinate)) {
+      return { ok: false, error: "Invalid or duplicate Sudoku solution moves." };
     }
-    return { ok: false, error: "No Sudoku solution moves are available." };
+    coordinates.add(coordinate);
   }
 
-  const actionableMoves = moves
-    .map((move) => ({
-      row: Number(move?.row),
-      col: Number(move?.col),
-      value: Number(move?.value),
-    }))
-    .filter(
-      (move) =>
-        Number.isInteger(move.row) &&
-        Number.isInteger(move.col) &&
-        Number.isInteger(move.value) &&
-        move.row >= 0 &&
-        move.row < boardSize &&
-        move.col >= 0 &&
-        move.col < boardSize &&
-        move.value >= 1 &&
-        move.value <= boardSize
-    );
-
-  if (!actionableMoves.length) {
-    return { ok: false, error: "No valid Sudoku solution moves are available." };
+  const counts = { appliedCount: 0, clickCount: 0, keyCount: 0 };
+  const fail = (error) => ({ ok: false, error, ...counts, strategy: "verified-cell-then-keyboard" });
+  if (sudokuNotesEnabled()) {
+    const control = document.querySelector('[data-control-btn="notes"]');
+    const rect = control?.getBoundingClientRect();
+    if (!rect || !leftClickViewportPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)) {
+      return fail("Could not disable Sudoku notes mode.");
+    }
+    counts.clickCount += 1;
+    for (let attempt = 0; attempt < 12 && sudokuNotesEnabled(); attempt += 1) await sleep(50);
+    if (sudokuNotesEnabled()) return fail("Sudoku notes mode is still enabled. Stopped before typing.");
   }
-
   const selectionCandidates = await getReadySudokuSelectionCandidates(selection, boardSize, actionableMoves);
   if (!selectionCandidates.length) {
-    return { ok: false, error: "Sudoku board is not ready for applying moves." };
+    return fail("Sudoku board is not ready: could not identify all 36 readable cells in a stable grid.");
   }
-
-  let bestAttempt = {
-    appliedCount: 0,
-    clickCount: 0,
-    keyCount: 0,
-    alignedCount: 0,
-    relaxedCount: 0,
-  };
-
-  for (let candidateIndex = 0; candidateIndex < selectionCandidates.length; candidateIndex += 1) {
-    const candidateEntry = selectionCandidates[candidateIndex];
-    const candidate = candidateEntry.selection;
-    const cellWidth = candidate.width / boardSize;
-    const cellHeight = candidate.height / boardSize;
-
-    let appliedCount = 0;
-    let clickCount = 0;
-    let keyCount = 0;
-    let alignedCount = 0;
-    let relaxedCount = 0;
-
-    for (const move of actionableMoves) {
-      const row = move.row;
-      const col = move.col;
-      const value = move.value;
-
-      const baseX = candidate.x + (col + 0.5) * cellWidth;
-      const baseY = candidate.y + (row + 0.5) * cellHeight;
-      const pointCandidates = buildSudokuPointCandidates(baseX, baseY, cellWidth, cellHeight, candidate);
-
-      let moveApplied = false;
-      let strictMatchesForMove = 0;
-
-      for (const point of pointCandidates) {
-        const cellElement = findSudokuCellElementAtPoint(point.x, point.y, candidate, cellWidth, cellHeight);
-        if (!cellElement) {
-          continue;
-        }
-
-        const inferredPosition = inferSudokuGridPositionFromCell(cellElement, candidate, cellWidth, cellHeight, boardSize);
-        if (!inferredPosition || inferredPosition.row !== row || inferredPosition.col !== col) {
-          continue;
-        }
-
-        strictMatchesForMove += 1;
-
-        const clicked = leftClickViewportPoint(point.x, point.y);
-        if (!clicked) {
-          continue;
-        }
-
-        alignedCount += 1;
-        clickCount += 1;
-        await sleep(applySettings.interClickDelayMs);
-
-        const livePointTarget = getElementAtViewportPoint(point.x, point.y);
-        const keyboardTarget =
-          findKeyboardTarget(cellElement) || findKeyboardTarget(livePointTarget && livePointTarget.element) || null;
-
-        focusKeyboardTarget(cellElement);
-        if (dispatchDigitKey(value, keyboardTarget)) {
-          keyCount += 1;
-          appliedCount += 1;
-          moveApplied = true;
-          break;
-        }
+  // Choose once, before writing. Never replay a partially applied solution in another region.
+  const candidate = selectionCandidates[0].selection;
+  let snapshot = getSudokuSnapshot(candidate, boardSize);
+  if (!snapshot) return fail("Sudoku board changed before applying moves.");
+  const initialGrid = result?.initial_grid;
+  if (Array.isArray(initialGrid) && initialGrid.length === boardSize && initialGrid.every((row) => Array.isArray(row) && row.length === boardSize)) {
+    for (let index = 0; index < snapshot.values.length; index += 1) {
+      const expected = Number(initialGrid[Math.floor(index / boardSize)][index % boardSize]);
+      const move = actionableMoves.find((entry) => entry.row * boardSize + entry.col === index);
+      if (snapshot.values[index] !== expected && (!move || snapshot.values[index] !== move.value)) {
+        return fail("Sudoku board no longer matches the captured puzzle. Solve again before applying.");
       }
-
-      if (!moveApplied && (strictMatchesForMove === 0 || alignedCount === 0)) {
-        for (const point of pointCandidates) {
-          const clicked = leftClickViewportPoint(point.x, point.y);
-          if (!clicked) {
-            continue;
-          }
-
-          clickCount += 1;
-          await sleep(applySettings.interClickDelayMs);
-
-          const livePointTarget = getElementAtViewportPoint(point.x, point.y);
-          const keyboardTarget = findKeyboardTarget(livePointTarget && livePointTarget.element) || null;
-          if (dispatchDigitKey(value, keyboardTarget)) {
-            keyCount += 1;
-            appliedCount += 1;
-            relaxedCount += 1;
-            moveApplied = true;
-            break;
-          }
-        }
-      }
-
-      await sleep(applySettings.interMoveDelayMs);
-
-      if (!moveApplied) {
-        continue;
-      }
-    }
-
-    if (
-      appliedCount > bestAttempt.appliedCount ||
-      (appliedCount === bestAttempt.appliedCount && alignedCount > bestAttempt.alignedCount) ||
-      (appliedCount === bestAttempt.appliedCount && alignedCount === bestAttempt.alignedCount && clickCount > bestAttempt.clickCount)
-    ) {
-      bestAttempt = {
-        appliedCount,
-        clickCount,
-        keyCount,
-        alignedCount,
-        relaxedCount,
-      };
-    }
-
-    if (appliedCount === actionableMoves.length) {
-      const strategyBase = candidateEntry.source === "auto-detect" ? ":auto-detect" : "";
-
-      if (alignedCount === actionableMoves.length) {
-        return {
-          ok: true,
-          appliedCount,
-          clickCount,
-          keyCount,
-          alignedCount,
-          relaxedCount,
-          strategy: `strict-cell-then-keyboard${strategyBase}`,
-        };
-      }
-
-      return {
-        ok: true,
-        appliedCount,
-        clickCount,
-        keyCount,
-        alignedCount,
-        relaxedCount,
-        strategy:
-          alignedCount > 0
-            ? `strict-cell-then-keyboard+relaxed-fallback${strategyBase}`
-            : `relaxed-click-then-keyboard${strategyBase}`,
-      };
     }
   }
 
-  return {
-    ok: false,
-    error: `Could not confidently apply Sudoku moves. Tried ${selectionCandidates.length} region(s).`,
-    appliedCount: bestAttempt.appliedCount,
-    clickCount: bestAttempt.clickCount,
-    keyCount: bestAttempt.keyCount,
-    alignedCount: bestAttempt.alignedCount,
-    relaxedCount: bestAttempt.relaxedCount,
-    strategy: "strict-cell-then-keyboard+relaxed-fallback",
-  };
+  for (const move of actionableMoves) {
+    if (sudokuNotesEnabled()) return fail("Sudoku notes mode was enabled during apply. Stopped before typing.");
+    const index = move.row * boardSize + move.col;
+    snapshot = getSudokuSnapshot(candidate, boardSize);
+    if (!snapshot) return fail("Sudoku grid moved or became unreadable. Stopped applying.");
+    if (snapshot.values[index] === move.value) continue;
+    const beforeValues = snapshot.values;
+    const geometry = snapshot.geometry;
+    const rect = snapshot.cells[index].getBoundingClientRect();
+    if (!leftClickViewportPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)) {
+      return fail(`Could not select Sudoku cell (${move.row + 1}, ${move.col + 1}).`);
+    }
+    counts.clickCount += 1;
+    await sleep(Math.max(80, applySettings.interClickDelayMs));
+
+    // A click can rerender the whole grid. Reacquire the live cell and wait for selection.
+    let live = null;
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      live = getSudokuSnapshot(candidate, boardSize);
+      if (!live || live.geometry !== geometry) return fail("Sudoku grid moved while selecting a cell.");
+      if (live.values.some((value, cellIndex) => value !== beforeValues[cellIndex])) {
+        return fail("Sudoku board changed while selecting a cell. Stopped applying.");
+      }
+      if (isSudokuCellSelected(live.cells[index])) break;
+      live = null;
+      await sleep(50);
+    }
+    if (!live) return fail(`Sudoku did not select cell (${move.row + 1}, ${move.col + 1}). Stopped before typing.`);
+    // Cells are non-focusable divs. Synthetic clicks do not perform the
+    // browser's default focus action, so focus the game's keyboard surface.
+    const keyboardTarget = live.cells[index].closest(".sudoku-grid") || live.cells[index];
+    // One keydown per value. Sending keypress too can trigger a second input handler.
+    if (!dispatchKeyboardKey(String(move.value), `Digit${move.value}`, 48 + move.value,
+        { includeKeypress: false, target: keyboardTarget })) {
+      return fail("Could not send a Sudoku number.");
+    }
+    counts.keyCount += 1;
+
+    let verified = false;
+    for (let attempt = 0; attempt < 16; attempt += 1) {
+      const after = getSudokuSnapshot(candidate, boardSize);
+      if (after) {
+        if (after.geometry !== geometry || after.values.some((value, cellIndex) => cellIndex !== index && value !== beforeValues[cellIndex])) {
+          return fail("Sudoku input changed another cell or the grid moved. Stopped without replaying moves.");
+        }
+        if (after.values[index] === move.value) { verified = true; break; }
+        if (after.values[index] !== beforeValues[index]) return fail("Sudoku entered an unexpected number. Stopped applying.");
+      }
+      await sleep(50);
+    }
+    if (!verified) return fail(`Sudoku did not confirm ${move.value} in cell (${move.row + 1}, ${move.col + 1}). Stopped without replaying moves.`);
+    counts.appliedCount += 1;
+    await sleep(applySettings.interMoveDelayMs);
+  }
+  return { ok: true, ...counts, strategy: "verified-cell-then-keyboard" };
 }
 
 function buildZipDirectionList(result) {

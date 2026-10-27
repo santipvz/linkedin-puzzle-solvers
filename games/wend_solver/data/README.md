@@ -12,4 +12,6 @@ python3 scripts/build_wend_wordlist.py /usr/share/dict/american-english games/we
 
 At runtime, `WEND_WORDLIST_PATH=/path/to/words.txt` can add a reviewed custom wordlist without changing the repository data. Missing configured files are treated as deployment errors.
 
+`supplemental_words.txt` adds reviewed vocabulary missing from the base wordlist, currently BIOME and its plural BIOMES. These entries participate in the normal dictionary search for every board; the base file and its checksum remain reproducible.
+
 See `SCOWL-NOTICE.txt` for the complete Debian/SCOWL copyright record and component notices.

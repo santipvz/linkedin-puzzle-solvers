@@ -13,6 +13,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-dejavu-core \
     fonts-liberation \
+    fonts-noto-core \
     && rm -rf /var/lib/apt/lists/*
 
 COPY services/solver_api/requirements.txt /tmp/requirements.txt

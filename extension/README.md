@@ -11,7 +11,7 @@ Browser extension for solving LinkedIn daily puzzles through the local solver AP
 - Auto-apply support:
   - Queens: click-based input.
   - Tango: configurable click strategy.
-  - Mini Sudoku: strict cell-target + keyboard input.
+  - Mini Sudoku: stable 36-cell grid detection and verified keyboard input; stops on unconfirmed writes.
   - Zip: start click + arrow keys.
   - Patches: rectangle drag from corner to corner.
   - Wend: progressive drag through each solved word path.
@@ -102,4 +102,6 @@ curl http://127.0.0.1:18000/health
 - If quick widget does not appear, refresh the LinkedIn game page.
 - If board detection misses once, run `Select Board` manually and reuse it.
 - LinkedIn games run in an iframe; this extension includes frame-aware mapping for detection, overlay, and apply.
+- Mini Sudoku disables Notes mode, waits for a complete, stable, readable grid, checks LinkedIn's cell indices and active-cell marker, focuses the keyboard-enabled grid (the cells themselves cannot take focus), and verifies each committed number before continuing. If a click or number is not accepted, it stops instead of replaying the solution or clicking guessed cells. A second apply request cannot run concurrently in the same game frame.
+- After updating extension code, reload the extension and refresh existing LinkedIn tabs once so they use the updated content script.
 - If Firefox shows `background.service_worker is currently disabled. Add background.scripts.`, remove and reload the temporary add-on from `extension/manifest.json` after pulling latest changes.

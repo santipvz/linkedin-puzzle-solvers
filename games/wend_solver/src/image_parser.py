@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import glob
+import hashlib
 import os
 import tempfile
 from functools import lru_cache
@@ -50,17 +51,18 @@ class _LetterOcr:
         return tuple(results)
 
     def _load_or_build_templates(self) -> tuple[np.ndarray, list[str]]:
-        cache_path = Path(tempfile.gettempdir()) / "linkedin_puzzle_solvers_wend_letters_v1.npz"
+        font_paths = self._candidate_font_paths()
+        cache_path = self._template_cache_path(font_paths)
         if cache_path.exists():
             try:
-                cached = np.load(cache_path)
-                return cached["features"].astype(np.float32), [str(value) for value in cached["labels"].tolist()]
+                with np.load(cache_path) as cached:
+                    return cached["features"].astype(np.float32), [str(value) for value in cached["labels"].tolist()]
             except (OSError, ValueError, KeyError, EOFError):
                 cache_path.unlink(missing_ok=True)
 
         features: list[np.ndarray] = []
         labels: list[str] = []
-        for font_path in self._candidate_font_paths():
+        for font_path in font_paths:
             for size in (24, 28, 32, 36, 40):
                 try:
                     font = ImageFont.truetype(font_path, size)
@@ -85,6 +87,17 @@ class _LetterOcr:
         except OSError:
             pass
         return feature_array, labels
+
+    @staticmethod
+    def _template_cache_path(font_paths: list[str]) -> Path:
+        # Installed fonts affect OCR predictions. Rebuild after adding/updating a
+        # font instead of silently retaining a template bank from an older runtime.
+        signatures = []
+        for font_path in font_paths:
+            stat = Path(font_path).stat()
+            signatures.append(f"{font_path}:{stat.st_size}:{stat.st_mtime_ns}")
+        fingerprint = hashlib.sha256("\n".join(signatures).encode()).hexdigest()[:16]
+        return Path(tempfile.gettempdir()) / f"linkedin_puzzle_solvers_wend_letters_v2_{fingerprint}.npz"
 
     def _render_letter(self, letter: str, font: ImageFont.FreeTypeFont, offset_x: int, offset_y: int) -> np.ndarray:
         image = Image.new("L", (OCR_SIZE, OCR_SIZE), 0)
@@ -144,6 +157,8 @@ class _LetterOcr:
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
             "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
             "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
             "/usr/share/fonts/truetype/noto/NotoSans-*.ttf",
         ]
         paths: list[str] = []
