@@ -36,13 +36,17 @@ This runs architecture checks, lint, tests, and worker/API smoke checks. For app
 
 | Branch | Purpose | PR target |
 | --- | --- | --- |
-| `main` | Released code | — |
-| `develop` | Integration; default branch | — |
+| `main` | Stable code for distribution; default branch | — |
+| `develop` | Integration for the next release | — |
 | `feature/*`, `bugfix/*` | Branch from `develop` | `develop` |
 | `release/*` | Prepare a release from `develop` | `main`, then sync back to `develop` |
 | `hotfix/*` | Urgent fix from `main` | `main`, then sync back to `develop` |
 
 Use merge commits for releases and synchronization to preserve branch ancestry. CI checks PR branch names and targets. Follow the [release guide](docs/release.md) for versions and tags.
+
+Although `main` is the default branch, explicitly target `develop` for feature and bugfix PRs. Distribute the extension from `main` or a release tag, not from `develop`.
+
+Only `main` and `develop` are permanent. GitHub automatically deletes topic branches after merge. Run `git fetch --prune` and delete the merged local branch with `git branch -d <branch>`.
 
 ## Submit
 

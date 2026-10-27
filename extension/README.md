@@ -2,6 +2,8 @@
 
 Browser extension for solving LinkedIn daily puzzles through the local solver API.
 
+Install from the stable `main` branch or a release tag. `develop` contains work for the next release. See the [release guide](../docs/release.md) for packaging and distribution.
+
 ## Features
 
 - Manual board selection on the active tab.
