@@ -6,6 +6,16 @@ Solve **Queens, Tango, Mini Sudoku, Zip, Patches, and Wend** with a browser exte
 
 [![CI](https://github.com/santipvz/linkedin-puzzle-solvers/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/santipvz/linkedin-puzzle-solvers/actions/workflows/ci.yml)
 
+## Demos
+
+| Queens | Tango |
+| --- | --- |
+| ![Queens](docs/assets/readme/queens.gif) | ![Tango](docs/assets/readme/tango.gif) |
+| **Mini Sudoku** | **Zip** |
+| ![Mini Sudoku](docs/assets/readme/minisudoku.gif) | ![Zip](docs/assets/readme/zip.gif) |
+| **Patches** | **Wend** |
+| ![Patches](docs/assets/readme/patches.gif) | ![Wend](docs/assets/readme/wend.gif) |
+
 ## Get started
 
 1. Start the API from the repository root:
@@ -22,19 +32,6 @@ Solve **Queens, Tango, Mini Sudoku, Zip, Patches, and Wend** with a browser exte
 3. Open a supported [LinkedIn game](https://www.linkedin.com/games/), set the extension API URL to **`http://127.0.0.1:18000`**, and click **Solve + Apply**.
 
 The API health check is [localhost:18000/health](http://127.0.0.1:18000/health).
-
-<details>
-<summary>Demos</summary>
-
-| Queens | Tango |
-| --- | --- |
-| ![Queens](docs/assets/readme/queens.gif) | ![Tango](docs/assets/readme/tango.gif) |
-| **Mini Sudoku** | **Zip** |
-| ![Mini Sudoku](docs/assets/readme/minisudoku.gif) | ![Zip](docs/assets/readme/zip.gif) |
-| **Patches** | **Wend** |
-| ![Patches](docs/assets/readme/patches.gif) | ![Wend](docs/assets/readme/wend.gif) |
-
-</details>
 
 ## Documentation
 
