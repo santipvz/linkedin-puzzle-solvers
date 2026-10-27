@@ -1,20 +1,82 @@
-<p align="center"><img src="docs/assets/readme/logo.png" alt="LinkedIn Puzzle Solvers" width="160"></p>
+<p align="center">
+  <img src="docs/assets/readme/logo.png" alt="LinkedIn Puzzle Solvers logo" width="240">
+</p>
 
-# LinkedIn Puzzle Solvers
+<h1 align="center">LinkedIn Puzzle Solvers</h1>
 
-Solve **Queens, Tango, Mini Sudoku, Zip, Patches, and Wend** with a browser extension and a local API. The extension captures the board, previews the solution, and applies the moves.
+<p align="center">
+  <strong>Daily LinkedIn puzzles, solved locally.</strong>
+  <br>
+  Browser extension + FastAPI solver service powered by computer vision and puzzle-specific automation.
+</p>
 
-[![CI](https://github.com/santipvz/linkedin-puzzle-solvers/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/santipvz/linkedin-puzzle-solvers/actions/workflows/ci.yml)
+<p align="center">
+  <a href="https://github.com/santipvz/linkedin-puzzle-solvers/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/santipvz/linkedin-puzzle-solvers/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white">
+  <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-local_api-009688?logo=fastapi&logoColor=white">
+  <img alt="Browser Extension" src="https://img.shields.io/badge/Browser-extension-4285F4?logo=googlechrome&logoColor=white">
+  <img alt="License" src="https://img.shields.io/badge/License-MIT-green">
+</p>
 
-## Demos
+<p align="center">
+  <a href="https://github.com/santipvz/linkedin-puzzle-solvers/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/santipvz/linkedin-puzzle-solvers?style=social"></a>
+  <a href="https://github.com/santipvz/linkedin-puzzle-solvers/fork"><img alt="GitHub forks" src="https://img.shields.io/github/forks/santipvz/linkedin-puzzle-solvers?style=social"></a>
+  <a href="https://github.com/santipvz/linkedin-puzzle-solvers/issues"><img alt="GitHub issues" src="https://img.shields.io/github/issues/santipvz/linkedin-puzzle-solvers?logo=github"></a>
+  <a href="https://github.com/santipvz/linkedin-puzzle-solvers/pulls"><img alt="GitHub pull requests" src="https://img.shields.io/github/issues-pr/santipvz/linkedin-puzzle-solvers?logo=github"></a>
+</p>
 
-| Queens | Tango |
-| --- | --- |
-| ![Queens](docs/assets/readme/queens.gif) | ![Tango](docs/assets/readme/tango.gif) |
-| **Mini Sudoku** | **Zip** |
-| ![Mini Sudoku](docs/assets/readme/minisudoku.gif) | ![Zip](docs/assets/readme/zip.gif) |
-| **Patches** | **Wend** |
-| ![Patches](docs/assets/readme/patches.gif) | ![Wend](docs/assets/readme/wend.gif) |
+<p align="center">
+  <img alt="Queens" src="https://img.shields.io/badge/Queens-0A66C2?style=for-the-badge">
+  <img alt="Tango" src="https://img.shields.io/badge/Tango-7C3AED?style=for-the-badge">
+  <img alt="Mini Sudoku" src="https://img.shields.io/badge/Mini%20Sudoku-16A34A?style=for-the-badge">
+  <img alt="Zip" src="https://img.shields.io/badge/Zip-F97316?style=for-the-badge">
+  <img alt="Patches" src="https://img.shields.io/badge/Patches-E11D48?style=for-the-badge">
+  <img alt="Wend" src="https://img.shields.io/badge/Wend-14B8A6?style=for-the-badge">
+</p>
+
+<p align="center">
+  <img src="docs/assets/readme/solver-divider.svg" width="100%" alt="Animated divider">
+</p>
+
+## Demo Gallery
+
+<table border="0" cellspacing="0" cellpadding="0">
+  <tr>
+    <td width="50%">
+      <h3 align="center">Queens</h3>
+      <img src="docs/assets/readme/queens.gif" alt="Queens solver demo">
+    </td>
+    <td width="50%">
+      <h3 align="center">Tango</h3>
+      <img src="docs/assets/readme/tango.gif" alt="Tango solver demo">
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <h3 align="center">Mini Sudoku</h3>
+      <img src="docs/assets/readme/minisudoku.gif" alt="Mini Sudoku solver demo">
+    </td>
+    <td width="50%">
+      <h3 align="center">Zip</h3>
+      <img src="docs/assets/readme/zip.gif" alt="Zip solver demo">
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <h3 align="center">Patches</h3>
+      <img src="docs/assets/readme/patches.gif" alt="Patches solver demo">
+    </td>
+    <td width="50%">
+      <h3 align="center">Wend</h3>
+      <img src="docs/assets/readme/wend.gif" alt="Wend solver demo">
+    </td>
+  </tr>
+</table>
+
+<p align="center">
+  <img src="docs/assets/readme/solver-divider.svg" width="100%" alt="Animated divider">
+</p>
+
 
 ## Get started
 
