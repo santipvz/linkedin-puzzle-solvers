@@ -80,6 +80,8 @@
 
 ## Get started
 
+Use the stable `main` branch or a release tag. `develop` contains work for the next release.
+
 1. Start the API from the repository root:
 
    ```bash
