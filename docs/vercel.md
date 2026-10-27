@@ -11,7 +11,9 @@ npx vercel@65.4.0 link --project linkedin-puzzle-solvers
 npx vercel@65.4.0 deploy
 ```
 
-This creates a protected preview. Use `npx vercel@65.4.0 curl /health --deployment <preview-url>` to test it while authenticated. Run full quality checks before promoting a release from `main` with `npx vercel@65.4.0 deploy --prod`.
+The Vercel GitHub integration is connected to this repository: `main` deploys to production and other branches create protected previews. Release through the Gitflow PR process so production runs tested code from `main`.
+
+The CLI command above also creates a protected preview. Use `npx vercel@65.4.0 curl /health --deployment <preview-url>` to test it while authenticated. For a manual production deploy or recovery, run `npx vercel@65.4.0 deploy --prod` from the tested release on `main`.
 
 Validate the public API with the six tracked game samples:
 
