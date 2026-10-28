@@ -6,6 +6,7 @@ let quickSolveStatus = null;
 let quickSolveBusy = false;
 let quickSolveObservedUrl = "";
 let sudokuApplyBusy = false;
+let tangoApplyBusy = false;
 
 const puzzleRegistry = globalThis.PuzzleRegistry;
 if (!puzzleRegistry) {
@@ -255,6 +256,7 @@ function initializeQuickSolveWidget() {
       quickSolveObservedUrl = window.location.href;
       boardSelection = null;
       clearSolutionOverlay();
+      setQuickSolveStatus("");
     }
     syncQuickSolveWidget();
   }, 1200);
@@ -343,7 +345,9 @@ function refineSelectionWithBoardBbox(selection, result) {
 }
 
 function refineTangoSelection(selection, result) {
-  return refineSelectionWithBoardBbox(selection, result) || normalizeSelection(selection);
+  // Solver image coordinates are translated once in the background. Native
+  // cells also keep apply aligned after a layout change or a scroll.
+  return nativeBoardSelection("tango") || normalizeSelection(selection);
 }
 
 function clearSolutionOverlay() {
@@ -433,17 +437,48 @@ function getGameIframeRect(puzzleType) {
   };
 }
 
-function autoDetectBoardSelection(puzzleType) {
-  // LinkedIn's generated class names no longer contain "board" or "grid".
-  // Prefer the game-specific landmark over nearby illustrations and tutorials.
-  if (puzzleType === "queens") {
-    const board = document.querySelector("#queens-game-board");
-    const rect = board?.getBoundingClientRect();
-    if (isRectVisible(rect) && Math.abs(rect.width / rect.height - 1) < 0.1) {
-      return normalizeSelection({ x: rect.left, y: rect.top, width: rect.width,
-        height: rect.height, devicePixelRatio: window.devicePixelRatio });
+function nativeGameBoard(puzzleType) {
+  const selectors = {
+    queens: "#queens-game-board",
+    tango: '[data-testid="tango-gameboard-wrapper"] [data-testid="interactive-grid"]',
+    patches: '[data-testid="patches-game-board"] [data-testid="interactive-grid"]',
+    sudoku: ".sudoku-grid",
+    wend: '[data-testid="wend-game-board"]',
+  };
+  return selectors[puzzleType] ? document.querySelector(selectors[puzzleType]) : null;
+}
+
+function nativeBoardSelection(puzzleType) {
+  const rect = nativeGameBoard(puzzleType)?.getBoundingClientRect();
+  if (!isRectVisible(rect) || Math.abs(rect.width / rect.height - 1) >= .1) return null;
+  return normalizeSelection({ x: rect.left, y: rect.top, width: rect.width,
+    height: rect.height, devicePixelRatio: window.devicePixelRatio });
+}
+
+async function prepareBoardCapture(puzzleType) {
+  const board = nativeGameBoard(puzzleType);
+  if (board) {
+    const rect = board.getBoundingClientRect();
+    if (rect.top < 0 || rect.left < 0 || rect.bottom > window.innerHeight || rect.right > window.innerWidth) {
+      board.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
     }
+    let previous = null;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await sleep(50);
+      const current = nativeBoardSelection(puzzleType);
+      if (current && current.x >= 0 && current.y >= 0 && current.x + current.width <= window.innerWidth + 1 &&
+          current.y + current.height <= window.innerHeight + 1 && previous &&
+          ["x", "y", "width", "height"].every(key => Math.abs(current[key] - previous[key]) < .5)) return current;
+      previous = current;
+    }
+    throw new Error("The whole board must be visible and stable before solving.");
   }
+  return autoDetectBoardSelectionWithFallback(puzzleType);
+}
+
+function autoDetectBoardSelection(puzzleType) {
+  const native = nativeBoardSelection(puzzleType);
+  if (native) return native;
   const selectors = [
     "canvas",
     "svg",
@@ -1612,111 +1647,86 @@ async function applyQueensSolution(result, selection, settings) {
   };
 }
 
+function readTangoBoard() {
+  const cells = Array.from({ length: 36 }, (_, index) => document.getElementById(`tango-cell-${index}`));
+  if (cells.some(cell => !cell)) return null;
+  const values = cells.map(cell => cell.querySelector('[data-testid="cell-zero"]') ? 1 :
+    cell.querySelector('[data-testid="cell-one"]') ? 0 :
+    cell.querySelector('[data-testid="cell-empty"]') ? -1 : null);
+  if (values.includes(null)) return null;
+  return { cells, values, fixed: cells.map(cell => cell.getAttribute("aria-disabled") === "true") };
+}
+
+function tangoCompletionVisible() {
+  if (/\/games\/tango\/results\//.test(window.location.pathname)) return true;
+  const text = document.body?.innerText || "";
+  return /Tango/i.test(text) && /¡Estás arrasando!|You crushed it!|Puzzle solved/i.test(text);
+}
+
 async function applyTangoSolution(result, selection, settings) {
+  if (tangoApplyBusy) return { ok: false, error: "Tango apply is already in progress." };
+  tangoApplyBusy = true;
+  try {
+    return await applyVerifiedTangoSolution(result, settings);
+  } finally { tangoApplyBusy = false; }
+}
+
+async function applyVerifiedTangoSolution(result, settings) {
   const applySettings = normalizeApplySettings(settings);
-  const normalized = refineTangoSelection(selection || boardSelection, result);
-  if (!normalized) {
-    return { ok: false, error: "Board selection is required before applying moves." };
+  const grid = result?.solution_grid;
+  if (Number(result?.board_size) !== 6 || !Array.isArray(grid) || grid.length !== 6 ||
+      grid.some(row => !Array.isArray(row) || row.length !== 6 || row.some(value => value !== 0 && value !== 1))) {
+    return { ok: false, error: "Invalid Tango solution grid." };
   }
-
-  const boardSize = Number(result?.board_size);
-  if (!boardSize) {
-    return { ok: false, error: "Invalid board size in solution." };
+  const expected = grid.flat();
+  const counts = { appliedCount: 0, clickCount: 0 };
+  const fail = error => ({ ok: false, error, ...counts, strategy: "verified-tango-cells" });
+  let board = readTangoBoard();
+  if (!board) return fail("Could not identify all 36 Tango cells. Refresh the game before solving.");
+  if (board.fixed.some((fixed, index) => fixed && board.values[index] !== expected[index])) {
+    return fail("Tango solution does not match the game's fixed pieces. Stopped before applying.");
   }
-
-  const moves = buildTangoMoveList(result);
-  if (!moves.length) {
-    const fixedCount = Number(result?.details?.fixed_count);
-    if (Number.isFinite(fixedCount) && fixedCount >= boardSize * boardSize) {
-      return {
-        ok: true,
-        appliedCount: 0,
-        clickCount: 0,
-        strategy: "already-filled",
-      };
-    }
-
-    return { ok: false, error: "No Tango solution moves are available." };
+  const parsedFixed = result.fixed_pieces;
+  if (!Array.isArray(parsedFixed) || parsedFixed.length !== board.fixed.filter(Boolean).length ||
+      parsedFixed.some(piece => !board.fixed[piece.row * 6 + piece.col] || expected[piece.row * 6 + piece.col] !== piece.piece_type)) {
+    return fail("Tango capture did not identify the original clues correctly. Stopped before applying.");
   }
-
-  const cellWidth = normalized.width / boardSize;
-  const cellHeight = normalized.height / boardSize;
-
-  let appliedCount = 0;
-  let clickCount = 0;
-
-  for (const move of moves) {
-    const row = Number(move.row);
-    const col = Number(move.col);
-    const value = Number(move.value);
-
-    if (!Number.isFinite(row) || !Number.isFinite(col) || (value !== 0 && value !== 1)) {
-      continue;
-    }
-
-    const x = normalized.x + (col + 0.5) * cellWidth;
-    const y = normalized.y + (row + 0.5) * cellHeight;
-
-    let localClicks = 0;
-
-    if (value === 0 && applySettings.tangoApplyMode === "right-moon") {
-      if (rightClickViewportPoint(x, y)) {
-        localClicks += 1;
-        clickCount += 1;
-      } else {
-        const fallbackClicks = TANGO_MOON_LEFT_CLICKS;
-        for (let clickIndex = 0; clickIndex < fallbackClicks; clickIndex += 1) {
-          if (leftClickViewportPoint(x, y)) {
-            localClicks += 1;
-            clickCount += 1;
-          }
-          if (clickIndex < fallbackClicks - 1) {
-            await sleep(applySettings.interClickDelayMs);
-          }
-        }
+  for (let index = 0; index < 36; index += 1) {
+    if (board.fixed[index] || board.values[index] === expected[index]) continue;
+    let changed = false;
+    // Read after every click: a cell can already contain a sun or moon.
+    for (let step = 0; step < 2 && board.values[index] !== expected[index]; step += 1) {
+      const before = board.values.slice();
+      const finishing = before.every((value, cellIndex) => cellIndex === index || value === expected[cellIndex]);
+      const rect = board.cells[index].getBoundingClientRect();
+      if (rect.top < 0 || rect.left < 0 || rect.bottom > window.innerHeight || rect.right > window.innerWidth) {
+        return fail("Tango board moved outside the viewport. Stopped applying.");
       }
-    } else {
-      const clicksNeeded = getTangoClickCountForValue(value, applySettings);
-      for (let clickIndex = 0; clickIndex < clicksNeeded; clickIndex += 1) {
-        if (leftClickViewportPoint(x, y)) {
-          localClicks += 1;
-          clickCount += 1;
+      if (!leftClickViewportPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)) return fail("Could not select a Tango cell.");
+      counts.clickCount += 1;
+      let accepted = false;
+      for (let attempt = 0; attempt < (finishing ? 40 : 16); attempt += 1) {
+        await sleep(50);
+        const after = readTangoBoard();
+        if (!after) {
+          if (finishing && tangoCompletionVisible()) return { ok: true, ...counts,
+            appliedCount: counts.appliedCount + 1, strategy: "verified-completed-grid" };
+          continue;
         }
-        if (clickIndex < clicksNeeded - 1) {
-          await sleep(applySettings.interClickDelayMs);
+        if (after.values.some((value, cellIndex) => cellIndex !== index && value !== before[cellIndex])) {
+          return fail("Tango input changed another cell. Stopped applying.");
         }
+        board = after;
+        if (after.values[index] !== before[index]) { accepted = true; changed = true; break; }
       }
+      if (!accepted) return fail(`Tango did not confirm the click in cell (${Math.floor(index / 6) + 1}, ${index % 6 + 1}).`);
+      await sleep(applySettings.interClickDelayMs);
     }
-
-    if (localClicks > 0) {
-      appliedCount += 1;
-    }
-
+    if (board.values[index] !== expected[index]) return fail("Tango entered an unexpected piece. Stopped applying.");
+    if (changed) counts.appliedCount += 1;
     await sleep(applySettings.interMoveDelayMs);
   }
-
-  const strategy =
-    applySettings.tangoApplyMode === "right-moon"
-      ? "left-sun-right-moon"
-      : "left-cycle";
-
-  if (appliedCount === 0) {
-    return {
-      ok: false,
-      error: "Could not dispatch Tango clicks to board cells.",
-      appliedCount,
-      clickCount,
-      strategy,
-    };
-  }
-
-  return {
-    ok: true,
-    appliedCount,
-    clickCount,
-    strategy,
-    clicksPerValue: applySettings.tangoApplyMode === "right-moon" ? { 0: "right", 1: 1 } : { 0: 2, 1: 1 },
-  };
+  return { ok: true, ...counts, strategy: "verified-tango-cells" };
 }
 
 async function applySudokuSolution(result, selection, settings) {
@@ -2053,52 +2063,40 @@ async function applyPatchesSolution(result, selection, settings) {
 
 async function applyWendSolution(result, selection, settings) {
   const applySettings = normalizeApplySettings(settings);
-  const normalized = normalizeSelection(selection || boardSelection);
-  if (!normalized) {
-    return { ok: false, error: "Board selection is required before applying Wend paths." };
-  }
-
   const boardSize = Number(result?.board_size);
-  if (!boardSize) {
-    return { ok: false, error: "Invalid board size in Wend solution." };
-  }
-
   const words = buildWendWordList(result);
-  if (!words.length) {
-    return { ok: false, error: "No Wend word paths are available." };
-  }
-
-  const cellWidth = normalized.width / boardSize;
-  const cellHeight = normalized.height / boardSize;
+  if (!boardSize || !words.length) return { ok: false, error: "No valid Wend word paths are available." };
   let appliedCount = 0;
-
+  const fail = error => ({ ok: false, error, appliedCount, strategy: "verified-word-path-drag" });
   for (const entry of words) {
-    const points = entry.path.map((step) => ({
-      x: normalized.x + (step.col + 0.5) * cellWidth,
-      y: normalized.y + (step.row + 0.5) * cellHeight,
-    }));
-
-    if (await dragViewportPath(points, 4)) {
-      appliedCount += 1;
+    const board = nativeGameBoard("wend");
+    const cells = entry.path.map(step => board?.querySelector(`[data-cell-idx="${step.row * boardSize + step.col}"]`));
+    if (cells.some(cell => !cell)) return fail("Could not identify Wend path cells. Stopped applying.");
+    const locked = cells.map(cell => cell.getAttribute("data-cell-is-locked") === "true");
+    if (locked.every(Boolean)) continue;
+    if (locked.some(Boolean)) return fail("Wend solution overlaps an already accepted word. Solve again before applying.");
+    const points = cells.map(cell => {
+      const rect = cell.getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    });
+    if (points.some(point => point.x < 0 || point.y < 0 || point.x >= window.innerWidth || point.y >= window.innerHeight)) {
+      return fail("Wend board moved outside the viewport. Stopped applying.");
     }
-
+    if (!await dragViewportPath(points, 4)) return fail("Could not draw a Wend word path.");
+    let accepted = false;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      await sleep(50);
+      const live = nativeGameBoard("wend");
+      if (entry.path.every(step => live?.querySelector(`[data-cell-idx="${step.row * boardSize + step.col}"]`)
+          ?.getAttribute("data-cell-is-locked") === "true") || /\/games\/wend\/results\//.test(window.location.pathname)) {
+        accepted = true; break;
+      }
+    }
+    if (!accepted) return fail(`Wend did not accept the word ${entry.word}. Stopped without replaying paths.`);
+    appliedCount += 1;
     await sleep(Math.max(80, applySettings.interMoveDelayMs));
   }
-
-  if (appliedCount !== words.length) {
-    return {
-      ok: false,
-      error: `Applied ${appliedCount} of ${words.length} Wend word paths.`,
-      appliedCount,
-    };
-  }
-
-  return {
-    ok: true,
-    appliedCount,
-    clickCount: appliedCount,
-    strategy: "word-path-drag",
-  };
+  return { ok: true, appliedCount, clickCount: appliedCount, strategy: "verified-word-path-drag" };
 }
 
 async function applySolution(puzzleType, result, selection, settings) {
@@ -2155,9 +2153,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "autoDetectBoard") {
-    boardSelection = autoDetectBoardSelectionWithFallback(message.puzzleType);
-    sendResponse({ ok: Boolean(boardSelection), selection: boardSelection });
-    return;
+    prepareBoardCapture(message.puzzleType)
+      .then((selection) => { boardSelection = selection; sendResponse({ ok: Boolean(selection), selection }); })
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
   }
 
   if (message.type === "getViewportMetrics") {

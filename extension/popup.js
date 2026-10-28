@@ -591,7 +591,7 @@ apiModeSelect.addEventListener("change", () => {
   updateServiceMode();
   savePreferences().catch((error) => setStatus(error.message, true));
 });
-apiUrlInput.addEventListener("change", () => {
+apiUrlInput.addEventListener("input", () => {
   customApiUrl = apiUrlInput.value;
   savePreferences().catch((error) => setStatus(error.message, true));
 });

@@ -1,0 +1,1 @@
+`linkedin-2026-10-28.jpg` is a board-only browser capture from the public LinkedIn Patches game (#225). It covers translucent free-shape clues, including unnumbered clues, on a white grid. It contains no account information.

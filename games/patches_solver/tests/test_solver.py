@@ -79,6 +79,18 @@ class PatchesParserIntegrationTests(unittest.TestCase):
             covered.update(cells)
         self.assertEqual(64, len(covered))
 
+    def test_current_translucent_cross_clues_keep_their_shape_and_numbers(self) -> None:
+        payload = solve_patches_worker(Path(__file__).parent / "fixtures" / "linkedin-2026-10-28.jpg")
+        self.assertTrue(payload["solved"], payload.get("error"))
+        self.assertTrue(payload["details"]["unique_solution"])
+        self.assertEqual(0, payload["details"]["relaxed_square_clues"])
+        self.assertEqual(
+            [(0, 2, "any", 5), (0, 3, "any", None), (2, 1, "tall", None),
+             (2, 4, "tall", None), (3, 1, "square", None), (3, 4, "tall", None),
+             (5, 2, "any", None), (5, 3, "any", 3)],
+            [(c["row"], c["col"], c["shape"], c["value"]) for c in payload["clues"]],
+        )
+
     def test_ocr_reads_white_digit_on_gray_badge(self) -> None:
         image = Image.new("RGB", (54, 54), (132, 150, 158))
         draw = ImageDraw.Draw(image)

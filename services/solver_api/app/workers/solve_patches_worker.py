@@ -366,7 +366,11 @@ def _has_verified_sparse_solution(attempt: _AttemptPayload) -> bool:
         and not attempt["recovered_clues"]
         and numbered
         and all(float(clue.get("confidence") or 0.0) >= 0.9 for clue in numbered)
-        and all(clue.get("shape") in {"square", "wide", "tall"} for clue in clues if clue.get("value") is None)
+        and all(
+            clue.get("shape") in {"square", "wide", "tall"}
+            or (clue.get("shape") == "any" and 0.70 <= float(clue.get("badge_fill", 0)) < 0.91)
+            for clue in clues if clue.get("value") is None
+        )
     )
 
 

@@ -1,0 +1,1 @@
+`linkedin-2026-10-28.jpg` is a board-only browser capture from the public LinkedIn Tango game (#751). It covers the current small antialiased relation signs at normal browser dimensions: six fixed pieces and three relations. It contains no account information.
