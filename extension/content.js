@@ -725,11 +725,9 @@ function createPreviewCanvas(root, selection) {
   return svg;
 }
 
-function previewCell(svg, x, y, size, label, options = {}) {
-  previewSvgNode(svg, "rect", { x: x - size / 2, y: y - size / 2, width: size, height: size,
-    rx: size * .2, fill: options.fill || "#f0f7fd", stroke: "#8eb9dc", "stroke-width": 1.25 });
-  previewSvgNode(svg, "text", { x, y, "text-anchor": "middle", "dominant-baseline": "central",
-    fill: options.color || "#075da5", "font-size": size * .68, "font-weight": 600 }, label);
+function previewGamePiece(svg, x, y, size, name) {
+  previewSvgNode(svg, "image", { x: x - size / 2, y: y - size / 2, width: size, height: size,
+    href: chrome.runtime.getURL(`assets/pieces/${name}.svg`), "aria-label": name });
 }
 
 function renderQueensOverlay(root, selection, result) {
@@ -737,15 +735,10 @@ function renderQueensOverlay(root, selection, result) {
   if (!size || !Array.isArray(result.moves)) return;
   const svg = createPreviewCanvas(root, selection);
   const cw = selection.width / size, ch = selection.height / size;
-  const markerSize = Math.max(20, Math.min(38, Math.min(cw, ch) * .64));
+  const pieceSize = Math.min(24, Math.min(cw, ch) * .75);
   for (const move of result.moves) {
     if (!Number.isFinite(Number(move.row)) || !Number.isFinite(Number(move.col))) continue;
-    const x = (Number(move.col) + .5) * cw, y = (Number(move.row) + .5) * ch;
-    previewSvgNode(svg, "rect", { x: x - markerSize / 2, y: y - markerSize / 2, width: markerSize,
-      height: markerSize, rx: 7, fill: "#ffffff", stroke: "#0a66c2", "stroke-width": 1.5 });
-    const crown = previewSvgNode(svg, "g", { transform: `translate(${x - markerSize * .36} ${y - markerSize * .36}) scale(${markerSize * .03})` });
-    previewSvgNode(crown, "path", { d: "M3 7l4 4 5-7 5 7 4-4-2 12H5L3 7Zm3 15h12", fill: "#0a66c2",
-      stroke: "#0a66c2", "stroke-width": 1.5, "stroke-linejoin": "round" });
+    previewGamePiece(svg, (Number(move.col) + .5) * cw, (Number(move.row) + .5) * ch, pieceSize, "queen");
   }
 }
 
@@ -755,16 +748,25 @@ function renderTangoOverlay(root, selection, result) {
   const fixed = new Set((result.fixed_pieces || []).map((piece) => `${piece.row},${piece.col}`));
   const svg = createPreviewCanvas(root, selection);
   const cw = selection.width / size, ch = selection.height / size;
-  const markerSize = Math.max(20, Math.min(36, Math.min(cw, ch) * .65));
+  const pieceSize = Math.min(cw, ch) * .49;
   for (let row = 0; row < grid.length; row += 1) {
     for (let col = 0; col < (grid[row]?.length || 0); col += 1) {
       if (fixed.has(`${row},${col}`)) continue;
       const value = Number(grid[row][col]);
       if (value !== 0 && value !== 1) continue;
-      previewCell(svg, (col + .5) * cw, (row + .5) * ch, markerSize,
-        value === 0 ? "\u263e" : "\u2600", { color: value === 0 ? "#455c75" : "#0a66c2", fill: value === 0 ? "#eef2f7" : "#f0f7fd" });
+      previewGamePiece(svg, (col + .5) * cw, (row + .5) * ch, pieceSize, value === 0 ? "moon" : "sun");
     }
   }
+}
+
+function sudokuPreviewType(selection) {
+  const source = Array.from(document.querySelectorAll(".sudoku-cell-content")).find((node) => {
+    const rect = node.getBoundingClientRect();
+    return /^[1-6]$/.test(node.textContent.trim()) && isPointInsideSelection(rect.left + rect.width / 2, rect.top + rect.height / 2, selection);
+  });
+  if (!source) return { family: "-apple-system, system-ui, sans-serif", size: 20, weight: 600, color: "#1a1a1a" };
+  const style = getComputedStyle(source);
+  return { family: style.fontFamily, size: parseFloat(style.fontSize), weight: style.fontWeight, color: style.color };
 }
 
 function renderSudokuOverlay(root, selection, result) {
@@ -772,10 +774,12 @@ function renderSudokuOverlay(root, selection, result) {
   if (!size || !Array.isArray(result.moves)) return;
   const svg = createPreviewCanvas(root, selection);
   const cw = selection.width / size, ch = selection.height / size;
-  const markerSize = Math.max(20, Math.min(38, Math.min(cw, ch) * .66));
+  const type = sudokuPreviewType(selection);
   for (const move of result.moves) {
     if (![move.row, move.col, move.value].every((value) => Number.isFinite(Number(value)))) continue;
-    previewCell(svg, (Number(move.col) + .5) * cw, (Number(move.row) + .5) * ch, markerSize, String(move.value));
+    previewSvgNode(svg, "text", { x: (Number(move.col) + .5) * cw, y: (Number(move.row) + .5) * ch,
+      "text-anchor": "middle", "dominant-baseline": "central", fill: type.color,
+      "font-family": type.family, "font-size": type.size, "font-weight": type.weight }, String(move.value));
   }
 }
 
@@ -882,9 +886,47 @@ function buildPatchesRegionList(result) {
         height,
         width,
         area: height * width,
+        clueRow: Number(region.clue_row),
+        clueCol: Number(region.clue_col),
       };
     })
     .filter(Boolean);
+}
+
+function opaqueClueColor(value) {
+  const rgb = String(value || "").match(/^rgba?\(\s*([\d.]+)[, ]+([\d.]+)[, ]+([\d.]+)(?:[, /]+([\d.]+))?\s*\)$/);
+  if (!rgb || (rgb[4] !== undefined && Number(rgb[4]) === 0)) return null;
+  return `rgb(${rgb[1]}, ${rgb[2]}, ${rgb[3]})`;
+}
+
+function patchesClueVisual(region, selection, result) {
+  let row = region.clueRow, col = region.clueCol;
+  if (!Number.isInteger(row) || !Number.isInteger(col)) {
+    const clues = (result.clues || []).filter((clue) => clue.row >= region.top && clue.row < region.top + region.height &&
+      clue.col >= region.left && clue.col < region.left + region.width);
+    if (clues.length !== 1) return null;
+    row = clues[0].row; col = clues[0].col;
+  }
+  const cw = selection.width / result.board_size, ch = selection.height / result.board_size;
+  const target = document.elementFromPoint(selection.x + (col + .5) * cw, selection.y + (row + .5) * ch);
+  const cell = target?.closest("[data-cell-idx]");
+  const shape = cell?.querySelector("[data-shape]");
+  if (!shape) return null;
+  const style = getComputedStyle(shape);
+  const border = parseFloat(style.borderWidth) > 0 ? opaqueClueColor(style.borderColor) : null;
+  const color = border || opaqueClueColor(style.backgroundColor);
+  if (!color) return null;
+  const shapes = Array.from(cell.querySelectorAll("*")).flatMap((node) => {
+    const paint = getComputedStyle(node), rect = node.getBoundingClientRect();
+    if (!opaqueClueColor(paint.backgroundColor) || rect.width < 2 || rect.height < 2) return [];
+    return [{ x: rect.left - selection.x, y: rect.top - selection.y, width: rect.width, height: rect.height,
+      radius: parseFloat(paint.borderRadius) || 0 }];
+  });
+  const number = cell.querySelector('[data-testid^="patches-clue-number-"]');
+  const numberStyle = number ? getComputedStyle(number) : null;
+  return { color, shapes, row, col, number: number?.textContent.trim(),
+    fontSize: numberStyle ? parseFloat(numberStyle.fontSize) : 18,
+    fontWeight: numberStyle?.fontWeight || 600, fontFamily: numberStyle?.fontFamily || "system-ui" };
 }
 
 function renderPatchesOverlay(root, selection, result) {
@@ -892,11 +934,20 @@ function renderPatchesOverlay(root, selection, result) {
   if (!size || !regions.length) return;
   const svg = createPreviewCanvas(root, selection);
   const cw = selection.width / size, ch = selection.height / size;
-  for (let index = 0; index < regions.length; index += 1) {
-    const region = regions[index], color = PREVIEW_COLORS[index % PREVIEW_COLORS.length];
-    previewSvgNode(svg, "rect", { x: region.left * cw + 2, y: region.top * ch + 2,
-      width: region.width * cw - 4, height: region.height * ch - 4, rx: 5,
-      fill: color, "fill-opacity": .08, stroke: color, "stroke-width": 2 });
+  for (const region of regions) {
+    const clue = patchesClueVisual(region, selection, result);
+    const color = clue?.color || "#b8c6d2";
+    previewSvgNode(svg, "rect", { x: region.left * cw + 1, y: region.top * ch + 1,
+      width: region.width * cw - 2, height: region.height * ch - 2, rx: 3,
+      fill: color, stroke: "#ffffff", "stroke-width": 2 });
+    // Keep each original clue's geometry and number legible on the solid fill.
+    for (const shape of clue?.shapes || []) {
+      previewSvgNode(svg, "rect", { x: shape.x, y: shape.y, width: shape.width, height: shape.height,
+        rx: shape.radius, fill: "#ffffff", "fill-opacity": .12, stroke: "#ffffff", "stroke-width": 1.5 });
+    }
+    if (clue?.number) previewSvgNode(svg, "text", { x: (clue.col + .5) * cw, y: (clue.row + .5) * ch,
+      "text-anchor": "middle", "dominant-baseline": "central", fill: "#ffffff", "font-size": clue.fontSize,
+      "font-weight": clue.fontWeight, "font-family": clue.fontFamily }, clue.number);
   }
 }
 

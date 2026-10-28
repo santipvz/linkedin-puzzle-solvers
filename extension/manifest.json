@@ -21,7 +21,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["assets/logo.png", "assets/games/*.svg"],
+      "resources": ["assets/logo.png", "assets/games/*.svg", "assets/pieces/*.svg"],
       "matches": ["https://linkedin.com/*", "https://*.linkedin.com/*"]
     }
   ],
