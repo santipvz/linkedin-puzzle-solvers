@@ -35,3 +35,19 @@ def test_sample_parser_contract_and_solver(image_path: str) -> None:
 
 def test_missing_image_returns_none() -> None:
     assert TangoImageParser().parse_image("missing-tango-image.png") is None
+
+
+def test_current_small_antialiased_constraint_signs() -> None:
+    from pathlib import Path
+    from services.solver_api.app.workers.solve_tango_worker import solve
+
+    image = Path(__file__).parent / "fixtures" / "linkedin-2026-10-28.jpg"
+    result = solve(image)
+    assert result["solved"], result.get("error")
+    assert result["details"]["fixed_count"] == 6
+    assert result["constraints"] == [
+        {"type": "=", "pos1": [1, 2], "pos2": [2, 2]},
+        {"type": "x", "pos1": [3, 4], "pos2": [4, 4]},
+        {"type": "=", "pos1": [3, 5], "pos2": [4, 5]},
+    ]
+    assert len(result["moves"]) == 30

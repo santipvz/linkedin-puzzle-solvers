@@ -10,7 +10,6 @@ const DEFAULT_TANGO_APPLY_MODE = "left-cycle";
 const STORAGE_API_KEY = "solver_api_url";
 const STORAGE_INTER_CLICK_DELAY_KEY = "solver_inter_click_delay_ms";
 const STORAGE_INTER_MOVE_DELAY_KEY = "solver_inter_move_delay_ms";
-const STORAGE_TANGO_APPLY_MODE_KEY = "solver_tango_apply_mode";
 
 const puzzleRegistry = globalThis.PuzzleRegistry;
 if (!puzzleRegistry) {
@@ -361,7 +360,10 @@ function isConfidentTangoAttempt(result, score) {
   const constraintCount = Number(details.constraint_count) || 0;
   const movesCount = Array.isArray(result.moves) ? result.moves.length : 0;
 
-  return score >= 4200 && fixedCount >= 4 && fixedCount <= 24 && constraintCount >= 2 && movesCount > 0;
+  // The number of givens and relations varies daily. A valid six-given,
+  // three-relation board must not be replaced by a smaller, invented crop
+  // just because the scoring heuristic expects twelve givens and nine signs.
+  return details.parse_reliable === true && fixedCount >= 4 && fixedCount <= 24 && constraintCount >= 2 && movesCount > 0;
 }
 
 async function solveTangoWithCandidateSearch({ normalizedSelection, screenshotDataUrl, apiBaseUrl }) {
@@ -1011,36 +1013,10 @@ async function getViewportFallbackSelection(tabId, tab) {
   return centeredBoardSelection(tabSelection) || tabSelection;
 }
 
-async function detectSelectionForQuickSolve(tabId, puzzleType, frameContext, tab) {
-  const existing = ["tango", "sudoku"].includes(puzzleType) ? null : await getTopBoardSelection(tabId);
-
-  if (existing) {
-    const normalizedExisting = maybeNormalizeSelectionForPuzzle(puzzleType, existing, frameContext?.iframeRect);
-    const topSelection = normalizedExisting || existing;
-
-    if (normalizedExisting && hasMeaningfulSelectionDelta(existing, normalizedExisting)) {
-      const savedSelection = await setTopBoardSelection(tabId, normalizedExisting);
-      if (savedSelection) {
-        const savedTarget = resolveInteractionTarget(savedSelection, frameContext);
-        if (savedTarget) {
-          return {
-            topSelection: savedSelection,
-            interactionFrameId: savedTarget.frameId,
-            interactionSelection: savedTarget.selection,
-          };
-        }
-      }
-    }
-
-    const existingTarget = resolveInteractionTarget(topSelection, frameContext);
-    if (existingTarget) {
-      return {
-        topSelection,
-        interactionFrameId: existingTarget.frameId,
-        interactionSelection: existingTarget.selection,
-      };
-    }
-  }
+async function detectSelectionForQuickSolve(tabId, puzzleType, frameContext, tab, options = {}) {
+  // Always measure the current page. Cached viewport coordinates become stale
+  // after scrolling, switching games, or a responsive layout change.
+  const existing = null;
 
   if (
     frameContext &&
@@ -1054,6 +1030,7 @@ async function detectSelectionForQuickSolve(tabId, puzzleType, frameContext, tab
       { frameId: frameContext.gameFrameId }
     );
 
+    if (frameDetected?.error) throw new Error(frameDetected.error);
     if (frameDetected && frameDetected.selection) {
       const topSelection = translateFrameSelectionToTab(
         frameDetected.selection,
@@ -1082,6 +1059,7 @@ async function detectSelectionForQuickSolve(tabId, puzzleType, frameContext, tab
   }
 
   const topDetected = await safeSendTabMessage(tabId, { type: "autoDetectBoard", puzzleType }, { frameId: 0 });
+  if (topDetected?.error) throw new Error(topDetected.error);
   if (topDetected && topDetected.selection) {
     const topSelection = maybeNormalizeSelectionForPuzzle(puzzleType, topDetected.selection, frameContext?.iframeRect);
     if (topSelection) {
@@ -1361,7 +1339,6 @@ async function loadQuickSettings() {
     STORAGE_API_KEY,
     STORAGE_INTER_CLICK_DELAY_KEY,
     STORAGE_INTER_MOVE_DELAY_KEY,
-    STORAGE_TANGO_APPLY_MODE_KEY,
   ]);
 
   return {
@@ -1369,7 +1346,7 @@ async function loadQuickSettings() {
     applySettings: {
       interClickDelayMs: normalizeDelay(stored[STORAGE_INTER_CLICK_DELAY_KEY], DEFAULT_INTER_CLICK_DELAY_MS),
       interMoveDelayMs: normalizeDelay(stored[STORAGE_INTER_MOVE_DELAY_KEY], DEFAULT_INTER_MOVE_DELAY_MS),
-      tangoApplyMode: normalizeTangoApplyMode(stored[STORAGE_TANGO_APPLY_MODE_KEY] || DEFAULT_TANGO_APPLY_MODE),
+      tangoApplyMode: DEFAULT_TANGO_APPLY_MODE,
     },
   };
 }
@@ -1436,7 +1413,7 @@ async function quickSolveFromPage(message, sender) {
   }
 
   const rawSolvedSelection = normalizeSelection(solvedPayload.selection) || selectionContext.topSelection;
-  const solvedSelection = refineSelectionWithBoardBbox(rawSolvedSelection, solvedPayload.result) || rawSolvedSelection;
+  const solvedSelection = rawSolvedSelection;
   let applyTopSelection = solvedSelection;
   if (hasMeaningfulSelectionDelta(selectionContext.topSelection, solvedSelection)) {
     const savedSolvedSelection = await setTopBoardSelection(tabId, solvedSelection);
@@ -1581,7 +1558,7 @@ async function autoDetectBoardSelection(message, sender) {
   }
 
   const frameContext = await getGameFrameContext(tabId, puzzleType);
-  const selectionContext = await detectSelectionForQuickSolve(tabId, puzzleType, frameContext, tab);
+  const selectionContext = await detectSelectionForQuickSolve(tabId, puzzleType, frameContext, tab, { forceDetect: true });
 
   let status = "Board auto-detected.";
   if (selectionContext && selectionContext.fallbackSource === "viewport") {
@@ -1651,10 +1628,7 @@ async function applySolvedPayload(message, sender) {
   const applySettings = normalizeApplySettings(message.settings, quickSettings.applySettings);
 
   const frameContext = await getGameFrameContext(tabId, puzzleType);
-  let topSelection =
-    puzzleType === "tango"
-      ? null
-      : maybeNormalizeSelectionForPuzzle(puzzleType, message.selection, frameContext && frameContext.iframeRect);
+  let topSelection = maybeNormalizeSelectionForPuzzle(puzzleType, message.selection, frameContext && frameContext.iframeRect);
   let interactionTarget = topSelection ? resolveInteractionTarget(topSelection, frameContext) : null;
 
   if (!topSelection) {
@@ -1675,11 +1649,6 @@ async function applySolvedPayload(message, sender) {
 
   if (!topSelection) {
     throw new Error("Board selection is required before applying moves.");
-  }
-
-  const refinedTopSelection = refineSelectionWithBoardBbox(topSelection, message.result);
-  if (refinedTopSelection) {
-    topSelection = refinedTopSelection;
   }
 
   const savedTopSelection = await setTopBoardSelection(tabId, topSelection);

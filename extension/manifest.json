@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LinkedIn Puzzle Solver Assistant",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Capture puzzle boards, solve through a local API, and overlay/apply solutions.",
   "permissions": ["activeTab", "scripting", "storage", "tabs", "webNavigation"],
   "host_permissions": [
@@ -19,6 +19,12 @@
     "default_title": "Puzzle Solver",
     "default_popup": "popup.html"
   },
+  "web_accessible_resources": [
+    {
+      "resources": ["assets/logo.png", "assets/games/*.svg", "assets/pieces/*.svg"],
+      "matches": ["https://linkedin.com/*", "https://*.linkedin.com/*"]
+    }
+  ],
   "content_scripts": [
     {
       "matches": ["https://linkedin.com/*", "https://*.linkedin.com/*"],

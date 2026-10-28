@@ -34,6 +34,7 @@ PUZZLE_DEFINITIONS: tuple[PuzzleDefinition, ...] = (
     ),
     PuzzleDefinition(
         key="tango",
+        cache_revision=2,
         worker_filename="solve_tango_worker.py",
         sample_image="games/tango_solver/examples/sample1.png",
         expected_board_size=6,
@@ -59,7 +60,7 @@ PUZZLE_DEFINITIONS: tuple[PuzzleDefinition, ...] = (
         sample_image="games/patches_solver/examples/sample1.png",
         expected_board_size=6,
         sample_required=False,
-        cache_revision=2,
+        cache_revision=3,
         smoke_samples=(
             "games/patches_solver/examples/sample1.png",
             "games/patches_solver/examples/sample2.png",

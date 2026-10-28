@@ -6,6 +6,7 @@ let quickSolveStatus = null;
 let quickSolveBusy = false;
 let quickSolveObservedUrl = "";
 let sudokuApplyBusy = false;
+let tangoApplyBusy = false;
 
 const puzzleRegistry = globalThis.PuzzleRegistry;
 if (!puzzleRegistry) {
@@ -54,7 +55,8 @@ function setQuickSolveStatus(text, isError = false) {
   }
 
   quickSolveStatus.textContent = text || "";
-  quickSolveStatus.style.color = isError ? "#b42318" : "#166534";
+  quickSolveStatus.hidden = !text;
+  quickSolveStatus.classList.toggle("error", isError);
 }
 
 function updateQuickSolveButtonText() {
@@ -66,10 +68,13 @@ function updateQuickSolveButtonText() {
   const puzzleLabel = puzzleTypeToLabel(puzzleType);
 
   if (quickSolveBusy) {
-    quickSolveButton.textContent = `Solving ${puzzleLabel}...`;
+    quickSolveButton.textContent = `Solving ${puzzleLabel}\u2026`;
   } else {
     quickSolveButton.textContent = `Solve ${puzzleLabel}`;
   }
+  quickSolveButton.setAttribute("aria-label", quickSolveButton.textContent);
+  quickSolveButton.setAttribute("aria-busy", String(quickSolveBusy));
+  quickSolveButton.style.backgroundImage = `url("${chrome.runtime.getURL(`assets/games/${puzzleType}.svg`)}")`;
 }
 
 function removeQuickSolveWidget() {
@@ -100,7 +105,7 @@ async function onQuickSolveClick() {
   }
   updateQuickSolveButtonText();
   const previewOnly = false;
-  setQuickSolveStatus("Solving and applying...");
+  setQuickSolveStatus("Solving and applying to the board\u2026");
 
   try {
     const response = await sendRuntimeMessage({
@@ -120,8 +125,7 @@ async function onQuickSolveClick() {
 
     if (response.previewed) {
       const moves = Array.isArray(response.result?.moves) ? response.result.moves.length : 0;
-      const strategyText = response.strategy ? ` (${response.strategy})` : "";
-      setQuickSolveStatus(`Preview ready: ${moves} moves marked${strategyText}. Take a screenshot.`);
+      setQuickSolveStatus(`Preview ready \u00b7 ${moves} moves marked.`);
       return;
     }
 
@@ -131,9 +135,7 @@ async function onQuickSolveClick() {
     }
 
     const appliedCount = Number(response.appliedCount) || 0;
-    const clickCount = Number(response.clickCount) || 0;
-    const strategyText = response.strategy ? ` (${response.strategy})` : "";
-    setQuickSolveStatus(`Solved and applied ${appliedCount} moves with ${clickCount} clicks${strategyText}.`);
+    setQuickSolveStatus(`Solution applied \u00b7 ${appliedCount} moves.`);
   } catch (error) {
     setQuickSolveStatus(error.message || String(error), true);
   } finally {
@@ -155,43 +157,65 @@ function createQuickSolveWidget() {
   container.style.right = "16px";
   container.style.bottom = "16px";
   container.style.zIndex = "2147483645";
-  container.style.width = "220px";
-  container.style.padding = "10px";
-  container.style.borderRadius = "12px";
-  container.style.background = "linear-gradient(165deg, rgba(255,255,255,0.96), rgba(236,245,255,0.96))";
-  container.style.border = "1px solid #b6c6d9";
-  container.style.boxShadow = "0 6px 18px rgba(15, 23, 42, 0.22)";
-  container.style.backdropFilter = "blur(2px)";
+  // Keep the page's styles from changing the extension's controls.
+  const shadow = container.attachShadow({ mode: "open" });
+  const style = document.createElement("style");
+  style.textContent = `
+    :host { all: initial; }
+    * { box-sizing: border-box; }
+    .widget { width: 210px; max-width: calc(100vw - 32px); padding: 12px;
+      border: 1px solid #cbd9e5; border-radius: 10px; background: #f5f8fb;
+      box-shadow: 0 4px 20px #18354d14; color: #18354d;
+      font: 12px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .title { display: flex; align-items: center; gap: 7px; margin-bottom: 12px;
+      font-size: 11px; font-weight: 600; letter-spacing: -.1px; }
+    .title img { width: 30px; height: 24px; border-radius: 3px; object-fit: contain; }
+    button { display: flex; justify-content: space-between; align-items: center; gap: 10px;
+      width: 100%; padding: 11px 10px 11px 39px; border: 1px solid #0a66c2; border-radius: 6px;
+      background-color: #0a66c2; background-size: 23px; background-position: 9px center;
+      background-repeat: no-repeat; color: #ffffff; text-align: left;
+      font: 550 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      cursor: pointer; transition: background .15s; }
+    button::after { content: "\\2192"; color: #d5ecff; font-size: 16px; }
+    button:hover { background-color: #08549e; }
+    button:focus-visible { outline: 2px solid #0a73c7; outline-offset: 3px; }
+    button:disabled { opacity: .6; cursor: wait; }
+    button[aria-busy="true"]::after { content: ""; width: 12px; height: 12px;
+      flex: none; border: 1.5px solid #ffffff40; border-top-color: #d5ecff;
+      border-radius: 50%; animation: spin .8s linear infinite; }
+    .status { margin: 10px 0 0; font-size: 11px; line-height: 1.5;
+      color: #4f6c85; overflow-wrap: anywhere; }
+    .status.error { color: #aa3827; }
+    [hidden] { display: none; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { *, *::after { animation: none !important; transition: none !important; } }
+  `;
+  const panel = document.createElement("section");
+  panel.className = "widget";
+  panel.setAttribute("aria-label", "Puzzle Solver");
 
   const title = document.createElement("div");
-  title.textContent = "Puzzle Quick Solve";
-  title.style.font = "700 12px/1.2 'Segoe UI', sans-serif";
-  title.style.color = "#1f2937";
-  title.style.marginBottom = "8px";
+  title.className = "title";
+  const logo = document.createElement("img");
+  logo.src = chrome.runtime.getURL("assets/logo.png");
+  logo.alt = "";
+  title.append(logo, "Puzzle Solver");
 
   const button = document.createElement("button");
   button.type = "button";
-  button.style.width = "100%";
-  button.style.border = "1px solid #0f766e";
-  button.style.background = "#0f766e";
-  button.style.color = "#ffffff";
-  button.style.borderRadius = "8px";
-  button.style.padding = "8px 10px";
-  button.style.font = "600 13px/1.2 'Segoe UI', sans-serif";
-  button.style.cursor = "pointer";
   button.addEventListener("click", () => {
     onQuickSolveClick();
   });
 
-  const status = document.createElement("div");
-  status.style.marginTop = "8px";
-  status.style.minHeight = "16px";
-  status.style.font = "500 11px/1.3 'Segoe UI', sans-serif";
-  status.style.color = "#166534";
+  const status = document.createElement("p");
+  status.className = "status";
+  status.hidden = true;
+  status.setAttribute("role", "status");
+  status.setAttribute("aria-live", "polite");
+  status.setAttribute("aria-atomic", "true");
 
-  container.appendChild(title);
-  container.appendChild(button);
-  container.appendChild(status);
+  panel.append(title, button, status);
+  shadow.append(style, panel);
   document.documentElement.appendChild(container);
 
   quickSolveWidgetRoot = container;
@@ -232,6 +256,7 @@ function initializeQuickSolveWidget() {
       quickSolveObservedUrl = window.location.href;
       boardSelection = null;
       clearSolutionOverlay();
+      setQuickSolveStatus("");
     }
     syncQuickSolveWidget();
   }, 1200);
@@ -320,7 +345,9 @@ function refineSelectionWithBoardBbox(selection, result) {
 }
 
 function refineTangoSelection(selection, result) {
-  return refineSelectionWithBoardBbox(selection, result) || normalizeSelection(selection);
+  // Solver image coordinates are translated once in the background. Native
+  // cells also keep apply aligned after a layout change or a scroll.
+  return nativeBoardSelection("tango") || normalizeSelection(selection);
 }
 
 function clearSolutionOverlay() {
@@ -410,7 +437,48 @@ function getGameIframeRect(puzzleType) {
   };
 }
 
+function nativeGameBoard(puzzleType) {
+  const selectors = {
+    queens: "#queens-game-board",
+    tango: '[data-testid="tango-gameboard-wrapper"] [data-testid="interactive-grid"]',
+    patches: '[data-testid="patches-game-board"] [data-testid="interactive-grid"]',
+    sudoku: ".sudoku-grid",
+    wend: '[data-testid="wend-game-board"]',
+  };
+  return selectors[puzzleType] ? document.querySelector(selectors[puzzleType]) : null;
+}
+
+function nativeBoardSelection(puzzleType) {
+  const rect = nativeGameBoard(puzzleType)?.getBoundingClientRect();
+  if (!isRectVisible(rect) || Math.abs(rect.width / rect.height - 1) >= .1) return null;
+  return normalizeSelection({ x: rect.left, y: rect.top, width: rect.width,
+    height: rect.height, devicePixelRatio: window.devicePixelRatio });
+}
+
+async function prepareBoardCapture(puzzleType) {
+  const board = nativeGameBoard(puzzleType);
+  if (board) {
+    const rect = board.getBoundingClientRect();
+    if (rect.top < 0 || rect.left < 0 || rect.bottom > window.innerHeight || rect.right > window.innerWidth) {
+      board.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
+    }
+    let previous = null;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await sleep(50);
+      const current = nativeBoardSelection(puzzleType);
+      if (current && current.x >= 0 && current.y >= 0 && current.x + current.width <= window.innerWidth + 1 &&
+          current.y + current.height <= window.innerHeight + 1 && previous &&
+          ["x", "y", "width", "height"].every(key => Math.abs(current[key] - previous[key]) < .5)) return current;
+      previous = current;
+    }
+    throw new Error("The whole board must be visible and stable before solving.");
+  }
+  return autoDetectBoardSelectionWithFallback(puzzleType);
+}
+
 function autoDetectBoardSelection(puzzleType) {
+  const native = nativeBoardSelection(puzzleType);
+  if (native) return native;
   const selectors = [
     "canvas",
     "svg",
@@ -538,8 +606,8 @@ function startBoardSelection() {
 
     const box = document.createElement("div");
     box.style.position = "fixed";
-    box.style.border = "2px solid #14b8a6";
-    box.style.background = "rgba(20, 184, 166, 0.18)";
+    box.style.border = "2px solid #0a73c7";
+    box.style.background = "rgba(10, 115, 199, 0.1)";
     box.style.display = "none";
     box.style.pointerEvents = "none";
 
@@ -651,239 +719,142 @@ function startBoardSelection() {
   });
 }
 
+const PREVIEW_COLORS = ["#0a66c2", "#498bbd", "#364e68", "#248398", "#657c96", "#274e84"];
+
 function createOverlayRoot(selection) {
   clearSolutionOverlay();
-
-  const root = document.createElement("div");
-  root.style.position = "fixed";
-  root.style.left = "0";
-  root.style.top = "0";
-  root.style.width = "100vw";
-  root.style.height = "100vh";
-  root.style.zIndex = "2147483646";
-  root.style.pointerEvents = "none";
-
+  const host = document.createElement("div");
+  host.id = "puzzle-solver-preview";
+  Object.assign(host.style, { position: "fixed", inset: "0", zIndex: "2147483646", pointerEvents: "none" });
+  const root = host.attachShadow({ mode: "open" });
+  const style = document.createElement("style");
+  style.textContent = `:host { all: initial; } * { box-sizing: border-box; }
+    .frame { position: fixed; border: 1px solid #0a66c270; border-radius: 6px; pointer-events: none; }
+    .badge { position: fixed; display: flex; align-items: center; gap: 7px; padding: 6px 9px;
+      background: #ffffff; color: #245574; border: 1px solid #caddeb; border-radius: 5px;
+      box-shadow: 0 2px 8px #18354d12; font: 550 11px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .badge img { width: 16px; height: 16px; }
+    svg { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  `;
   const frame = document.createElement("div");
-  frame.style.position = "fixed";
-  frame.style.left = `${selection.x}px`;
-  frame.style.top = `${selection.y}px`;
-  frame.style.width = `${selection.width}px`;
-  frame.style.height = `${selection.height}px`;
-  frame.style.border = "2px solid #22c55e";
-  frame.style.boxSizing = "border-box";
-  frame.style.background = "rgba(34, 197, 94, 0.06)";
-  frame.style.pointerEvents = "none";
-
-  root.appendChild(frame);
-  document.documentElement.appendChild(root);
-  solutionOverlayRoot = root;
-
+  frame.className = "frame";
+  Object.assign(frame.style, { left: `${selection.x}px`, top: `${selection.y}px`, width: `${selection.width}px`, height: `${selection.height}px` });
+  root.append(style, frame);
+  document.documentElement.appendChild(host);
+  solutionOverlayRoot = host;
   return root;
 }
 
+function previewSvgNode(parent, name, attributes, text) {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", name);
+  for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, String(value));
+  if (text !== undefined) node.textContent = text;
+  parent.appendChild(node);
+  return node;
+}
+
+function createPreviewCanvas(root, selection) {
+  const svg = previewSvgNode(root, "svg", { width: selection.width, height: selection.height,
+    viewBox: `0 0 ${selection.width} ${selection.height}`, role: "img", "aria-label": "Solution preview" });
+  Object.assign(svg.style, { position: "fixed", left: `${selection.x}px`, top: `${selection.y}px`, overflow: "visible", pointerEvents: "none" });
+  return svg;
+}
+
+function previewGamePiece(svg, x, y, size, name) {
+  previewSvgNode(svg, "image", { x: x - size / 2, y: y - size / 2, width: size, height: size,
+    href: chrome.runtime.getURL(`assets/pieces/${name}.svg`), "aria-label": name });
+}
+
 function renderQueensOverlay(root, selection, result) {
-  const boardSize = Number(result.board_size);
-  if (!boardSize || !Array.isArray(result.moves)) {
-    return;
-  }
-
-  const cellWidth = selection.width / boardSize;
-  const cellHeight = selection.height / boardSize;
-
+  const size = Number(result.board_size);
+  if (!size || !Array.isArray(result.moves)) return;
+  const svg = createPreviewCanvas(root, selection);
+  const cw = selection.width / size, ch = selection.height / size;
+  const pieceSize = Math.min(24, Math.min(cw, ch) * .75);
   for (const move of result.moves) {
-    const row = Number(move.row);
-    const col = Number(move.col);
-
-    if (!Number.isFinite(row) || !Number.isFinite(col)) {
-      continue;
-    }
-
-    const marker = document.createElement("div");
-    marker.textContent = "Q";
-    marker.style.position = "fixed";
-    marker.style.width = "24px";
-    marker.style.height = "24px";
-    marker.style.borderRadius = "12px";
-    marker.style.left = `${selection.x + (col + 0.5) * cellWidth - 12}px`;
-    marker.style.top = `${selection.y + (row + 0.5) * cellHeight - 12}px`;
-    marker.style.display = "flex";
-    marker.style.alignItems = "center";
-    marker.style.justifyContent = "center";
-    marker.style.font = "700 13px/1 sans-serif";
-    marker.style.background = "#facc15";
-    marker.style.color = "#111827";
-    marker.style.border = "2px solid #111827";
-    marker.style.boxShadow = "0 2px 6px rgba(0, 0, 0, 0.35)";
-
-    root.appendChild(marker);
+    if (!Number.isFinite(Number(move.row)) || !Number.isFinite(Number(move.col))) continue;
+    previewGamePiece(svg, (Number(move.col) + .5) * cw, (Number(move.row) + .5) * ch, pieceSize, "queen");
   }
 }
 
 function renderTangoOverlay(root, selection, result) {
-  const boardSize = Number(result.board_size);
-  const grid = Array.isArray(result.solution_grid) ? result.solution_grid : null;
-  if (!boardSize || !grid) {
-    return;
-  }
-
-  const fixedPieces = Array.isArray(result.fixed_pieces) ? result.fixed_pieces : [];
-  const fixedSet = new Set(fixedPieces.map((piece) => `${piece.row},${piece.col}`));
-
-  const cellWidth = selection.width / boardSize;
-  const cellHeight = selection.height / boardSize;
-
+  const size = Number(result.board_size), grid = result.solution_grid;
+  if (!size || !Array.isArray(grid)) return;
+  const fixed = new Set((result.fixed_pieces || []).map((piece) => `${piece.row},${piece.col}`));
+  const svg = createPreviewCanvas(root, selection);
+  const cw = selection.width / size, ch = selection.height / size;
+  const pieceSize = Math.min(cw, ch) * .49;
   for (let row = 0; row < grid.length; row += 1) {
-    const rowValues = grid[row];
-    if (!Array.isArray(rowValues)) {
-      continue;
-    }
-
-    for (let col = 0; col < rowValues.length; col += 1) {
-      if (fixedSet.has(`${row},${col}`)) {
-        continue;
-      }
-
-      const value = Number(rowValues[col]);
-      if (value !== 0 && value !== 1) {
-        continue;
-      }
-
-      const marker = document.createElement("div");
-      marker.textContent = value === 0 ? "M" : "S";
-      marker.style.position = "fixed";
-      marker.style.width = "22px";
-      marker.style.height = "22px";
-      marker.style.borderRadius = "11px";
-      marker.style.left = `${selection.x + (col + 0.5) * cellWidth - 11}px`;
-      marker.style.top = `${selection.y + (row + 0.5) * cellHeight - 11}px`;
-      marker.style.display = "flex";
-      marker.style.alignItems = "center";
-      marker.style.justifyContent = "center";
-      marker.style.font = "700 12px/1 sans-serif";
-      marker.style.background = value === 0 ? "#93c5fd" : "#fdba74";
-      marker.style.color = "#1f2937";
-      marker.style.border = "1px solid #1f2937";
-
-      root.appendChild(marker);
+    for (let col = 0; col < (grid[row]?.length || 0); col += 1) {
+      if (fixed.has(`${row},${col}`)) continue;
+      const value = Number(grid[row][col]);
+      if (value !== 0 && value !== 1) continue;
+      previewGamePiece(svg, (col + .5) * cw, (row + .5) * ch, pieceSize, value === 0 ? "moon" : "sun");
     }
   }
+}
+
+function sudokuPreviewType(selection) {
+  const source = Array.from(document.querySelectorAll(".sudoku-cell-content")).find((node) => {
+    const rect = node.getBoundingClientRect();
+    return /^[1-6]$/.test(node.textContent.trim()) && isPointInsideSelection(rect.left + rect.width / 2, rect.top + rect.height / 2, selection);
+  });
+  if (!source) return { family: "-apple-system, system-ui, sans-serif", size: 20, weight: 600, color: "#1a1a1a" };
+  const style = getComputedStyle(source);
+  return { family: style.fontFamily, size: parseFloat(style.fontSize), weight: style.fontWeight, color: style.color };
 }
 
 function renderSudokuOverlay(root, selection, result) {
-  const boardSize = Number(result.board_size);
-  const moves = Array.isArray(result.moves) ? result.moves : [];
-  if (!boardSize || !moves.length) {
-    return;
-  }
-
-  const cellWidth = selection.width / boardSize;
-  const cellHeight = selection.height / boardSize;
-
-  for (const move of moves) {
-    const row = Number(move.row);
-    const col = Number(move.col);
-    const value = Number(move.value);
-
-    if (!Number.isFinite(row) || !Number.isFinite(col) || !Number.isFinite(value)) {
-      continue;
-    }
-
-    const marker = document.createElement("div");
-    marker.textContent = String(value);
-    marker.style.position = "fixed";
-    marker.style.width = "24px";
-    marker.style.height = "24px";
-    marker.style.borderRadius = "12px";
-    marker.style.left = `${selection.x + (col + 0.5) * cellWidth - 12}px`;
-    marker.style.top = `${selection.y + (row + 0.5) * cellHeight - 12}px`;
-    marker.style.display = "flex";
-    marker.style.alignItems = "center";
-    marker.style.justifyContent = "center";
-    marker.style.font = "700 13px/1 sans-serif";
-    marker.style.background = "#f59e0b";
-    marker.style.color = "#111827";
-    marker.style.border = "2px solid #111827";
-    marker.style.boxShadow = "0 2px 6px rgba(0, 0, 0, 0.35)";
-
-    root.appendChild(marker);
+  const size = Number(result.board_size);
+  if (!size || !Array.isArray(result.moves)) return;
+  const svg = createPreviewCanvas(root, selection);
+  const cw = selection.width / size, ch = selection.height / size;
+  const type = sudokuPreviewType(selection);
+  for (const move of result.moves) {
+    if (![move.row, move.col, move.value].every((value) => Number.isFinite(Number(value)))) continue;
+    previewSvgNode(svg, "text", { x: (Number(move.col) + .5) * cw, y: (Number(move.row) + .5) * ch,
+      "text-anchor": "middle", "dominant-baseline": "central", fill: type.color,
+      "font-family": type.family, "font-size": type.size, "font-weight": type.weight }, String(move.value));
   }
 }
 
+function previewPath(svg, centers, color, width, letterGap = 0) {
+  if (letterGap) {
+    // Leave the letters uncovered, including at bends in a word path.
+    for (let index = 1; index < centers.length; index += 1) {
+      const a = centers[index - 1], b = centers[index];
+      const length = Math.hypot(b.x - a.x, b.y - a.y);
+      if (length <= letterGap * 2) continue;
+      const dx = (b.x - a.x) / length * letterGap, dy = (b.y - a.y) / length * letterGap;
+      previewPath(svg, [{ x: a.x + dx, y: a.y + dy }, { x: b.x - dx, y: b.y - dy }], color, width);
+    }
+    return;
+  }
+  const points = centers.map((point) => `${point.x},${point.y}`).join(" ");
+  previewSvgNode(svg, "polyline", { points, fill: "none", stroke: "#ffffff", "stroke-width": width + 3,
+    "stroke-linecap": "round", "stroke-linejoin": "round", opacity: .85 });
+  previewSvgNode(svg, "polyline", { points, fill: "none", stroke: color, "stroke-width": width,
+    "stroke-linecap": "round", "stroke-linejoin": "round" });
+}
+
 function renderZipOverlay(root, selection, result) {
-  const boardSize = Number(result.board_size);
-  const path = Array.isArray(result.path) ? result.path : [];
-  if (!boardSize || path.length < 2) {
-    return;
-  }
-
-  const cellWidth = selection.width / boardSize;
-  const cellHeight = selection.height / boardSize;
-
-  const centers = path
-    .map((step) => {
-      const row = Number(step.row);
-      const col = Number(step.col);
-      if (!Number.isFinite(row) || !Number.isFinite(col)) {
-        return null;
-      }
-      return {
-        x: selection.x + (col + 0.5) * cellWidth,
-        y: selection.y + (row + 0.5) * cellHeight,
-      };
-    })
-    .filter(Boolean);
-
-  if (centers.length < 2) {
-    return;
-  }
-
-  for (let index = 0; index < centers.length - 1; index += 1) {
-    const current = centers[index];
-    const next = centers[index + 1];
-
-    const dx = next.x - current.x;
-    const dy = next.y - current.y;
-    const length = Math.hypot(dx, dy);
-    const angle = Math.atan2(dy, dx);
-
-    const segment = document.createElement("div");
-    segment.style.position = "fixed";
-    segment.style.left = `${current.x}px`;
-    segment.style.top = `${current.y}px`;
-    segment.style.width = `${length}px`;
-    segment.style.height = "6px";
-    segment.style.transformOrigin = "0 50%";
-    segment.style.transform = `translateY(-3px) rotate(${angle}rad)`;
-    segment.style.borderRadius = "999px";
-    segment.style.background = "rgba(14, 116, 144, 0.85)";
-    segment.style.boxShadow = "0 0 0 1px rgba(255, 255, 255, 0.65)";
-    root.appendChild(segment);
-  }
-
-  const start = centers[0];
+  const size = Number(result.board_size), path = result.path;
+  if (!size || !Array.isArray(path) || path.length < 2) return;
+  const svg = createPreviewCanvas(root, selection);
+  const cw = selection.width / size, ch = selection.height / size;
+  const centers = path.map((point) => ({ x: (Number(point.col) + .5) * cw, y: (Number(point.row) + .5) * ch }));
+  if (centers.some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y))) return;
+  previewPath(svg, centers, "#0a66c2", Math.max(4, Math.min(6, cw * .12)));
+  previewSvgNode(svg, "circle", { cx: centers[0].x, cy: centers[0].y, r: 6, fill: "#ffffff", stroke: "#0a66c2", "stroke-width": 2 });
   const end = centers[centers.length - 1];
-
-  const startDot = document.createElement("div");
-  startDot.style.position = "fixed";
-  startDot.style.left = `${start.x - 7}px`;
-  startDot.style.top = `${start.y - 7}px`;
-  startDot.style.width = "14px";
-  startDot.style.height = "14px";
-  startDot.style.borderRadius = "50%";
-  startDot.style.background = "#0284c7";
-  startDot.style.border = "2px solid #ffffff";
-  root.appendChild(startDot);
-
-  const endDot = document.createElement("div");
-  endDot.style.position = "fixed";
-  endDot.style.left = `${end.x - 7}px`;
-  endDot.style.top = `${end.y - 7}px`;
-  endDot.style.width = "14px";
-  endDot.style.height = "14px";
-  endDot.style.borderRadius = "50%";
-  endDot.style.background = "#f97316";
-  endDot.style.border = "2px solid #ffffff";
-  root.appendChild(endDot);
+  previewSvgNode(svg, "circle", { cx: end.x, cy: end.y, r: 6, fill: "#0a66c2", stroke: "#ffffff", "stroke-width": 2 });
+  for (const clue of result.clues || []) {
+    const x = (Number(clue.col) + .5) * cw, y = (Number(clue.row) + .5) * ch;
+    if (![x, y, Number(clue.value)].every(Number.isFinite)) continue;
+    previewSvgNode(svg, "circle", { cx: x, cy: y, r: 12, fill: "#ffffff", stroke: "#0a66c2", "stroke-width": 1.5 });
+    previewSvgNode(svg, "text", { x, y, "text-anchor": "middle", "dominant-baseline": "central",
+      fill: "#075da5", "font-size": 12, "font-weight": 600 }, String(clue.value));
+  }
 }
 
 function buildWendWordList(result) {
@@ -892,60 +863,22 @@ function buildWendWordList(result) {
 }
 
 function renderWendOverlay(root, selection, result) {
-  const boardSize = Number(result?.board_size);
-  const words = buildWendWordList(result);
-  if (!boardSize || !words.length) {
-    return;
-  }
-
-  const cellWidth = selection.width / boardSize;
-  const cellHeight = selection.height / boardSize;
-  const palette = ["#14b8a6", "#db2777", "#f97316", "#84cc16", "#3b82f6", "#a855f7"];
-
-  for (let wordIndex = 0; wordIndex < words.length; wordIndex += 1) {
-    const entry = words[wordIndex];
-    const color = palette[wordIndex % palette.length];
-    const centers = entry.path.map((step) => ({
-      x: selection.x + (step.col + 0.5) * cellWidth,
-      y: selection.y + (step.row + 0.5) * cellHeight,
-    }));
-
-    for (let index = 0; index < centers.length - 1; index += 1) {
-      const current = centers[index];
-      const next = centers[index + 1];
-      const dx = next.x - current.x;
-      const dy = next.y - current.y;
-      const length = Math.hypot(dx, dy);
-      const angle = Math.atan2(dy, dx);
-
-      const segment = document.createElement("div");
-      segment.style.position = "fixed";
-      segment.style.left = `${current.x}px`;
-      segment.style.top = `${current.y}px`;
-      segment.style.width = `${length}px`;
-      segment.style.height = "10px";
-      segment.style.transformOrigin = "0 50%";
-      segment.style.transform = `translateY(-5px) rotate(${angle}rad)`;
-      segment.style.borderRadius = "999px";
-      segment.style.background = color;
-      segment.style.opacity = "0.72";
-      segment.style.boxShadow = "0 0 0 2px rgba(255, 255, 255, 0.8)";
-      root.appendChild(segment);
-    }
-
+  const size = Number(result?.board_size), words = buildWendWordList(result);
+  if (!size || !words.length) return;
+  const svg = createPreviewCanvas(root, selection);
+  const cw = selection.width / size, ch = selection.height / size;
+  for (let index = 0; index < words.length; index += 1) {
+    const entry = words[index], color = PREVIEW_COLORS[index % PREVIEW_COLORS.length];
+    const centers = entry.path.map((point) => ({ x: (point.col + .5) * cw, y: (point.row + .5) * ch }));
+    if (!centers.length) continue;
+    previewPath(svg, centers, color, Math.max(3, Math.min(5, cw * .08)), Math.min(16, Math.min(cw, ch) * .22));
     const end = centers[centers.length - 1];
-    const label = document.createElement("div");
-    label.textContent = entry.word;
-    label.style.position = "fixed";
-    label.style.left = `${end.x - 24}px`;
-    label.style.top = `${end.y - 14}px`;
-    label.style.padding = "3px 6px";
-    label.style.borderRadius = "999px";
-    label.style.font = "700 10px/1 sans-serif";
-    label.style.color = "#111827";
-    label.style.background = "rgba(255, 255, 255, 0.88)";
-    label.style.border = `2px solid ${color}`;
-    root.appendChild(label);
+    const labelWidth = Math.max(26, entry.word.length * 6 + 12);
+    const x = Math.max(0, Math.min(selection.width - labelWidth, end.x - labelWidth / 2));
+    const y = end.y + ch * .25;
+    previewSvgNode(svg, "rect", { x, y, width: labelWidth, height: 18, rx: 4, fill: "#ffffff", stroke: color, "stroke-width": 1 });
+    previewSvgNode(svg, "text", { x: x + labelWidth / 2, y: y + 9, "text-anchor": "middle",
+      "dominant-baseline": "central", fill: color, "font-size": 10, "font-weight": 600 }, entry.word);
   }
 }
 
@@ -988,67 +921,68 @@ function buildPatchesRegionList(result) {
         height,
         width,
         area: height * width,
+        clueRow: Number(region.clue_row),
+        clueCol: Number(region.clue_col),
       };
     })
     .filter(Boolean);
 }
 
+function opaqueClueColor(value) {
+  const rgb = String(value || "").match(/^rgba?\(\s*([\d.]+)[, ]+([\d.]+)[, ]+([\d.]+)(?:[, /]+([\d.]+))?\s*\)$/);
+  if (!rgb || (rgb[4] !== undefined && Number(rgb[4]) === 0)) return null;
+  return `rgb(${rgb[1]}, ${rgb[2]}, ${rgb[3]})`;
+}
+
+function patchesClueVisual(region, selection, result) {
+  let row = region.clueRow, col = region.clueCol;
+  if (!Number.isInteger(row) || !Number.isInteger(col)) {
+    const clues = (result.clues || []).filter((clue) => clue.row >= region.top && clue.row < region.top + region.height &&
+      clue.col >= region.left && clue.col < region.left + region.width);
+    if (clues.length !== 1) return null;
+    row = clues[0].row; col = clues[0].col;
+  }
+  const cw = selection.width / result.board_size, ch = selection.height / result.board_size;
+  const target = document.elementFromPoint(selection.x + (col + .5) * cw, selection.y + (row + .5) * ch);
+  const cell = target?.closest("[data-cell-idx]");
+  const shape = cell?.querySelector("[data-shape]");
+  if (!shape) return null;
+  const style = getComputedStyle(shape);
+  const border = parseFloat(style.borderWidth) > 0 ? opaqueClueColor(style.borderColor) : null;
+  const color = border || opaqueClueColor(style.backgroundColor);
+  if (!color) return null;
+  const shapes = Array.from(cell.querySelectorAll("*")).flatMap((node) => {
+    const paint = getComputedStyle(node), rect = node.getBoundingClientRect();
+    if (!opaqueClueColor(paint.backgroundColor) || rect.width < 2 || rect.height < 2) return [];
+    return [{ x: rect.left - selection.x, y: rect.top - selection.y, width: rect.width, height: rect.height,
+      radius: parseFloat(paint.borderRadius) || 0 }];
+  });
+  const number = cell.querySelector('[data-testid^="patches-clue-number-"]');
+  const numberStyle = number ? getComputedStyle(number) : null;
+  return { color, shapes, row, col, number: number?.textContent.trim(),
+    fontSize: numberStyle ? parseFloat(numberStyle.fontSize) : 18,
+    fontWeight: numberStyle?.fontWeight || 600, fontFamily: numberStyle?.fontFamily || "system-ui" };
+}
+
 function renderPatchesOverlay(root, selection, result) {
-  const boardSize = Number(result?.board_size);
-  if (!boardSize) {
-    return;
-  }
-
-  const regions = buildPatchesRegionList(result);
-  if (!regions.length) {
-    return;
-  }
-
-  const cellWidth = selection.width / boardSize;
-  const cellHeight = selection.height / boardSize;
-  const palette = [
-    { border: "#0f766e", fill: "rgba(15, 118, 110, 0.22)" },
-    { border: "#0ea5e9", fill: "rgba(14, 165, 233, 0.22)" },
-    { border: "#ea580c", fill: "rgba(234, 88, 12, 0.2)" },
-    { border: "#7c3aed", fill: "rgba(124, 58, 237, 0.2)" },
-    { border: "#dc2626", fill: "rgba(220, 38, 38, 0.2)" },
-    { border: "#b45309", fill: "rgba(180, 83, 9, 0.2)" },
-  ];
-
-  for (let index = 0; index < regions.length; index += 1) {
-    const region = regions[index];
-    const style = palette[index % palette.length];
-
-    const rect = document.createElement("div");
-    rect.style.position = "fixed";
-    rect.style.left = `${selection.x + region.left * cellWidth}px`;
-    rect.style.top = `${selection.y + region.top * cellHeight}px`;
-    rect.style.width = `${region.width * cellWidth}px`;
-    rect.style.height = `${region.height * cellHeight}px`;
-    rect.style.border = `3px solid ${style.border}`;
-    rect.style.borderRadius = "8px";
-    rect.style.boxSizing = "border-box";
-    rect.style.background = style.fill;
-    rect.style.pointerEvents = "none";
-    root.appendChild(rect);
-
-    const areaTag = document.createElement("div");
-    areaTag.textContent = String(region.area);
-    areaTag.style.position = "fixed";
-    areaTag.style.left = `${selection.x + (region.left + region.width / 2) * cellWidth - 9}px`;
-    areaTag.style.top = `${selection.y + (region.top + region.height / 2) * cellHeight - 9}px`;
-    areaTag.style.width = "18px";
-    areaTag.style.height = "18px";
-    areaTag.style.display = "flex";
-    areaTag.style.alignItems = "center";
-    areaTag.style.justifyContent = "center";
-    areaTag.style.borderRadius = "9px";
-    areaTag.style.font = "700 10px/1 sans-serif";
-    areaTag.style.color = "#0f172a";
-    areaTag.style.background = "rgba(255,255,255,0.72)";
-    areaTag.style.border = `1px solid ${style.border}`;
-    areaTag.style.boxSizing = "border-box";
-    root.appendChild(areaTag);
+  const size = Number(result?.board_size), regions = buildPatchesRegionList(result);
+  if (!size || !regions.length) return;
+  const svg = createPreviewCanvas(root, selection);
+  const cw = selection.width / size, ch = selection.height / size;
+  for (const region of regions) {
+    const clue = patchesClueVisual(region, selection, result);
+    const color = clue?.color || "#b8c6d2";
+    previewSvgNode(svg, "rect", { x: region.left * cw + 1, y: region.top * ch + 1,
+      width: region.width * cw - 2, height: region.height * ch - 2, rx: 3,
+      fill: color, stroke: "#ffffff", "stroke-width": 2 });
+    // Keep each original clue's geometry and number legible on the solid fill.
+    for (const shape of clue?.shapes || []) {
+      previewSvgNode(svg, "rect", { x: shape.x, y: shape.y, width: shape.width, height: shape.height,
+        rx: shape.radius, fill: "#ffffff", "fill-opacity": .12, stroke: "#ffffff", "stroke-width": 1.5 });
+    }
+    if (clue?.number) previewSvgNode(svg, "text", { x: (clue.col + .5) * cw, y: (clue.row + .5) * ch,
+      "text-anchor": "middle", "dominant-baseline": "central", fill: "#ffffff", "font-size": clue.fontSize,
+      "font-weight": clue.fontWeight, "font-family": clue.fontFamily }, clue.number);
   }
 }
 
@@ -1065,16 +999,13 @@ function renderSolutionOverlay(puzzleType, result, selection) {
   const root = createOverlayRoot(normalized);
 
   const badge = document.createElement("div");
-  badge.textContent = result && result.solved ? "Solution ready" : "No solution";
-  badge.style.position = "fixed";
+  badge.className = "badge";
+  const icon = document.createElement("img");
+  icon.src = chrome.runtime.getURL(`assets/games/${puzzleType}.svg`);
+  icon.alt = "";
+  badge.append(icon, `${puzzleTypeToLabel(puzzleType)} \u00b7 ${result?.solved ? "Preview" : "No solution"}`);
   badge.style.left = `${normalized.x}px`;
-  badge.style.top = `${Math.max(0, normalized.y - 30)}px`;
-  badge.style.padding = "5px 10px";
-  badge.style.borderRadius = "999px";
-  badge.style.font = "600 12px/1 sans-serif";
-  badge.style.background = result && result.solved ? "#16a34a" : "#b91c1c";
-  badge.style.color = "white";
-  badge.style.boxShadow = "0 2px 8px rgba(0, 0, 0, 0.35)";
+  badge.style.top = `${Math.max(8, normalized.y - 34)}px`;
   root.appendChild(badge);
 
   if (!result || !result.solved) {
@@ -1432,6 +1363,12 @@ function sudokuNotesEnabled() {
   return Boolean(document.querySelector('[data-control-btn="notes"] .sudoku-under-board__text--active'));
 }
 
+function sudokuCompletionVisible() {
+  if (!String(window.location?.pathname || "").includes("/mini-sudoku")) return false;
+  const text = document.body?.innerText || "";
+  return /Mini\s*Sudoku/i.test(text) && /(?:Resuelto en|Solved in)\s+\d+:\d{2}/i.test(text);
+}
+
 function focusKeyboardTarget(target) {
   if (!(target instanceof HTMLElement) || typeof target.focus !== "function") {
     return;
@@ -1710,111 +1647,86 @@ async function applyQueensSolution(result, selection, settings) {
   };
 }
 
+function readTangoBoard() {
+  const cells = Array.from({ length: 36 }, (_, index) => document.getElementById(`tango-cell-${index}`));
+  if (cells.some(cell => !cell)) return null;
+  const values = cells.map(cell => cell.querySelector('[data-testid="cell-zero"]') ? 1 :
+    cell.querySelector('[data-testid="cell-one"]') ? 0 :
+    cell.querySelector('[data-testid="cell-empty"]') ? -1 : null);
+  if (values.includes(null)) return null;
+  return { cells, values, fixed: cells.map(cell => cell.getAttribute("aria-disabled") === "true") };
+}
+
+function tangoCompletionVisible() {
+  if (/\/games\/tango\/results\//.test(window.location.pathname)) return true;
+  const text = document.body?.innerText || "";
+  return /Tango/i.test(text) && /¡Estás arrasando!|You crushed it!|Puzzle solved/i.test(text);
+}
+
 async function applyTangoSolution(result, selection, settings) {
+  if (tangoApplyBusy) return { ok: false, error: "Tango apply is already in progress." };
+  tangoApplyBusy = true;
+  try {
+    return await applyVerifiedTangoSolution(result, settings);
+  } finally { tangoApplyBusy = false; }
+}
+
+async function applyVerifiedTangoSolution(result, settings) {
   const applySettings = normalizeApplySettings(settings);
-  const normalized = refineTangoSelection(selection || boardSelection, result);
-  if (!normalized) {
-    return { ok: false, error: "Board selection is required before applying moves." };
+  const grid = result?.solution_grid;
+  if (Number(result?.board_size) !== 6 || !Array.isArray(grid) || grid.length !== 6 ||
+      grid.some(row => !Array.isArray(row) || row.length !== 6 || row.some(value => value !== 0 && value !== 1))) {
+    return { ok: false, error: "Invalid Tango solution grid." };
   }
-
-  const boardSize = Number(result?.board_size);
-  if (!boardSize) {
-    return { ok: false, error: "Invalid board size in solution." };
+  const expected = grid.flat();
+  const counts = { appliedCount: 0, clickCount: 0 };
+  const fail = error => ({ ok: false, error, ...counts, strategy: "verified-tango-cells" });
+  let board = readTangoBoard();
+  if (!board) return fail("Could not identify all 36 Tango cells. Refresh the game before solving.");
+  if (board.fixed.some((fixed, index) => fixed && board.values[index] !== expected[index])) {
+    return fail("Tango solution does not match the game's fixed pieces. Stopped before applying.");
   }
-
-  const moves = buildTangoMoveList(result);
-  if (!moves.length) {
-    const fixedCount = Number(result?.details?.fixed_count);
-    if (Number.isFinite(fixedCount) && fixedCount >= boardSize * boardSize) {
-      return {
-        ok: true,
-        appliedCount: 0,
-        clickCount: 0,
-        strategy: "already-filled",
-      };
-    }
-
-    return { ok: false, error: "No Tango solution moves are available." };
+  const parsedFixed = result.fixed_pieces;
+  if (!Array.isArray(parsedFixed) || parsedFixed.length !== board.fixed.filter(Boolean).length ||
+      parsedFixed.some(piece => !board.fixed[piece.row * 6 + piece.col] || expected[piece.row * 6 + piece.col] !== piece.piece_type)) {
+    return fail("Tango capture did not identify the original clues correctly. Stopped before applying.");
   }
-
-  const cellWidth = normalized.width / boardSize;
-  const cellHeight = normalized.height / boardSize;
-
-  let appliedCount = 0;
-  let clickCount = 0;
-
-  for (const move of moves) {
-    const row = Number(move.row);
-    const col = Number(move.col);
-    const value = Number(move.value);
-
-    if (!Number.isFinite(row) || !Number.isFinite(col) || (value !== 0 && value !== 1)) {
-      continue;
-    }
-
-    const x = normalized.x + (col + 0.5) * cellWidth;
-    const y = normalized.y + (row + 0.5) * cellHeight;
-
-    let localClicks = 0;
-
-    if (value === 0 && applySettings.tangoApplyMode === "right-moon") {
-      if (rightClickViewportPoint(x, y)) {
-        localClicks += 1;
-        clickCount += 1;
-      } else {
-        const fallbackClicks = TANGO_MOON_LEFT_CLICKS;
-        for (let clickIndex = 0; clickIndex < fallbackClicks; clickIndex += 1) {
-          if (leftClickViewportPoint(x, y)) {
-            localClicks += 1;
-            clickCount += 1;
-          }
-          if (clickIndex < fallbackClicks - 1) {
-            await sleep(applySettings.interClickDelayMs);
-          }
-        }
+  for (let index = 0; index < 36; index += 1) {
+    if (board.fixed[index] || board.values[index] === expected[index]) continue;
+    let changed = false;
+    // Read after every click: a cell can already contain a sun or moon.
+    for (let step = 0; step < 2 && board.values[index] !== expected[index]; step += 1) {
+      const before = board.values.slice();
+      const finishing = before.every((value, cellIndex) => cellIndex === index || value === expected[cellIndex]);
+      const rect = board.cells[index].getBoundingClientRect();
+      if (rect.top < 0 || rect.left < 0 || rect.bottom > window.innerHeight || rect.right > window.innerWidth) {
+        return fail("Tango board moved outside the viewport. Stopped applying.");
       }
-    } else {
-      const clicksNeeded = getTangoClickCountForValue(value, applySettings);
-      for (let clickIndex = 0; clickIndex < clicksNeeded; clickIndex += 1) {
-        if (leftClickViewportPoint(x, y)) {
-          localClicks += 1;
-          clickCount += 1;
+      if (!leftClickViewportPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)) return fail("Could not select a Tango cell.");
+      counts.clickCount += 1;
+      let accepted = false;
+      for (let attempt = 0; attempt < (finishing ? 40 : 16); attempt += 1) {
+        await sleep(50);
+        const after = readTangoBoard();
+        if (!after) {
+          if (finishing && tangoCompletionVisible()) return { ok: true, ...counts,
+            appliedCount: counts.appliedCount + 1, strategy: "verified-completed-grid" };
+          continue;
         }
-        if (clickIndex < clicksNeeded - 1) {
-          await sleep(applySettings.interClickDelayMs);
+        if (after.values.some((value, cellIndex) => cellIndex !== index && value !== before[cellIndex])) {
+          return fail("Tango input changed another cell. Stopped applying.");
         }
+        board = after;
+        if (after.values[index] !== before[index]) { accepted = true; changed = true; break; }
       }
+      if (!accepted) return fail(`Tango did not confirm the click in cell (${Math.floor(index / 6) + 1}, ${index % 6 + 1}).`);
+      await sleep(applySettings.interClickDelayMs);
     }
-
-    if (localClicks > 0) {
-      appliedCount += 1;
-    }
-
+    if (board.values[index] !== expected[index]) return fail("Tango entered an unexpected piece. Stopped applying.");
+    if (changed) counts.appliedCount += 1;
     await sleep(applySettings.interMoveDelayMs);
   }
-
-  const strategy =
-    applySettings.tangoApplyMode === "right-moon"
-      ? "left-sun-right-moon"
-      : "left-cycle";
-
-  if (appliedCount === 0) {
-    return {
-      ok: false,
-      error: "Could not dispatch Tango clicks to board cells.",
-      appliedCount,
-      clickCount,
-      strategy,
-    };
-  }
-
-  return {
-    ok: true,
-    appliedCount,
-    clickCount,
-    strategy,
-    clicksPerValue: applySettings.tangoApplyMode === "right-moon" ? { 0: "right", 1: 1 } : { 0: 2, 1: 1 },
-  };
+  return { ok: true, ...counts, strategy: "verified-tango-cells" };
 }
 
 async function applySudokuSolution(result, selection, settings) {
@@ -1882,6 +1794,10 @@ async function applyVerifiedSudokuSolution(result, selection, settings) {
     }
   }
 
+  const expectedFinalValues = snapshot.values.slice();
+  for (const move of actionableMoves) expectedFinalValues[move.row * boardSize + move.col] = move.value;
+  const completeSolution = expectedFinalValues.every((value) => Number.isInteger(value) && value >= 1 && value <= boardSize);
+
   for (const move of actionableMoves) {
     if (sudokuNotesEnabled()) return fail("Sudoku notes mode was enabled during apply. Stopped before typing.");
     const index = move.row * boardSize + move.col;
@@ -1889,6 +1805,8 @@ async function applyVerifiedSudokuSolution(result, selection, settings) {
     if (!snapshot) return fail("Sudoku grid moved or became unreadable. Stopped applying.");
     if (snapshot.values[index] === move.value) continue;
     const beforeValues = snapshot.values;
+    const finishingMove = completeSolution && beforeValues.every((value, cellIndex) =>
+      cellIndex === index || value === expectedFinalValues[cellIndex]);
     const geometry = snapshot.geometry;
     const rect = snapshot.cells[index].getBoundingClientRect();
     if (!leftClickViewportPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)) {
@@ -1921,7 +1839,8 @@ async function applyVerifiedSudokuSolution(result, selection, settings) {
     counts.keyCount += 1;
 
     let verified = false;
-    for (let attempt = 0; attempt < 16; attempt += 1) {
+    let completed = false;
+    for (let attempt = 0; attempt < (finishingMove ? 40 : 16); attempt += 1) {
       const after = getSudokuSnapshot(candidate, boardSize);
       if (after) {
         if (after.geometry !== geometry || after.values.some((value, cellIndex) => cellIndex !== index && value !== beforeValues[cellIndex])) {
@@ -1929,11 +1848,22 @@ async function applyVerifiedSudokuSolution(result, selection, settings) {
         }
         if (after.values[index] === move.value) { verified = true; break; }
         if (after.values[index] !== beforeValues[index]) return fail("Sudoku entered an unexpected number. Stopped applying.");
+      } else if (completeSolution && (
+        live.cells.every((cell, cellIndex) => readSudokuCellValue(cell, boardSize) === expectedFinalValues[cellIndex]) ||
+        (finishingMove && sudokuCompletionVisible()))) {
+        // The winning key can remove/cover the grid before the next snapshot.
+        // Accept all 36 retained DOM values, or the game's explicit victory
+        // receipt after the other 35 values were verified. Disappearance alone
+        // is never success and no key is replayed.
+        verified = true;
+        completed = true;
+        break;
       }
       await sleep(50);
     }
     if (!verified) return fail(`Sudoku did not confirm ${move.value} in cell (${move.row + 1}, ${move.col + 1}). Stopped without replaying moves.`);
     counts.appliedCount += 1;
+    if (completed) return { ok: true, ...counts, strategy: "verified-completed-grid" };
     await sleep(applySettings.interMoveDelayMs);
   }
   return { ok: true, ...counts, strategy: "verified-cell-then-keyboard" };
@@ -2133,52 +2063,40 @@ async function applyPatchesSolution(result, selection, settings) {
 
 async function applyWendSolution(result, selection, settings) {
   const applySettings = normalizeApplySettings(settings);
-  const normalized = normalizeSelection(selection || boardSelection);
-  if (!normalized) {
-    return { ok: false, error: "Board selection is required before applying Wend paths." };
-  }
-
   const boardSize = Number(result?.board_size);
-  if (!boardSize) {
-    return { ok: false, error: "Invalid board size in Wend solution." };
-  }
-
   const words = buildWendWordList(result);
-  if (!words.length) {
-    return { ok: false, error: "No Wend word paths are available." };
-  }
-
-  const cellWidth = normalized.width / boardSize;
-  const cellHeight = normalized.height / boardSize;
+  if (!boardSize || !words.length) return { ok: false, error: "No valid Wend word paths are available." };
   let appliedCount = 0;
-
+  const fail = error => ({ ok: false, error, appliedCount, strategy: "verified-word-path-drag" });
   for (const entry of words) {
-    const points = entry.path.map((step) => ({
-      x: normalized.x + (step.col + 0.5) * cellWidth,
-      y: normalized.y + (step.row + 0.5) * cellHeight,
-    }));
-
-    if (await dragViewportPath(points, 4)) {
-      appliedCount += 1;
+    const board = nativeGameBoard("wend");
+    const cells = entry.path.map(step => board?.querySelector(`[data-cell-idx="${step.row * boardSize + step.col}"]`));
+    if (cells.some(cell => !cell)) return fail("Could not identify Wend path cells. Stopped applying.");
+    const locked = cells.map(cell => cell.getAttribute("data-cell-is-locked") === "true");
+    if (locked.every(Boolean)) continue;
+    if (locked.some(Boolean)) return fail("Wend solution overlaps an already accepted word. Solve again before applying.");
+    const points = cells.map(cell => {
+      const rect = cell.getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    });
+    if (points.some(point => point.x < 0 || point.y < 0 || point.x >= window.innerWidth || point.y >= window.innerHeight)) {
+      return fail("Wend board moved outside the viewport. Stopped applying.");
     }
-
+    if (!await dragViewportPath(points, 4)) return fail("Could not draw a Wend word path.");
+    let accepted = false;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      await sleep(50);
+      const live = nativeGameBoard("wend");
+      if (entry.path.every(step => live?.querySelector(`[data-cell-idx="${step.row * boardSize + step.col}"]`)
+          ?.getAttribute("data-cell-is-locked") === "true") || /\/games\/wend\/results\//.test(window.location.pathname)) {
+        accepted = true; break;
+      }
+    }
+    if (!accepted) return fail(`Wend did not accept the word ${entry.word}. Stopped without replaying paths.`);
+    appliedCount += 1;
     await sleep(Math.max(80, applySettings.interMoveDelayMs));
   }
-
-  if (appliedCount !== words.length) {
-    return {
-      ok: false,
-      error: `Applied ${appliedCount} of ${words.length} Wend word paths.`,
-      appliedCount,
-    };
-  }
-
-  return {
-    ok: true,
-    appliedCount,
-    clickCount: appliedCount,
-    strategy: "word-path-drag",
-  };
+  return { ok: true, appliedCount, clickCount: appliedCount, strategy: "verified-word-path-drag" };
 }
 
 async function applySolution(puzzleType, result, selection, settings) {
@@ -2235,9 +2153,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "autoDetectBoard") {
-    boardSelection = autoDetectBoardSelectionWithFallback(message.puzzleType);
-    sendResponse({ ok: Boolean(boardSelection), selection: boardSelection });
-    return;
+    prepareBoardCapture(message.puzzleType)
+      .then((selection) => { boardSelection = selection; sendResponse({ ok: Boolean(selection), selection }); })
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
   }
 
   if (message.type === "getViewportMetrics") {

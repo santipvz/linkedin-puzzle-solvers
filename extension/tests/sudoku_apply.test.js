@@ -8,6 +8,8 @@ function createGame(options = {}) {
   const values = Array(36).fill(0);
   let selected = -1;
   let now = 0;
+  let boardGone = false;
+  let victoryAt = 0;
   const writes = [];
   const timers = [];
   let cells;
@@ -52,10 +54,16 @@ function createGame(options = {}) {
           (!options.requireGridFocus || document.activeElement === grid)) {
         const write = () => {
           const index = options.wrongCell ? (selected + 1) % 36 : selected;
-          values[index] = Number(event.key);
+          const finishing = options.finishAtWrite === writes.length + 1;
+          if (!finishing || !options.skipFinishingValue) values[index] = Number(event.key);
           if (notesEnabled) noteCells.add(index);
           else noteCells.delete(index);
           writes.push(index);
+          if (finishing) {
+            boardGone = true;
+            victoryAt = now + (options.victoryDelay || 0);
+            for (const cell of cells) cell.isConnected = false;
+          }
         };
         if (options.writeDelay) timers.push({ at: now + options.writeDelay, run: write });
         else write();
@@ -77,12 +85,14 @@ function createGame(options = {}) {
   const notesControl = new Element(-1);
   notesControl.getBoundingClientRect = () => ({ left: 0, top: 350, width: 100, height: 30 });
   const document = {
+    body: { get innerText() { return boardGone && options.victoryReceipt && now >= victoryAt ? "Mini Sudoku ¡Estás arrasando! Resuelto en 0:19" : ""; } },
     activeElement: null,
     querySelector(selector) {
       if (selector === '[data-control-btn="notes"]') return notesControl;
       return notesEnabled && selector.includes("sudoku-under-board__text--active") ? {} : null;
     },
     elementFromPoint(x, y) {
+      if (boardGone) return null;
       if (y >= 350 && y <= 380) return notesControl;
       if (x < 20 || y < 20 || x >= 320 || y >= 320) return null;
       const index = Math.floor((y - 20) / 50) * 6 + Math.floor((x - 20) / 50);
@@ -91,7 +101,8 @@ function createGame(options = {}) {
     },
   };
   const context = vm.createContext({
-    window: { self: {}, top: {}, innerWidth: 400, innerHeight: 400, devicePixelRatio: 1 },
+    window: { self: {}, top: {}, innerWidth: 400, innerHeight: 400, devicePixelRatio: 1,
+      location: { pathname: "/games/view/mini-sudoku/desktop/" } },
     document,
     chrome: { runtime: { onMessage: { addListener() {} } } },
     Element, HTMLElement: Element, HTMLIFrameElement: class {},
@@ -197,6 +208,47 @@ test("a single existing note is not mistaken for an already filled cell", async 
   const game = createGame({ notesAtStart: [0] });
   assert.equal((await game.apply()).ok, true);
   assert.deepEqual(game.writes, [0, 1, 8]);
+});
+
+function completeGame(options) {
+  const game = createGame(options);
+  const moves = Array.from({ length: 36 }, (_, index) => ({ row: Math.floor(index / 6), col: index % 6,
+    value: (Math.floor(index / 6) * 3 + Math.floor(index / 12) + index % 6 + 5) % 6 + 1 }));
+  // The reported failure was 6 in row 6, column 2, after winning.
+  game.result.moves = [...moves.filter((move) => move.row !== 5 || move.col !== 1), moves[31]];
+  return game;
+}
+
+test("confirms the final 6 after the winning key removes the completed board", async () => {
+  const game = completeGame({ finishAtWrite: 36 });
+  const response = await game.apply();
+  assert.equal(response.ok, true);
+  assert.equal(response.appliedCount, 36);
+  assert.equal(game.values[31], 6);
+  assert.equal(game.writes.length, 36);
+});
+
+test("accepts the explicit victory receipt when the final digit is not painted", async () => {
+  const game = completeGame({ finishAtWrite: 36, skipFinishingValue: true, victoryReceipt: true, victoryDelay: 1000 });
+  const response = await game.apply();
+  assert.equal(response.ok, true);
+  assert.equal(response.appliedCount, 36);
+  assert.equal(game.writes.length, 36);
+});
+
+test("does not infer victory from a disappearing grid with an unconfirmed final digit", async () => {
+  const game = completeGame({ finishAtWrite: 36, skipFinishingValue: true });
+  const response = await game.apply();
+  assert.equal(response.ok, false);
+  assert.equal(response.appliedCount, 35);
+  assert.equal(response.keyCount, 36);
+  assert.equal(game.writes.length, 36);
+});
+
+test("does not accept a victory receipt before the other 35 values are verified", async () => {
+  const game = completeGame({ finishAtWrite: 1, skipFinishingValue: true, victoryReceipt: true });
+  assert.equal((await game.apply()).ok, false);
+  assert.equal(game.writes.length, 1);
 });
 
 function createBackground() {
