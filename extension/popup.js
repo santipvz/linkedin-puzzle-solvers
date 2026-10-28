@@ -15,12 +15,15 @@ const apiUrlInput = document.getElementById("apiUrl");
 const apiModeSelect = document.getElementById("apiMode");
 const serviceNote = document.getElementById("serviceNote");
 const layout = document.querySelector(".layout");
+const gameChoices = [];
 let customApiUrl = DEFAULT_API_URL;
 
 function updateServiceMode() {
   const online = apiModeSelect.value === "online";
   apiUrlInput.readOnly = online;
   document.getElementById("apiUrlField").hidden = online;
+  document.getElementById("apiModeOnline").checked = online;
+  document.getElementById("apiModeLocal").checked = !online;
   serviceNote.textContent = online
     ? "Online sends the board image to our service. Images are not archived."
     : "Uses your own service. Change its address in Preferences.";
@@ -61,6 +64,31 @@ function populatePuzzleTypeOptions() {
         ? definition.label.trim()
         : definition.key;
     puzzleTypeSelect.appendChild(option);
+
+    const choice = document.createElement("label");
+    choice.className = "game-choice";
+    const input = document.createElement("input");
+    input.type = "radio";
+    input.name = "game";
+    input.value = definition.key;
+    const content = document.createElement("span");
+    content.className = "choice-content";
+    const icon = document.createElement("img");
+    icon.src = `assets/games/${definition.key}.svg`;
+    icon.alt = "";
+    const label = document.createElement("span");
+    label.className = "choice-name";
+    label.textContent = option.textContent;
+    content.append(icon, label);
+    choice.append(input, content);
+    document.getElementById("gameChoices").appendChild(choice);
+    gameChoices.push(input);
+    input.addEventListener("change", () => {
+      if (input.checked) {
+        puzzleTypeSelect.value = input.value;
+        puzzleTypeSelect.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    });
   }
 
   if (currentValue && definitions.some((definition) => definition && definition.key === currentValue)) {
@@ -224,7 +252,9 @@ function setResult(message) {
 }
 
 function updateGameAppearance() {
-  layout.dataset.puzzle = puzzleTypeSelect.value;
+  for (const input of gameChoices) {
+    input.checked = input.value === puzzleTypeSelect.value;
+  }
 }
 
 function summarizeResult(puzzleType, result) {
@@ -356,6 +386,9 @@ function setBusy(isBusy) {
   layout.setAttribute("aria-busy", String(isBusy));
   document.getElementById("solveLabel").textContent = isBusy ? "Working…" : "Solve & apply";
   puzzleTypeSelect.disabled = isBusy;
+  for (const input of gameChoices) input.disabled = isBusy;
+  document.getElementById("apiModeOnline").disabled = isBusy;
+  document.getElementById("apiModeLocal").disabled = isBusy;
   apiModeSelect.disabled = isBusy;
   apiUrlInput.disabled = isBusy;
   selectBoardButton.disabled = isBusy;
@@ -577,6 +610,15 @@ apiUrlInput.addEventListener("change", () => {
   customApiUrl = apiUrlInput.value;
   savePreferences().catch((error) => setStatus(error.message, true));
 });
+
+for (const id of ["apiModeOnline", "apiModeLocal"]) {
+  document.getElementById(id).addEventListener("change", (event) => {
+    if (event.target.checked) {
+      apiModeSelect.value = event.target.value;
+      apiModeSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  });
+}
 
 selectBoardButton.addEventListener("click", () => runAction(handleSelectBoard, "Select the board area on the page…"));
 autoDetectButton.addEventListener("click", () => runAction(handleAutoDetect, "Looking for the board…"));

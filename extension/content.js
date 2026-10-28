@@ -73,6 +73,7 @@ function updateQuickSolveButtonText() {
   }
   quickSolveButton.setAttribute("aria-label", quickSolveButton.textContent);
   quickSolveButton.setAttribute("aria-busy", String(quickSolveBusy));
+  quickSolveButton.style.backgroundImage = `url("${chrome.runtime.getURL(`assets/games/${puzzleType}.svg`)}")`;
 }
 
 function removeQuickSolveWidget() {
@@ -161,21 +162,21 @@ function createQuickSolveWidget() {
   style.textContent = `
     :host { all: initial; }
     * { box-sizing: border-box; }
-    .widget { width: 218px; max-width: calc(100vw - 32px); padding: 14px;
+    .widget { width: 210px; max-width: calc(100vw - 32px); padding: 12px;
       border: 1px solid #d7d7cd; border-radius: 10px; background: #f8f7f3;
       box-shadow: 0 4px 20px #26272014; color: #262720;
       font: 12px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     .title { display: flex; align-items: center; gap: 7px; margin-bottom: 12px;
       font-size: 11px; font-weight: 600; letter-spacing: -.1px; }
-    .title::before { content: ""; width: 9px; height: 9px; background: #cc4c29;
-      border-radius: 2px; box-shadow: 3px 3px 0 #e8c7b6; margin-right: 3px; }
+    .title img { width: 30px; height: 24px; border-radius: 3px; object-fit: contain; }
     button { display: flex; justify-content: space-between; align-items: center; gap: 10px;
-      width: 100%; padding: 11px 12px; border: 1px solid #292c25; border-radius: 6px;
-      background: #292c25; color: #fffefa; text-align: left;
+      width: 100%; padding: 11px 10px 11px 39px; border: 1px solid #292c25; border-radius: 6px;
+      background-color: #292c25; background-size: 23px; background-position: 9px center;
+      background-repeat: no-repeat; color: #fffefa; text-align: left;
       font: 550 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       cursor: pointer; transition: background .15s; }
     button::after { content: "\\2192"; color: #e9a27f; font-size: 16px; }
-    button:hover { background: #414538; }
+    button:hover { background-color: #414538; }
     button:focus-visible { outline: 2px solid #cc4c29; outline-offset: 3px; }
     button:disabled { opacity: .6; cursor: wait; }
     button[aria-busy="true"]::after { content: ""; width: 12px; height: 12px;
@@ -193,8 +194,11 @@ function createQuickSolveWidget() {
   panel.setAttribute("aria-label", "Puzzle Solver");
 
   const title = document.createElement("div");
-  title.textContent = "Puzzle Solver";
   title.className = "title";
+  const logo = document.createElement("img");
+  logo.src = chrome.runtime.getURL("assets/logo.png");
+  logo.alt = "";
+  title.append(logo, "Puzzle Solver");
 
   const button = document.createElement("button");
   button.type = "button";

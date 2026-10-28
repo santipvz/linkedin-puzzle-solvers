@@ -1,0 +1,12 @@
+{
+  "source_page": "https://www.linkedin.com/games/",
+  "retrieved": "2026-10-28",
+  "assets": {
+    "wend": "https://static.licdn.com/aero-v1/sc/h/5rs8n4aonkzd5kmuoc0azo9h8",
+    "patches": "https://static.licdn.com/aero-v1/sc/h/304z7fxdts0e73hxhdofduggr",
+    "sudoku": "https://static.licdn.com/aero-v1/sc/h/6nflnl3tlil95zu7bjkqq3huc",
+    "zip": "https://static.licdn.com/aero-v1/sc/h/6h34s6l8pidi1mp97ykfks8tl",
+    "tango": "https://static.licdn.com/aero-v1/sc/h/gqavqd9gk6ja1s27lr1p2zz2",
+    "queens": "https://static.licdn.com/aero-v1/sc/h/6uvsjtqx2j32uh1a803qygh5y"
+  }
+}
