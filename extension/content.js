@@ -163,27 +163,27 @@ function createQuickSolveWidget() {
     :host { all: initial; }
     * { box-sizing: border-box; }
     .widget { width: 210px; max-width: calc(100vw - 32px); padding: 12px;
-      border: 1px solid #d7d7cd; border-radius: 10px; background: #f8f7f3;
-      box-shadow: 0 4px 20px #26272014; color: #262720;
+      border: 1px solid #cbd9e5; border-radius: 10px; background: #f5f8fb;
+      box-shadow: 0 4px 20px #18354d14; color: #18354d;
       font: 12px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     .title { display: flex; align-items: center; gap: 7px; margin-bottom: 12px;
       font-size: 11px; font-weight: 600; letter-spacing: -.1px; }
     .title img { width: 30px; height: 24px; border-radius: 3px; object-fit: contain; }
     button { display: flex; justify-content: space-between; align-items: center; gap: 10px;
-      width: 100%; padding: 11px 10px 11px 39px; border: 1px solid #292c25; border-radius: 6px;
-      background-color: #292c25; background-size: 23px; background-position: 9px center;
-      background-repeat: no-repeat; color: #fffefa; text-align: left;
+      width: 100%; padding: 11px 10px 11px 39px; border: 1px solid #0a66c2; border-radius: 6px;
+      background-color: #0a66c2; background-size: 23px; background-position: 9px center;
+      background-repeat: no-repeat; color: #ffffff; text-align: left;
       font: 550 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       cursor: pointer; transition: background .15s; }
-    button::after { content: "\\2192"; color: #e9a27f; font-size: 16px; }
-    button:hover { background-color: #414538; }
-    button:focus-visible { outline: 2px solid #cc4c29; outline-offset: 3px; }
+    button::after { content: "\\2192"; color: #d5ecff; font-size: 16px; }
+    button:hover { background-color: #08549e; }
+    button:focus-visible { outline: 2px solid #0a73c7; outline-offset: 3px; }
     button:disabled { opacity: .6; cursor: wait; }
     button[aria-busy="true"]::after { content: ""; width: 12px; height: 12px;
-      flex: none; border: 1.5px solid #ffffff40; border-top-color: #e9a27f;
+      flex: none; border: 1.5px solid #ffffff40; border-top-color: #d5ecff;
       border-radius: 50%; animation: spin .8s linear infinite; }
     .status { margin: 10px 0 0; font-size: 11px; line-height: 1.5;
-      color: #616455; overflow-wrap: anywhere; }
+      color: #4f6c85; overflow-wrap: anywhere; }
     .status.error { color: #aa3827; }
     [hidden] { display: none; }
     @keyframes spin { to { transform: rotate(360deg); } }
@@ -434,6 +434,16 @@ function getGameIframeRect(puzzleType) {
 }
 
 function autoDetectBoardSelection(puzzleType) {
+  // LinkedIn's generated class names no longer contain "board" or "grid".
+  // Prefer the game-specific landmark over nearby illustrations and tutorials.
+  if (puzzleType === "queens") {
+    const board = document.querySelector("#queens-game-board");
+    const rect = board?.getBoundingClientRect();
+    if (isRectVisible(rect) && Math.abs(rect.width / rect.height - 1) < 0.1) {
+      return normalizeSelection({ x: rect.left, y: rect.top, width: rect.width,
+        height: rect.height, devicePixelRatio: window.devicePixelRatio });
+    }
+  }
   const selectors = [
     "canvas",
     "svg",
@@ -561,8 +571,8 @@ function startBoardSelection() {
 
     const box = document.createElement("div");
     box.style.position = "fixed";
-    box.style.border = "2px solid #14b8a6";
-    box.style.background = "rgba(20, 184, 166, 0.18)";
+    box.style.border = "2px solid #0a73c7";
+    box.style.background = "rgba(10, 115, 199, 0.1)";
     box.style.display = "none";
     box.style.pointerEvents = "none";
 
@@ -674,239 +684,138 @@ function startBoardSelection() {
   });
 }
 
+const PREVIEW_COLORS = ["#0a66c2", "#498bbd", "#364e68", "#248398", "#657c96", "#274e84"];
+
 function createOverlayRoot(selection) {
   clearSolutionOverlay();
-
-  const root = document.createElement("div");
-  root.style.position = "fixed";
-  root.style.left = "0";
-  root.style.top = "0";
-  root.style.width = "100vw";
-  root.style.height = "100vh";
-  root.style.zIndex = "2147483646";
-  root.style.pointerEvents = "none";
-
+  const host = document.createElement("div");
+  host.id = "puzzle-solver-preview";
+  Object.assign(host.style, { position: "fixed", inset: "0", zIndex: "2147483646", pointerEvents: "none" });
+  const root = host.attachShadow({ mode: "open" });
+  const style = document.createElement("style");
+  style.textContent = `:host { all: initial; } * { box-sizing: border-box; }
+    .frame { position: fixed; border: 1px solid #0a66c270; border-radius: 6px; pointer-events: none; }
+    .badge { position: fixed; display: flex; align-items: center; gap: 7px; padding: 6px 9px;
+      background: #ffffff; color: #245574; border: 1px solid #caddeb; border-radius: 5px;
+      box-shadow: 0 2px 8px #18354d12; font: 550 11px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .badge img { width: 16px; height: 16px; }
+    svg { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  `;
   const frame = document.createElement("div");
-  frame.style.position = "fixed";
-  frame.style.left = `${selection.x}px`;
-  frame.style.top = `${selection.y}px`;
-  frame.style.width = `${selection.width}px`;
-  frame.style.height = `${selection.height}px`;
-  frame.style.border = "2px solid #22c55e";
-  frame.style.boxSizing = "border-box";
-  frame.style.background = "rgba(34, 197, 94, 0.06)";
-  frame.style.pointerEvents = "none";
-
-  root.appendChild(frame);
-  document.documentElement.appendChild(root);
-  solutionOverlayRoot = root;
-
+  frame.className = "frame";
+  Object.assign(frame.style, { left: `${selection.x}px`, top: `${selection.y}px`, width: `${selection.width}px`, height: `${selection.height}px` });
+  root.append(style, frame);
+  document.documentElement.appendChild(host);
+  solutionOverlayRoot = host;
   return root;
 }
 
+function previewSvgNode(parent, name, attributes, text) {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", name);
+  for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, String(value));
+  if (text !== undefined) node.textContent = text;
+  parent.appendChild(node);
+  return node;
+}
+
+function createPreviewCanvas(root, selection) {
+  const svg = previewSvgNode(root, "svg", { width: selection.width, height: selection.height,
+    viewBox: `0 0 ${selection.width} ${selection.height}`, role: "img", "aria-label": "Solution preview" });
+  Object.assign(svg.style, { position: "fixed", left: `${selection.x}px`, top: `${selection.y}px`, overflow: "visible", pointerEvents: "none" });
+  return svg;
+}
+
+function previewCell(svg, x, y, size, label, options = {}) {
+  previewSvgNode(svg, "rect", { x: x - size / 2, y: y - size / 2, width: size, height: size,
+    rx: size * .2, fill: options.fill || "#f0f7fd", stroke: "#8eb9dc", "stroke-width": 1.25 });
+  previewSvgNode(svg, "text", { x, y, "text-anchor": "middle", "dominant-baseline": "central",
+    fill: options.color || "#075da5", "font-size": size * .68, "font-weight": 600 }, label);
+}
+
 function renderQueensOverlay(root, selection, result) {
-  const boardSize = Number(result.board_size);
-  if (!boardSize || !Array.isArray(result.moves)) {
-    return;
-  }
-
-  const cellWidth = selection.width / boardSize;
-  const cellHeight = selection.height / boardSize;
-
+  const size = Number(result.board_size);
+  if (!size || !Array.isArray(result.moves)) return;
+  const svg = createPreviewCanvas(root, selection);
+  const cw = selection.width / size, ch = selection.height / size;
+  const markerSize = Math.max(20, Math.min(38, Math.min(cw, ch) * .64));
   for (const move of result.moves) {
-    const row = Number(move.row);
-    const col = Number(move.col);
-
-    if (!Number.isFinite(row) || !Number.isFinite(col)) {
-      continue;
-    }
-
-    const marker = document.createElement("div");
-    marker.textContent = "Q";
-    marker.style.position = "fixed";
-    marker.style.width = "24px";
-    marker.style.height = "24px";
-    marker.style.borderRadius = "12px";
-    marker.style.left = `${selection.x + (col + 0.5) * cellWidth - 12}px`;
-    marker.style.top = `${selection.y + (row + 0.5) * cellHeight - 12}px`;
-    marker.style.display = "flex";
-    marker.style.alignItems = "center";
-    marker.style.justifyContent = "center";
-    marker.style.font = "700 13px/1 sans-serif";
-    marker.style.background = "#facc15";
-    marker.style.color = "#111827";
-    marker.style.border = "2px solid #111827";
-    marker.style.boxShadow = "0 2px 6px rgba(0, 0, 0, 0.35)";
-
-    root.appendChild(marker);
+    if (!Number.isFinite(Number(move.row)) || !Number.isFinite(Number(move.col))) continue;
+    const x = (Number(move.col) + .5) * cw, y = (Number(move.row) + .5) * ch;
+    previewSvgNode(svg, "rect", { x: x - markerSize / 2, y: y - markerSize / 2, width: markerSize,
+      height: markerSize, rx: 7, fill: "#ffffff", stroke: "#0a66c2", "stroke-width": 1.5 });
+    const crown = previewSvgNode(svg, "g", { transform: `translate(${x - markerSize * .36} ${y - markerSize * .36}) scale(${markerSize * .03})` });
+    previewSvgNode(crown, "path", { d: "M3 7l4 4 5-7 5 7 4-4-2 12H5L3 7Zm3 15h12", fill: "#0a66c2",
+      stroke: "#0a66c2", "stroke-width": 1.5, "stroke-linejoin": "round" });
   }
 }
 
 function renderTangoOverlay(root, selection, result) {
-  const boardSize = Number(result.board_size);
-  const grid = Array.isArray(result.solution_grid) ? result.solution_grid : null;
-  if (!boardSize || !grid) {
-    return;
-  }
-
-  const fixedPieces = Array.isArray(result.fixed_pieces) ? result.fixed_pieces : [];
-  const fixedSet = new Set(fixedPieces.map((piece) => `${piece.row},${piece.col}`));
-
-  const cellWidth = selection.width / boardSize;
-  const cellHeight = selection.height / boardSize;
-
+  const size = Number(result.board_size), grid = result.solution_grid;
+  if (!size || !Array.isArray(grid)) return;
+  const fixed = new Set((result.fixed_pieces || []).map((piece) => `${piece.row},${piece.col}`));
+  const svg = createPreviewCanvas(root, selection);
+  const cw = selection.width / size, ch = selection.height / size;
+  const markerSize = Math.max(20, Math.min(36, Math.min(cw, ch) * .65));
   for (let row = 0; row < grid.length; row += 1) {
-    const rowValues = grid[row];
-    if (!Array.isArray(rowValues)) {
-      continue;
-    }
-
-    for (let col = 0; col < rowValues.length; col += 1) {
-      if (fixedSet.has(`${row},${col}`)) {
-        continue;
-      }
-
-      const value = Number(rowValues[col]);
-      if (value !== 0 && value !== 1) {
-        continue;
-      }
-
-      const marker = document.createElement("div");
-      marker.textContent = value === 0 ? "M" : "S";
-      marker.style.position = "fixed";
-      marker.style.width = "22px";
-      marker.style.height = "22px";
-      marker.style.borderRadius = "11px";
-      marker.style.left = `${selection.x + (col + 0.5) * cellWidth - 11}px`;
-      marker.style.top = `${selection.y + (row + 0.5) * cellHeight - 11}px`;
-      marker.style.display = "flex";
-      marker.style.alignItems = "center";
-      marker.style.justifyContent = "center";
-      marker.style.font = "700 12px/1 sans-serif";
-      marker.style.background = value === 0 ? "#93c5fd" : "#fdba74";
-      marker.style.color = "#1f2937";
-      marker.style.border = "1px solid #1f2937";
-
-      root.appendChild(marker);
+    for (let col = 0; col < (grid[row]?.length || 0); col += 1) {
+      if (fixed.has(`${row},${col}`)) continue;
+      const value = Number(grid[row][col]);
+      if (value !== 0 && value !== 1) continue;
+      previewCell(svg, (col + .5) * cw, (row + .5) * ch, markerSize,
+        value === 0 ? "\u263e" : "\u2600", { color: value === 0 ? "#455c75" : "#0a66c2", fill: value === 0 ? "#eef2f7" : "#f0f7fd" });
     }
   }
 }
 
 function renderSudokuOverlay(root, selection, result) {
-  const boardSize = Number(result.board_size);
-  const moves = Array.isArray(result.moves) ? result.moves : [];
-  if (!boardSize || !moves.length) {
-    return;
-  }
-
-  const cellWidth = selection.width / boardSize;
-  const cellHeight = selection.height / boardSize;
-
-  for (const move of moves) {
-    const row = Number(move.row);
-    const col = Number(move.col);
-    const value = Number(move.value);
-
-    if (!Number.isFinite(row) || !Number.isFinite(col) || !Number.isFinite(value)) {
-      continue;
-    }
-
-    const marker = document.createElement("div");
-    marker.textContent = String(value);
-    marker.style.position = "fixed";
-    marker.style.width = "24px";
-    marker.style.height = "24px";
-    marker.style.borderRadius = "12px";
-    marker.style.left = `${selection.x + (col + 0.5) * cellWidth - 12}px`;
-    marker.style.top = `${selection.y + (row + 0.5) * cellHeight - 12}px`;
-    marker.style.display = "flex";
-    marker.style.alignItems = "center";
-    marker.style.justifyContent = "center";
-    marker.style.font = "700 13px/1 sans-serif";
-    marker.style.background = "#f59e0b";
-    marker.style.color = "#111827";
-    marker.style.border = "2px solid #111827";
-    marker.style.boxShadow = "0 2px 6px rgba(0, 0, 0, 0.35)";
-
-    root.appendChild(marker);
+  const size = Number(result.board_size);
+  if (!size || !Array.isArray(result.moves)) return;
+  const svg = createPreviewCanvas(root, selection);
+  const cw = selection.width / size, ch = selection.height / size;
+  const markerSize = Math.max(20, Math.min(38, Math.min(cw, ch) * .66));
+  for (const move of result.moves) {
+    if (![move.row, move.col, move.value].every((value) => Number.isFinite(Number(value)))) continue;
+    previewCell(svg, (Number(move.col) + .5) * cw, (Number(move.row) + .5) * ch, markerSize, String(move.value));
   }
 }
 
+function previewPath(svg, centers, color, width, letterGap = 0) {
+  if (letterGap) {
+    // Leave the letters uncovered, including at bends in a word path.
+    for (let index = 1; index < centers.length; index += 1) {
+      const a = centers[index - 1], b = centers[index];
+      const length = Math.hypot(b.x - a.x, b.y - a.y);
+      if (length <= letterGap * 2) continue;
+      const dx = (b.x - a.x) / length * letterGap, dy = (b.y - a.y) / length * letterGap;
+      previewPath(svg, [{ x: a.x + dx, y: a.y + dy }, { x: b.x - dx, y: b.y - dy }], color, width);
+    }
+    return;
+  }
+  const points = centers.map((point) => `${point.x},${point.y}`).join(" ");
+  previewSvgNode(svg, "polyline", { points, fill: "none", stroke: "#ffffff", "stroke-width": width + 3,
+    "stroke-linecap": "round", "stroke-linejoin": "round", opacity: .85 });
+  previewSvgNode(svg, "polyline", { points, fill: "none", stroke: color, "stroke-width": width,
+    "stroke-linecap": "round", "stroke-linejoin": "round" });
+}
+
 function renderZipOverlay(root, selection, result) {
-  const boardSize = Number(result.board_size);
-  const path = Array.isArray(result.path) ? result.path : [];
-  if (!boardSize || path.length < 2) {
-    return;
-  }
-
-  const cellWidth = selection.width / boardSize;
-  const cellHeight = selection.height / boardSize;
-
-  const centers = path
-    .map((step) => {
-      const row = Number(step.row);
-      const col = Number(step.col);
-      if (!Number.isFinite(row) || !Number.isFinite(col)) {
-        return null;
-      }
-      return {
-        x: selection.x + (col + 0.5) * cellWidth,
-        y: selection.y + (row + 0.5) * cellHeight,
-      };
-    })
-    .filter(Boolean);
-
-  if (centers.length < 2) {
-    return;
-  }
-
-  for (let index = 0; index < centers.length - 1; index += 1) {
-    const current = centers[index];
-    const next = centers[index + 1];
-
-    const dx = next.x - current.x;
-    const dy = next.y - current.y;
-    const length = Math.hypot(dx, dy);
-    const angle = Math.atan2(dy, dx);
-
-    const segment = document.createElement("div");
-    segment.style.position = "fixed";
-    segment.style.left = `${current.x}px`;
-    segment.style.top = `${current.y}px`;
-    segment.style.width = `${length}px`;
-    segment.style.height = "6px";
-    segment.style.transformOrigin = "0 50%";
-    segment.style.transform = `translateY(-3px) rotate(${angle}rad)`;
-    segment.style.borderRadius = "999px";
-    segment.style.background = "rgba(14, 116, 144, 0.85)";
-    segment.style.boxShadow = "0 0 0 1px rgba(255, 255, 255, 0.65)";
-    root.appendChild(segment);
-  }
-
-  const start = centers[0];
+  const size = Number(result.board_size), path = result.path;
+  if (!size || !Array.isArray(path) || path.length < 2) return;
+  const svg = createPreviewCanvas(root, selection);
+  const cw = selection.width / size, ch = selection.height / size;
+  const centers = path.map((point) => ({ x: (Number(point.col) + .5) * cw, y: (Number(point.row) + .5) * ch }));
+  if (centers.some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y))) return;
+  previewPath(svg, centers, "#0a66c2", Math.max(4, Math.min(6, cw * .12)));
+  previewSvgNode(svg, "circle", { cx: centers[0].x, cy: centers[0].y, r: 6, fill: "#ffffff", stroke: "#0a66c2", "stroke-width": 2 });
   const end = centers[centers.length - 1];
-
-  const startDot = document.createElement("div");
-  startDot.style.position = "fixed";
-  startDot.style.left = `${start.x - 7}px`;
-  startDot.style.top = `${start.y - 7}px`;
-  startDot.style.width = "14px";
-  startDot.style.height = "14px";
-  startDot.style.borderRadius = "50%";
-  startDot.style.background = "#0284c7";
-  startDot.style.border = "2px solid #ffffff";
-  root.appendChild(startDot);
-
-  const endDot = document.createElement("div");
-  endDot.style.position = "fixed";
-  endDot.style.left = `${end.x - 7}px`;
-  endDot.style.top = `${end.y - 7}px`;
-  endDot.style.width = "14px";
-  endDot.style.height = "14px";
-  endDot.style.borderRadius = "50%";
-  endDot.style.background = "#f97316";
-  endDot.style.border = "2px solid #ffffff";
-  root.appendChild(endDot);
+  previewSvgNode(svg, "circle", { cx: end.x, cy: end.y, r: 6, fill: "#0a66c2", stroke: "#ffffff", "stroke-width": 2 });
+  for (const clue of result.clues || []) {
+    const x = (Number(clue.col) + .5) * cw, y = (Number(clue.row) + .5) * ch;
+    if (![x, y, Number(clue.value)].every(Number.isFinite)) continue;
+    previewSvgNode(svg, "circle", { cx: x, cy: y, r: 12, fill: "#ffffff", stroke: "#0a66c2", "stroke-width": 1.5 });
+    previewSvgNode(svg, "text", { x, y, "text-anchor": "middle", "dominant-baseline": "central",
+      fill: "#075da5", "font-size": 12, "font-weight": 600 }, String(clue.value));
+  }
 }
 
 function buildWendWordList(result) {
@@ -915,60 +824,22 @@ function buildWendWordList(result) {
 }
 
 function renderWendOverlay(root, selection, result) {
-  const boardSize = Number(result?.board_size);
-  const words = buildWendWordList(result);
-  if (!boardSize || !words.length) {
-    return;
-  }
-
-  const cellWidth = selection.width / boardSize;
-  const cellHeight = selection.height / boardSize;
-  const palette = ["#14b8a6", "#db2777", "#f97316", "#84cc16", "#3b82f6", "#a855f7"];
-
-  for (let wordIndex = 0; wordIndex < words.length; wordIndex += 1) {
-    const entry = words[wordIndex];
-    const color = palette[wordIndex % palette.length];
-    const centers = entry.path.map((step) => ({
-      x: selection.x + (step.col + 0.5) * cellWidth,
-      y: selection.y + (step.row + 0.5) * cellHeight,
-    }));
-
-    for (let index = 0; index < centers.length - 1; index += 1) {
-      const current = centers[index];
-      const next = centers[index + 1];
-      const dx = next.x - current.x;
-      const dy = next.y - current.y;
-      const length = Math.hypot(dx, dy);
-      const angle = Math.atan2(dy, dx);
-
-      const segment = document.createElement("div");
-      segment.style.position = "fixed";
-      segment.style.left = `${current.x}px`;
-      segment.style.top = `${current.y}px`;
-      segment.style.width = `${length}px`;
-      segment.style.height = "10px";
-      segment.style.transformOrigin = "0 50%";
-      segment.style.transform = `translateY(-5px) rotate(${angle}rad)`;
-      segment.style.borderRadius = "999px";
-      segment.style.background = color;
-      segment.style.opacity = "0.72";
-      segment.style.boxShadow = "0 0 0 2px rgba(255, 255, 255, 0.8)";
-      root.appendChild(segment);
-    }
-
+  const size = Number(result?.board_size), words = buildWendWordList(result);
+  if (!size || !words.length) return;
+  const svg = createPreviewCanvas(root, selection);
+  const cw = selection.width / size, ch = selection.height / size;
+  for (let index = 0; index < words.length; index += 1) {
+    const entry = words[index], color = PREVIEW_COLORS[index % PREVIEW_COLORS.length];
+    const centers = entry.path.map((point) => ({ x: (point.col + .5) * cw, y: (point.row + .5) * ch }));
+    if (!centers.length) continue;
+    previewPath(svg, centers, color, Math.max(3, Math.min(5, cw * .08)), Math.min(16, Math.min(cw, ch) * .22));
     const end = centers[centers.length - 1];
-    const label = document.createElement("div");
-    label.textContent = entry.word;
-    label.style.position = "fixed";
-    label.style.left = `${end.x - 24}px`;
-    label.style.top = `${end.y - 14}px`;
-    label.style.padding = "3px 6px";
-    label.style.borderRadius = "999px";
-    label.style.font = "700 10px/1 sans-serif";
-    label.style.color = "#111827";
-    label.style.background = "rgba(255, 255, 255, 0.88)";
-    label.style.border = `2px solid ${color}`;
-    root.appendChild(label);
+    const labelWidth = Math.max(26, entry.word.length * 6 + 12);
+    const x = Math.max(0, Math.min(selection.width - labelWidth, end.x - labelWidth / 2));
+    const y = end.y + ch * .25;
+    previewSvgNode(svg, "rect", { x, y, width: labelWidth, height: 18, rx: 4, fill: "#ffffff", stroke: color, "stroke-width": 1 });
+    previewSvgNode(svg, "text", { x: x + labelWidth / 2, y: y + 9, "text-anchor": "middle",
+      "dominant-baseline": "central", fill: color, "font-size": 10, "font-weight": 600 }, entry.word);
   }
 }
 
@@ -1017,61 +888,15 @@ function buildPatchesRegionList(result) {
 }
 
 function renderPatchesOverlay(root, selection, result) {
-  const boardSize = Number(result?.board_size);
-  if (!boardSize) {
-    return;
-  }
-
-  const regions = buildPatchesRegionList(result);
-  if (!regions.length) {
-    return;
-  }
-
-  const cellWidth = selection.width / boardSize;
-  const cellHeight = selection.height / boardSize;
-  const palette = [
-    { border: "#0f766e", fill: "rgba(15, 118, 110, 0.22)" },
-    { border: "#0ea5e9", fill: "rgba(14, 165, 233, 0.22)" },
-    { border: "#ea580c", fill: "rgba(234, 88, 12, 0.2)" },
-    { border: "#7c3aed", fill: "rgba(124, 58, 237, 0.2)" },
-    { border: "#dc2626", fill: "rgba(220, 38, 38, 0.2)" },
-    { border: "#b45309", fill: "rgba(180, 83, 9, 0.2)" },
-  ];
-
+  const size = Number(result?.board_size), regions = buildPatchesRegionList(result);
+  if (!size || !regions.length) return;
+  const svg = createPreviewCanvas(root, selection);
+  const cw = selection.width / size, ch = selection.height / size;
   for (let index = 0; index < regions.length; index += 1) {
-    const region = regions[index];
-    const style = palette[index % palette.length];
-
-    const rect = document.createElement("div");
-    rect.style.position = "fixed";
-    rect.style.left = `${selection.x + region.left * cellWidth}px`;
-    rect.style.top = `${selection.y + region.top * cellHeight}px`;
-    rect.style.width = `${region.width * cellWidth}px`;
-    rect.style.height = `${region.height * cellHeight}px`;
-    rect.style.border = `3px solid ${style.border}`;
-    rect.style.borderRadius = "8px";
-    rect.style.boxSizing = "border-box";
-    rect.style.background = style.fill;
-    rect.style.pointerEvents = "none";
-    root.appendChild(rect);
-
-    const areaTag = document.createElement("div");
-    areaTag.textContent = String(region.area);
-    areaTag.style.position = "fixed";
-    areaTag.style.left = `${selection.x + (region.left + region.width / 2) * cellWidth - 9}px`;
-    areaTag.style.top = `${selection.y + (region.top + region.height / 2) * cellHeight - 9}px`;
-    areaTag.style.width = "18px";
-    areaTag.style.height = "18px";
-    areaTag.style.display = "flex";
-    areaTag.style.alignItems = "center";
-    areaTag.style.justifyContent = "center";
-    areaTag.style.borderRadius = "9px";
-    areaTag.style.font = "700 10px/1 sans-serif";
-    areaTag.style.color = "#0f172a";
-    areaTag.style.background = "rgba(255,255,255,0.72)";
-    areaTag.style.border = `1px solid ${style.border}`;
-    areaTag.style.boxSizing = "border-box";
-    root.appendChild(areaTag);
+    const region = regions[index], color = PREVIEW_COLORS[index % PREVIEW_COLORS.length];
+    previewSvgNode(svg, "rect", { x: region.left * cw + 2, y: region.top * ch + 2,
+      width: region.width * cw - 4, height: region.height * ch - 4, rx: 5,
+      fill: color, "fill-opacity": .08, stroke: color, "stroke-width": 2 });
   }
 }
 
@@ -1088,16 +913,13 @@ function renderSolutionOverlay(puzzleType, result, selection) {
   const root = createOverlayRoot(normalized);
 
   const badge = document.createElement("div");
-  badge.textContent = result && result.solved ? "Solution ready" : "No solution";
-  badge.style.position = "fixed";
+  badge.className = "badge";
+  const icon = document.createElement("img");
+  icon.src = chrome.runtime.getURL(`assets/games/${puzzleType}.svg`);
+  icon.alt = "";
+  badge.append(icon, `${puzzleTypeToLabel(puzzleType)} \u00b7 ${result?.solved ? "Preview" : "No solution"}`);
   badge.style.left = `${normalized.x}px`;
-  badge.style.top = `${Math.max(0, normalized.y - 30)}px`;
-  badge.style.padding = "5px 10px";
-  badge.style.borderRadius = "999px";
-  badge.style.font = "600 12px/1 sans-serif";
-  badge.style.background = result && result.solved ? "#16a34a" : "#b91c1c";
-  badge.style.color = "white";
-  badge.style.boxShadow = "0 2px 8px rgba(0, 0, 0, 0.35)";
+  badge.style.top = `${Math.max(8, normalized.y - 34)}px`;
   root.appendChild(badge);
 
   if (!result || !result.solved) {
@@ -1453,6 +1275,12 @@ function isSudokuCellSelected(cell) {
 
 function sudokuNotesEnabled() {
   return Boolean(document.querySelector('[data-control-btn="notes"] .sudoku-under-board__text--active'));
+}
+
+function sudokuCompletionVisible() {
+  if (!String(window.location?.pathname || "").includes("/mini-sudoku")) return false;
+  const text = document.body?.innerText || "";
+  return /Mini\s*Sudoku/i.test(text) && /(?:Resuelto en|Solved in)\s+\d+:\d{2}/i.test(text);
 }
 
 function focusKeyboardTarget(target) {
@@ -1905,6 +1733,10 @@ async function applyVerifiedSudokuSolution(result, selection, settings) {
     }
   }
 
+  const expectedFinalValues = snapshot.values.slice();
+  for (const move of actionableMoves) expectedFinalValues[move.row * boardSize + move.col] = move.value;
+  const completeSolution = expectedFinalValues.every((value) => Number.isInteger(value) && value >= 1 && value <= boardSize);
+
   for (const move of actionableMoves) {
     if (sudokuNotesEnabled()) return fail("Sudoku notes mode was enabled during apply. Stopped before typing.");
     const index = move.row * boardSize + move.col;
@@ -1912,6 +1744,8 @@ async function applyVerifiedSudokuSolution(result, selection, settings) {
     if (!snapshot) return fail("Sudoku grid moved or became unreadable. Stopped applying.");
     if (snapshot.values[index] === move.value) continue;
     const beforeValues = snapshot.values;
+    const finishingMove = completeSolution && beforeValues.every((value, cellIndex) =>
+      cellIndex === index || value === expectedFinalValues[cellIndex]);
     const geometry = snapshot.geometry;
     const rect = snapshot.cells[index].getBoundingClientRect();
     if (!leftClickViewportPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)) {
@@ -1944,7 +1778,8 @@ async function applyVerifiedSudokuSolution(result, selection, settings) {
     counts.keyCount += 1;
 
     let verified = false;
-    for (let attempt = 0; attempt < 16; attempt += 1) {
+    let completed = false;
+    for (let attempt = 0; attempt < (finishingMove ? 40 : 16); attempt += 1) {
       const after = getSudokuSnapshot(candidate, boardSize);
       if (after) {
         if (after.geometry !== geometry || after.values.some((value, cellIndex) => cellIndex !== index && value !== beforeValues[cellIndex])) {
@@ -1952,11 +1787,22 @@ async function applyVerifiedSudokuSolution(result, selection, settings) {
         }
         if (after.values[index] === move.value) { verified = true; break; }
         if (after.values[index] !== beforeValues[index]) return fail("Sudoku entered an unexpected number. Stopped applying.");
+      } else if (completeSolution && (
+        live.cells.every((cell, cellIndex) => readSudokuCellValue(cell, boardSize) === expectedFinalValues[cellIndex]) ||
+        (finishingMove && sudokuCompletionVisible()))) {
+        // The winning key can remove/cover the grid before the next snapshot.
+        // Accept all 36 retained DOM values, or the game's explicit victory
+        // receipt after the other 35 values were verified. Disappearance alone
+        // is never success and no key is replayed.
+        verified = true;
+        completed = true;
+        break;
       }
       await sleep(50);
     }
     if (!verified) return fail(`Sudoku did not confirm ${move.value} in cell (${move.row + 1}, ${move.col + 1}). Stopped without replaying moves.`);
     counts.appliedCount += 1;
+    if (completed) return { ok: true, ...counts, strategy: "verified-completed-grid" };
     await sleep(applySettings.interMoveDelayMs);
   }
   return { ok: true, ...counts, strategy: "verified-cell-then-keyboard" };

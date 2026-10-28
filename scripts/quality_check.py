@@ -22,6 +22,7 @@ COMMANDS: tuple[tuple[str, ...], ...] = (
         "node",
         "--test",
         "extension/tests/puzzle_registry.test.js",
+        "extension/tests/board_detection.test.js",
         "extension/tests/api_config.test.js",
         "extension/tests/wend_paths.test.js",
         "extension/tests/sudoku_apply.test.js",

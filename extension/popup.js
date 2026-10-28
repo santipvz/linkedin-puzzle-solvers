@@ -5,7 +5,6 @@ const STORAGE_PUZZLE_KEY = "solver_puzzle_type";
 const STORAGE_AUTO_CLOSE_KEY = "solver_auto_close_after_apply";
 const STORAGE_INTER_CLICK_DELAY_KEY = "solver_inter_click_delay_ms";
 const STORAGE_INTER_MOVE_DELAY_KEY = "solver_inter_move_delay_ms";
-const STORAGE_TANGO_APPLY_MODE_KEY = "solver_tango_apply_mode";
 
 const DEFAULT_AUTO_CLOSE_AFTER_APPLY = true;
 const DEFAULT_INTER_CLICK_DELAY_MS = 45;
@@ -37,7 +36,6 @@ const clearOverlayButton = document.getElementById("clearOverlay");
 const autoCloseAfterApplyCheckbox = document.getElementById("autoCloseAfterApply");
 const interClickDelayInput = document.getElementById("interClickDelayMs");
 const interMoveDelayInput = document.getElementById("interMoveDelayMs");
-const tangoApplyModeSelect = document.getElementById("tangoApplyMode");
 const resultBox = document.getElementById("result");
 const statusBox = document.getElementById("status");
 
@@ -303,19 +301,11 @@ function normalizeDelay(value, fallback) {
   return Math.max(0, Math.min(500, Math.round(parsed)));
 }
 
-function normalizeTangoApplyMode(value) {
-  if (value === "right-moon") {
-    return "right-moon";
-  }
-  return "left-cycle";
-}
-
 function getApplySettingsFromUi() {
   return {
     autoCloseAfterApply: Boolean(autoCloseAfterApplyCheckbox.checked),
     interClickDelayMs: normalizeDelay(interClickDelayInput.value, DEFAULT_INTER_CLICK_DELAY_MS),
     interMoveDelayMs: normalizeDelay(interMoveDelayInput.value, DEFAULT_INTER_MOVE_DELAY_MS),
-    tangoApplyMode: normalizeTangoApplyMode(tangoApplyModeSelect.value),
   };
 }
 
@@ -329,7 +319,6 @@ async function savePreferences() {
     [STORAGE_AUTO_CLOSE_KEY]: applySettings.autoCloseAfterApply,
     [STORAGE_INTER_CLICK_DELAY_KEY]: applySettings.interClickDelayMs,
     [STORAGE_INTER_MOVE_DELAY_KEY]: applySettings.interMoveDelayMs,
-    [STORAGE_TANGO_APPLY_MODE_KEY]: applySettings.tangoApplyMode,
   });
 }
 
@@ -341,7 +330,6 @@ async function loadPreferences() {
     STORAGE_AUTO_CLOSE_KEY,
     STORAGE_INTER_CLICK_DELAY_KEY,
     STORAGE_INTER_MOVE_DELAY_KEY,
-    STORAGE_TANGO_APPLY_MODE_KEY,
   ]);
 
   apiUrlInput.value = stored[STORAGE_API_KEY] || DEFAULT_API_URL;
@@ -360,7 +348,6 @@ async function loadPreferences() {
   interMoveDelayInput.value = String(
     normalizeDelay(stored[STORAGE_INTER_MOVE_DELAY_KEY], DEFAULT_INTER_MOVE_DELAY_MS)
   );
-  tangoApplyModeSelect.value = normalizeTangoApplyMode(stored[STORAGE_TANGO_APPLY_MODE_KEY]);
 }
 
 async function selectPuzzleFromActiveTab() {
@@ -400,7 +387,6 @@ function setBusy(isBusy) {
   autoCloseAfterApplyCheckbox.disabled = isBusy;
   interClickDelayInput.disabled = isBusy;
   interMoveDelayInput.disabled = isBusy;
-  tangoApplyModeSelect.disabled = isBusy;
 }
 
 async function handleSelectBoard() {
@@ -496,7 +482,6 @@ async function applyCachedPayloadForTab(tab, payload) {
     settings: {
       interClickDelayMs: applySettings.interClickDelayMs,
       interMoveDelayMs: applySettings.interMoveDelayMs,
-      tangoApplyMode: applySettings.tangoApplyMode,
     },
   });
 
@@ -634,7 +619,7 @@ puzzleTypeSelect.addEventListener("change", () => {
   setStatus("");
   savePreferences().catch((error) => setStatus(error.message, true));
 });
-for (const control of [autoCloseAfterApplyCheckbox, interClickDelayInput, interMoveDelayInput, tangoApplyModeSelect]) {
+for (const control of [autoCloseAfterApplyCheckbox, interClickDelayInput, interMoveDelayInput]) {
   control.addEventListener("change", () => {
     savePreferences().catch((error) => setStatus(error.message, true));
   });

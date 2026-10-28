@@ -10,7 +10,6 @@ const DEFAULT_TANGO_APPLY_MODE = "left-cycle";
 const STORAGE_API_KEY = "solver_api_url";
 const STORAGE_INTER_CLICK_DELAY_KEY = "solver_inter_click_delay_ms";
 const STORAGE_INTER_MOVE_DELAY_KEY = "solver_inter_move_delay_ms";
-const STORAGE_TANGO_APPLY_MODE_KEY = "solver_tango_apply_mode";
 
 const puzzleRegistry = globalThis.PuzzleRegistry;
 if (!puzzleRegistry) {
@@ -1011,8 +1010,8 @@ async function getViewportFallbackSelection(tabId, tab) {
   return centeredBoardSelection(tabSelection) || tabSelection;
 }
 
-async function detectSelectionForQuickSolve(tabId, puzzleType, frameContext, tab) {
-  const existing = ["tango", "sudoku"].includes(puzzleType) ? null : await getTopBoardSelection(tabId);
+async function detectSelectionForQuickSolve(tabId, puzzleType, frameContext, tab, options = {}) {
+  const existing = options.forceDetect || ["tango", "sudoku"].includes(puzzleType) ? null : await getTopBoardSelection(tabId);
 
   if (existing) {
     const normalizedExisting = maybeNormalizeSelectionForPuzzle(puzzleType, existing, frameContext?.iframeRect);
@@ -1361,7 +1360,6 @@ async function loadQuickSettings() {
     STORAGE_API_KEY,
     STORAGE_INTER_CLICK_DELAY_KEY,
     STORAGE_INTER_MOVE_DELAY_KEY,
-    STORAGE_TANGO_APPLY_MODE_KEY,
   ]);
 
   return {
@@ -1369,7 +1367,7 @@ async function loadQuickSettings() {
     applySettings: {
       interClickDelayMs: normalizeDelay(stored[STORAGE_INTER_CLICK_DELAY_KEY], DEFAULT_INTER_CLICK_DELAY_MS),
       interMoveDelayMs: normalizeDelay(stored[STORAGE_INTER_MOVE_DELAY_KEY], DEFAULT_INTER_MOVE_DELAY_MS),
-      tangoApplyMode: normalizeTangoApplyMode(stored[STORAGE_TANGO_APPLY_MODE_KEY] || DEFAULT_TANGO_APPLY_MODE),
+      tangoApplyMode: DEFAULT_TANGO_APPLY_MODE,
     },
   };
 }
@@ -1581,7 +1579,7 @@ async function autoDetectBoardSelection(message, sender) {
   }
 
   const frameContext = await getGameFrameContext(tabId, puzzleType);
-  const selectionContext = await detectSelectionForQuickSolve(tabId, puzzleType, frameContext, tab);
+  const selectionContext = await detectSelectionForQuickSolve(tabId, puzzleType, frameContext, tab, { forceDetect: true });
 
   let status = "Board auto-detected.";
   if (selectionContext && selectionContext.fallbackSource === "viewport") {

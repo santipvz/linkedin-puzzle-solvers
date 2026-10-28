@@ -12,14 +12,14 @@ Install from the stable `main` branch or a release tag. `develop` contains work 
 - Overlay preview for detected moves.
 - Auto-apply support:
   - Queens: click-based input.
-  - Tango: configurable click strategy.
+  - Tango: sun/moon click cycles.
   - Mini Sudoku: stable 36-cell grid detection and verified keyboard input; stops on unconfirmed writes.
   - Zip: start click + arrow keys.
   - Patches: rectangle drag from corner to corner.
   - Wend: progressive drag through each solved word path.
 - Main action: `Solve & apply`, with a separate `Preview solution` option.
 - `Board tools`: detect/select a board, apply the last solution, or clear the preview.
-- `Preferences`: custom service address, input timing, Tango controls, and auto-close.
+- `Preferences`: custom service address, input timing and auto-close.
 - In-page quick solve widget (`Solve <Game>`).
 
 ## Step 1: Start the Solver API (Choose One)
