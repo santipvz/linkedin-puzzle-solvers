@@ -14,14 +14,16 @@ const puzzleTypeSelect = document.getElementById("puzzleType");
 const apiUrlInput = document.getElementById("apiUrl");
 const apiModeSelect = document.getElementById("apiMode");
 const serviceNote = document.getElementById("serviceNote");
+const layout = document.querySelector(".layout");
 let customApiUrl = DEFAULT_API_URL;
 
 function updateServiceMode() {
   const online = apiModeSelect.value === "online";
   apiUrlInput.readOnly = online;
+  document.getElementById("apiUrlField").hidden = online;
   serviceNote.textContent = online
     ? "Online sends the board image to our service. Images are not archived."
-    : "Use your local service or enter your own API URL.";
+    : "Uses your own service. Change its address in Preferences.";
 }
 const selectBoardButton = document.getElementById("selectBoard");
 const autoDetectButton = document.getElementById("autoDetect");
@@ -212,12 +214,17 @@ function selectionStorageKey(tabId) {
 }
 
 function setStatus(message, isError = false) {
-  statusBox.textContent = message || "";
+  statusBox.textContent = message || "Ready when you are.";
   statusBox.classList.toggle("error", isError);
 }
 
 function setResult(message) {
   resultBox.textContent = message;
+  document.getElementById("resultDetails").hidden = !message;
+}
+
+function updateGameAppearance() {
+  layout.dataset.puzzle = puzzleTypeSelect.value;
 }
 
 function summarizeResult(puzzleType, result) {
@@ -341,10 +348,14 @@ async function selectPuzzleFromActiveTab() {
   const hasOption = Array.from(puzzleTypeSelect.options).some((option) => option.value === detectedPuzzleType);
   if (hasOption) {
     puzzleTypeSelect.value = detectedPuzzleType;
+    document.getElementById("gameContext").textContent = "Detected on this tab";
   }
 }
 
 function setBusy(isBusy) {
+  layout.setAttribute("aria-busy", String(isBusy));
+  document.getElementById("solveLabel").textContent = isBusy ? "Working…" : "Solve & apply";
+  puzzleTypeSelect.disabled = isBusy;
   apiModeSelect.disabled = isBusy;
   apiUrlInput.disabled = isBusy;
   selectBoardButton.disabled = isBusy;
@@ -367,7 +378,7 @@ async function handleSelectBoard() {
     throw new Error((response && response.error) || "Board selection failed.");
   }
 
-  setStatus("Board region selected.");
+  setStatus("Board area selected.");
 }
 
 async function handleAutoDetect() {
@@ -419,7 +430,7 @@ async function solveForTab(tab, options = {}) {
   if (solveResponse.solved) {
     if (previewOnly) {
       if (solveResponse.previewed) {
-        setStatus("Solved and overlay rendered.");
+        setStatus("Preview ready. Apply it from Board tools when you’re ready.");
       } else {
         setStatus(solveResponse.error || "Solved board but failed to render overlay preview.", true);
       }
@@ -436,26 +447,9 @@ async function solveForTab(tab, options = {}) {
 }
 
 function buildApplyStatusText(response) {
-  const appliedText =
-    typeof response.appliedCount === "number"
-      ? `Applied ${response.appliedCount} moves.`
-      : "Applied solution.";
-
-  let clickText = "";
-  if (typeof response.clickCount === "number" && typeof response.clicksPerMove === "number") {
-    clickText = ` (${response.clickCount} clicks, ${response.clicksPerMove} per move)`;
-  } else if (typeof response.clickCount === "number") {
-    clickText = ` (${response.clickCount} clicks)`;
-  }
-
-  const strategyText =
-    typeof response.strategy === "string" && response.strategy
-      ? ` [${response.strategy}]`
-      : "";
-
-  const keyText = typeof response.keyCount === "number" ? ` (${response.keyCount} key events)` : "";
-
-  return `${appliedText}${clickText}${keyText}${strategyText}`;
+  return typeof response.appliedCount === "number"
+    ? `Solution applied · ${response.appliedCount} moves.`
+    : "Solution applied.";
 }
 
 async function applyCachedPayloadForTab(tab, payload) {
@@ -555,9 +549,9 @@ async function handleClearOverlay() {
   setStatus("Overlay cleared.");
 }
 
-async function runAction(action) {
+async function runAction(action, pendingMessage) {
   setBusy(true);
-  setStatus("");
+  setStatus(pendingMessage);
 
   try {
     await savePreferences();
@@ -584,16 +578,30 @@ apiUrlInput.addEventListener("change", () => {
   savePreferences().catch((error) => setStatus(error.message, true));
 });
 
-selectBoardButton.addEventListener("click", () => runAction(handleSelectBoard));
-autoDetectButton.addEventListener("click", () => runAction(handleAutoDetect));
-solveButton.addEventListener("click", () => runAction(handleSolve));
-solveAndApplyButton.addEventListener("click", () => runAction(handleSolveAndApply));
-applyButton.addEventListener("click", () => runAction(handleApply));
-clearOverlayButton.addEventListener("click", () => runAction(handleClearOverlay));
+selectBoardButton.addEventListener("click", () => runAction(handleSelectBoard, "Select the board area on the page…"));
+autoDetectButton.addEventListener("click", () => runAction(handleAutoDetect, "Looking for the board…"));
+solveButton.addEventListener("click", () => runAction(handleSolve, "Finding your solution…"));
+solveAndApplyButton.addEventListener("click", () => runAction(handleSolveAndApply, "Solving and applying to the board…"));
+applyButton.addEventListener("click", () => runAction(handleApply, "Applying your last solution…"));
+clearOverlayButton.addEventListener("click", () => runAction(handleClearOverlay, "Clearing the preview…"));
+
+puzzleTypeSelect.addEventListener("change", () => {
+  updateGameAppearance();
+  document.getElementById("gameContext").textContent = "Selected manually";
+  setResult("");
+  setStatus("");
+  savePreferences().catch((error) => setStatus(error.message, true));
+});
+for (const control of [autoCloseAfterApplyCheckbox, interClickDelayInput, interMoveDelayInput, tangoApplyModeSelect]) {
+  control.addEventListener("change", () => {
+    savePreferences().catch((error) => setStatus(error.message, true));
+  });
+}
 
 populatePuzzleTypeOptions();
 loadPreferences()
   .then(() => selectPuzzleFromActiveTab())
+  .then(() => updateGameAppearance())
   .catch((error) => {
     setStatus(error.message || String(error), true);
   });

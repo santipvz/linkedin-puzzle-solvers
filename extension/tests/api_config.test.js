@@ -17,7 +17,7 @@ test("only the hosted URL opts into the online upload policy; saved local/custom
 async function popup(storage) {
   const elements = new Map();
   const context = vm.createContext({
-    document: { getElementById(id) {
+    document: { querySelector() { return { dataset: {}, setAttribute() {} }; }, getElementById(id) {
       if (!elements.has(id)) elements.set(id, {
         value: "", checked: true, classList: { toggle() {} }, events: {},
         addEventListener(event, callback) { this.events[event] = callback; },

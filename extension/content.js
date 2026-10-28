@@ -54,7 +54,8 @@ function setQuickSolveStatus(text, isError = false) {
   }
 
   quickSolveStatus.textContent = text || "";
-  quickSolveStatus.style.color = isError ? "#b42318" : "#166534";
+  quickSolveStatus.hidden = !text;
+  quickSolveStatus.classList.toggle("error", isError);
 }
 
 function updateQuickSolveButtonText() {
@@ -66,10 +67,12 @@ function updateQuickSolveButtonText() {
   const puzzleLabel = puzzleTypeToLabel(puzzleType);
 
   if (quickSolveBusy) {
-    quickSolveButton.textContent = `Solving ${puzzleLabel}...`;
+    quickSolveButton.textContent = `Solving ${puzzleLabel}\u2026`;
   } else {
     quickSolveButton.textContent = `Solve ${puzzleLabel}`;
   }
+  quickSolveButton.setAttribute("aria-label", quickSolveButton.textContent);
+  quickSolveButton.setAttribute("aria-busy", String(quickSolveBusy));
 }
 
 function removeQuickSolveWidget() {
@@ -100,7 +103,7 @@ async function onQuickSolveClick() {
   }
   updateQuickSolveButtonText();
   const previewOnly = false;
-  setQuickSolveStatus("Solving and applying...");
+  setQuickSolveStatus("Solving and applying to the board\u2026");
 
   try {
     const response = await sendRuntimeMessage({
@@ -120,8 +123,7 @@ async function onQuickSolveClick() {
 
     if (response.previewed) {
       const moves = Array.isArray(response.result?.moves) ? response.result.moves.length : 0;
-      const strategyText = response.strategy ? ` (${response.strategy})` : "";
-      setQuickSolveStatus(`Preview ready: ${moves} moves marked${strategyText}. Take a screenshot.`);
+      setQuickSolveStatus(`Preview ready \u00b7 ${moves} moves marked.`);
       return;
     }
 
@@ -131,9 +133,7 @@ async function onQuickSolveClick() {
     }
 
     const appliedCount = Number(response.appliedCount) || 0;
-    const clickCount = Number(response.clickCount) || 0;
-    const strategyText = response.strategy ? ` (${response.strategy})` : "";
-    setQuickSolveStatus(`Solved and applied ${appliedCount} moves with ${clickCount} clicks${strategyText}.`);
+    setQuickSolveStatus(`Solution applied \u00b7 ${appliedCount} moves.`);
   } catch (error) {
     setQuickSolveStatus(error.message || String(error), true);
   } finally {
@@ -155,43 +155,62 @@ function createQuickSolveWidget() {
   container.style.right = "16px";
   container.style.bottom = "16px";
   container.style.zIndex = "2147483645";
-  container.style.width = "220px";
-  container.style.padding = "10px";
-  container.style.borderRadius = "12px";
-  container.style.background = "linear-gradient(165deg, rgba(255,255,255,0.96), rgba(236,245,255,0.96))";
-  container.style.border = "1px solid #b6c6d9";
-  container.style.boxShadow = "0 6px 18px rgba(15, 23, 42, 0.22)";
-  container.style.backdropFilter = "blur(2px)";
+  // Keep the page's styles from changing the extension's controls.
+  const shadow = container.attachShadow({ mode: "open" });
+  const style = document.createElement("style");
+  style.textContent = `
+    :host { all: initial; }
+    * { box-sizing: border-box; }
+    .widget { width: 218px; max-width: calc(100vw - 32px); padding: 14px;
+      border: 1px solid #d7d7cd; border-radius: 10px; background: #f8f7f3;
+      box-shadow: 0 4px 20px #26272014; color: #262720;
+      font: 12px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .title { display: flex; align-items: center; gap: 7px; margin-bottom: 12px;
+      font-size: 11px; font-weight: 600; letter-spacing: -.1px; }
+    .title::before { content: ""; width: 9px; height: 9px; background: #cc4c29;
+      border-radius: 2px; box-shadow: 3px 3px 0 #e8c7b6; margin-right: 3px; }
+    button { display: flex; justify-content: space-between; align-items: center; gap: 10px;
+      width: 100%; padding: 11px 12px; border: 1px solid #292c25; border-radius: 6px;
+      background: #292c25; color: #fffefa; text-align: left;
+      font: 550 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      cursor: pointer; transition: background .15s; }
+    button::after { content: "\\2192"; color: #e9a27f; font-size: 16px; }
+    button:hover { background: #414538; }
+    button:focus-visible { outline: 2px solid #cc4c29; outline-offset: 3px; }
+    button:disabled { opacity: .6; cursor: wait; }
+    button[aria-busy="true"]::after { content: ""; width: 12px; height: 12px;
+      flex: none; border: 1.5px solid #ffffff40; border-top-color: #e9a27f;
+      border-radius: 50%; animation: spin .8s linear infinite; }
+    .status { margin: 10px 0 0; font-size: 11px; line-height: 1.5;
+      color: #616455; overflow-wrap: anywhere; }
+    .status.error { color: #aa3827; }
+    [hidden] { display: none; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { *, *::after { animation: none !important; transition: none !important; } }
+  `;
+  const panel = document.createElement("section");
+  panel.className = "widget";
+  panel.setAttribute("aria-label", "Puzzle Solver");
 
   const title = document.createElement("div");
-  title.textContent = "Puzzle Quick Solve";
-  title.style.font = "700 12px/1.2 'Segoe UI', sans-serif";
-  title.style.color = "#1f2937";
-  title.style.marginBottom = "8px";
+  title.textContent = "Puzzle Solver";
+  title.className = "title";
 
   const button = document.createElement("button");
   button.type = "button";
-  button.style.width = "100%";
-  button.style.border = "1px solid #0f766e";
-  button.style.background = "#0f766e";
-  button.style.color = "#ffffff";
-  button.style.borderRadius = "8px";
-  button.style.padding = "8px 10px";
-  button.style.font = "600 13px/1.2 'Segoe UI', sans-serif";
-  button.style.cursor = "pointer";
   button.addEventListener("click", () => {
     onQuickSolveClick();
   });
 
-  const status = document.createElement("div");
-  status.style.marginTop = "8px";
-  status.style.minHeight = "16px";
-  status.style.font = "500 11px/1.3 'Segoe UI', sans-serif";
-  status.style.color = "#166534";
+  const status = document.createElement("p");
+  status.className = "status";
+  status.hidden = true;
+  status.setAttribute("role", "status");
+  status.setAttribute("aria-live", "polite");
+  status.setAttribute("aria-atomic", "true");
 
-  container.appendChild(title);
-  container.appendChild(button);
-  container.appendChild(status);
+  panel.append(title, button, status);
+  shadow.append(style, panel);
   document.documentElement.appendChild(container);
 
   quickSolveWidgetRoot = container;
