@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LinkedIn Puzzle Solver Assistant",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Capture puzzle boards, solve through a local API, and overlay/apply solutions.",
   "permissions": ["activeTab", "scripting", "storage", "tabs", "webNavigation"],
   "host_permissions": [
