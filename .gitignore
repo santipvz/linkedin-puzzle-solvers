@@ -8,6 +8,7 @@ __pycache__/
 errors/
 *.zip
 *.png
+!extension/assets/*.png
 !docs/assets/readme/*.png
 !docs/assets/readme/*.gif
 !docs/assets/readme/*.svg

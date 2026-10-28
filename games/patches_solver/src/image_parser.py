@@ -427,7 +427,7 @@ class PatchesImageParser:
                     }
 
                 ratio = float(badge["width"]) / max(1, float(badge["height"]))
-                shape = self._classify_shape(ratio)
+                shape = self._classify_shape(ratio, float(badge["fill_ratio"]))
 
                 bx = int(badge["x"])
                 by = int(badge["y"])
@@ -435,6 +435,11 @@ class PatchesImageParser:
                 bh = int(badge["height"])
 
                 roi = board_bgr[y1 + by : y1 + by + bh, x1 + bx : x1 + bx + bw]
+                if float(badge["fill_ratio"]) < 0.91:
+                    # Read the number on the darker central overlap, without
+                    # the pale arms or white corners of a free-shape clue.
+                    inset_y, inset_x = max(1, int(bh * 0.16)), max(1, int(bw * 0.16))
+                    roi = roi[inset_y:-inset_y, inset_x:-inset_x]
                 prediction = self._ocr.predict(roi, max_value=board_size * board_size)
                 clue_value = int(prediction.value) if prediction is not None else None
 
@@ -480,14 +485,24 @@ class PatchesImageParser:
     def _extract_badge_component(self, cell_hsv: np.ndarray) -> dict[str, float] | None:
         saturation = cell_hsv[:, :, 1]
         value = cell_hsv[:, :, 2]
-        threshold = max(48.0, float(np.percentile(saturation, 79)))
+        # Free-shape clues are two translucent, overlapping rectangles. An
+        # adaptive high-saturation threshold keeps only their darker overlap
+        # and incorrectly turns the cross into a square.
+        pad_y = max(2, int(saturation.shape[0] * 0.18))
+        pad_x = max(2, int(saturation.shape[1] * 0.18))
+        corners = np.concatenate([
+            saturation[:pad_y, :pad_x].ravel(), saturation[:pad_y, -pad_x:].ravel(),
+            saturation[-pad_y:, :pad_x].ravel(), saturation[-pad_y:, -pad_x:].ravel(),
+        ])
+        # Older boards have tinted cells. Exclude that background without
+        # discarding the pale arms of a clue on today's white cells.
+        threshold = max(CLUE_SATURATION_THRESHOLD, float(np.median(corners)) + 20)
         mask = ((saturation >= threshold) & (value > 48)).astype(np.uint8) * 255
 
         kernel = np.ones((3, 3), dtype=np.uint8)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
         component_count, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
-        del labels
         if component_count <= 1:
             return None
 
@@ -523,8 +538,13 @@ class PatchesImageParser:
         y = int(stats[chosen_label, cv2.CC_STAT_TOP])
         width = int(stats[chosen_label, cv2.CC_STAT_WIDTH])
         height = int(stats[chosen_label, cv2.CC_STAT_HEIGHT])
-        area = int(stats[chosen_label, cv2.CC_STAT_AREA])
-        fill_ratio = float(area / max(1, width * height))
+        component = (labels[y : y + height, x : x + width] == chosen_label).astype(np.uint8)
+        contours, _ = cv2.findContours(component, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # Ignore white number holes when distinguishing a filled square from
+        # a cross with genuinely empty corners.
+        silhouette = np.zeros_like(component)
+        cv2.drawContours(silhouette, contours, -1, 1, cv2.FILLED)
+        fill_ratio = float(np.count_nonzero(silhouette) / max(1, width * height))
 
         return {
             "x": float(x),
@@ -534,12 +554,12 @@ class PatchesImageParser:
             "fill_ratio": fill_ratio,
         }
 
-    def _classify_shape(self, ratio: float) -> str:
+    def _classify_shape(self, ratio: float, fill_ratio: float = 1.0) -> str:
         if ratio >= 1.30:
             return "wide"
         if ratio <= 0.78:
             return "tall"
-        if 0.92 <= ratio <= 1.05:
+        if 0.90 <= ratio <= 1.12 and fill_ratio >= 0.91:
             return "square"
         return "any"
 

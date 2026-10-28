@@ -5,7 +5,6 @@ const STORAGE_PUZZLE_KEY = "solver_puzzle_type";
 const STORAGE_AUTO_CLOSE_KEY = "solver_auto_close_after_apply";
 const STORAGE_INTER_CLICK_DELAY_KEY = "solver_inter_click_delay_ms";
 const STORAGE_INTER_MOVE_DELAY_KEY = "solver_inter_move_delay_ms";
-const STORAGE_TANGO_APPLY_MODE_KEY = "solver_tango_apply_mode";
 
 const DEFAULT_AUTO_CLOSE_AFTER_APPLY = true;
 const DEFAULT_INTER_CLICK_DELAY_MS = 45;
@@ -14,14 +13,19 @@ const puzzleTypeSelect = document.getElementById("puzzleType");
 const apiUrlInput = document.getElementById("apiUrl");
 const apiModeSelect = document.getElementById("apiMode");
 const serviceNote = document.getElementById("serviceNote");
+const layout = document.querySelector(".layout");
+const gameChoices = [];
 let customApiUrl = DEFAULT_API_URL;
 
 function updateServiceMode() {
   const online = apiModeSelect.value === "online";
   apiUrlInput.readOnly = online;
+  document.getElementById("apiUrlField").hidden = online;
+  document.getElementById("apiModeOnline").checked = online;
+  document.getElementById("apiModeLocal").checked = !online;
   serviceNote.textContent = online
     ? "Online sends the board image to our service. Images are not archived."
-    : "Use your local service or enter your own API URL.";
+    : "Uses your own service. Change its address in Preferences.";
 }
 const selectBoardButton = document.getElementById("selectBoard");
 const autoDetectButton = document.getElementById("autoDetect");
@@ -32,7 +36,6 @@ const clearOverlayButton = document.getElementById("clearOverlay");
 const autoCloseAfterApplyCheckbox = document.getElementById("autoCloseAfterApply");
 const interClickDelayInput = document.getElementById("interClickDelayMs");
 const interMoveDelayInput = document.getElementById("interMoveDelayMs");
-const tangoApplyModeSelect = document.getElementById("tangoApplyMode");
 const resultBox = document.getElementById("result");
 const statusBox = document.getElementById("status");
 
@@ -59,6 +62,31 @@ function populatePuzzleTypeOptions() {
         ? definition.label.trim()
         : definition.key;
     puzzleTypeSelect.appendChild(option);
+
+    const choice = document.createElement("label");
+    choice.className = "game-choice";
+    const input = document.createElement("input");
+    input.type = "radio";
+    input.name = "game";
+    input.value = definition.key;
+    const content = document.createElement("span");
+    content.className = "choice-content";
+    const icon = document.createElement("img");
+    icon.src = `assets/games/${definition.key}.svg`;
+    icon.alt = "";
+    const label = document.createElement("span");
+    label.className = "choice-name";
+    label.textContent = option.textContent;
+    content.append(icon, label);
+    choice.append(input, content);
+    document.getElementById("gameChoices").appendChild(choice);
+    gameChoices.push(input);
+    input.addEventListener("change", () => {
+      if (input.checked) {
+        puzzleTypeSelect.value = input.value;
+        puzzleTypeSelect.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    });
   }
 
   if (currentValue && definitions.some((definition) => definition && definition.key === currentValue)) {
@@ -212,12 +240,19 @@ function selectionStorageKey(tabId) {
 }
 
 function setStatus(message, isError = false) {
-  statusBox.textContent = message || "";
+  statusBox.textContent = message || "Ready when you are.";
   statusBox.classList.toggle("error", isError);
 }
 
 function setResult(message) {
   resultBox.textContent = message;
+  document.getElementById("resultDetails").hidden = !message;
+}
+
+function updateGameAppearance() {
+  for (const input of gameChoices) {
+    input.checked = input.value === puzzleTypeSelect.value;
+  }
 }
 
 function summarizeResult(puzzleType, result) {
@@ -266,19 +301,11 @@ function normalizeDelay(value, fallback) {
   return Math.max(0, Math.min(500, Math.round(parsed)));
 }
 
-function normalizeTangoApplyMode(value) {
-  if (value === "right-moon") {
-    return "right-moon";
-  }
-  return "left-cycle";
-}
-
 function getApplySettingsFromUi() {
   return {
     autoCloseAfterApply: Boolean(autoCloseAfterApplyCheckbox.checked),
     interClickDelayMs: normalizeDelay(interClickDelayInput.value, DEFAULT_INTER_CLICK_DELAY_MS),
     interMoveDelayMs: normalizeDelay(interMoveDelayInput.value, DEFAULT_INTER_MOVE_DELAY_MS),
-    tangoApplyMode: normalizeTangoApplyMode(tangoApplyModeSelect.value),
   };
 }
 
@@ -292,7 +319,6 @@ async function savePreferences() {
     [STORAGE_AUTO_CLOSE_KEY]: applySettings.autoCloseAfterApply,
     [STORAGE_INTER_CLICK_DELAY_KEY]: applySettings.interClickDelayMs,
     [STORAGE_INTER_MOVE_DELAY_KEY]: applySettings.interMoveDelayMs,
-    [STORAGE_TANGO_APPLY_MODE_KEY]: applySettings.tangoApplyMode,
   });
 }
 
@@ -304,7 +330,6 @@ async function loadPreferences() {
     STORAGE_AUTO_CLOSE_KEY,
     STORAGE_INTER_CLICK_DELAY_KEY,
     STORAGE_INTER_MOVE_DELAY_KEY,
-    STORAGE_TANGO_APPLY_MODE_KEY,
   ]);
 
   apiUrlInput.value = stored[STORAGE_API_KEY] || DEFAULT_API_URL;
@@ -323,7 +348,6 @@ async function loadPreferences() {
   interMoveDelayInput.value = String(
     normalizeDelay(stored[STORAGE_INTER_MOVE_DELAY_KEY], DEFAULT_INTER_MOVE_DELAY_MS)
   );
-  tangoApplyModeSelect.value = normalizeTangoApplyMode(stored[STORAGE_TANGO_APPLY_MODE_KEY]);
 }
 
 async function selectPuzzleFromActiveTab() {
@@ -341,10 +365,17 @@ async function selectPuzzleFromActiveTab() {
   const hasOption = Array.from(puzzleTypeSelect.options).some((option) => option.value === detectedPuzzleType);
   if (hasOption) {
     puzzleTypeSelect.value = detectedPuzzleType;
+    document.getElementById("gameContext").textContent = "Detected on this tab";
   }
 }
 
 function setBusy(isBusy) {
+  layout.setAttribute("aria-busy", String(isBusy));
+  document.getElementById("solveLabel").textContent = isBusy ? "Working…" : "Solve & apply";
+  puzzleTypeSelect.disabled = isBusy;
+  for (const input of gameChoices) input.disabled = isBusy;
+  document.getElementById("apiModeOnline").disabled = isBusy;
+  document.getElementById("apiModeLocal").disabled = isBusy;
   apiModeSelect.disabled = isBusy;
   apiUrlInput.disabled = isBusy;
   selectBoardButton.disabled = isBusy;
@@ -356,7 +387,6 @@ function setBusy(isBusy) {
   autoCloseAfterApplyCheckbox.disabled = isBusy;
   interClickDelayInput.disabled = isBusy;
   interMoveDelayInput.disabled = isBusy;
-  tangoApplyModeSelect.disabled = isBusy;
 }
 
 async function handleSelectBoard() {
@@ -367,7 +397,7 @@ async function handleSelectBoard() {
     throw new Error((response && response.error) || "Board selection failed.");
   }
 
-  setStatus("Board region selected.");
+  setStatus("Board area selected.");
 }
 
 async function handleAutoDetect() {
@@ -419,7 +449,7 @@ async function solveForTab(tab, options = {}) {
   if (solveResponse.solved) {
     if (previewOnly) {
       if (solveResponse.previewed) {
-        setStatus("Solved and overlay rendered.");
+        setStatus("Preview ready. Apply it from Board tools when you’re ready.");
       } else {
         setStatus(solveResponse.error || "Solved board but failed to render overlay preview.", true);
       }
@@ -436,26 +466,9 @@ async function solveForTab(tab, options = {}) {
 }
 
 function buildApplyStatusText(response) {
-  const appliedText =
-    typeof response.appliedCount === "number"
-      ? `Applied ${response.appliedCount} moves.`
-      : "Applied solution.";
-
-  let clickText = "";
-  if (typeof response.clickCount === "number" && typeof response.clicksPerMove === "number") {
-    clickText = ` (${response.clickCount} clicks, ${response.clicksPerMove} per move)`;
-  } else if (typeof response.clickCount === "number") {
-    clickText = ` (${response.clickCount} clicks)`;
-  }
-
-  const strategyText =
-    typeof response.strategy === "string" && response.strategy
-      ? ` [${response.strategy}]`
-      : "";
-
-  const keyText = typeof response.keyCount === "number" ? ` (${response.keyCount} key events)` : "";
-
-  return `${appliedText}${clickText}${keyText}${strategyText}`;
+  return typeof response.appliedCount === "number"
+    ? `Solution applied · ${response.appliedCount} moves.`
+    : "Solution applied.";
 }
 
 async function applyCachedPayloadForTab(tab, payload) {
@@ -469,7 +482,6 @@ async function applyCachedPayloadForTab(tab, payload) {
     settings: {
       interClickDelayMs: applySettings.interClickDelayMs,
       interMoveDelayMs: applySettings.interMoveDelayMs,
-      tangoApplyMode: applySettings.tangoApplyMode,
     },
   });
 
@@ -555,9 +567,9 @@ async function handleClearOverlay() {
   setStatus("Overlay cleared.");
 }
 
-async function runAction(action) {
+async function runAction(action, pendingMessage) {
   setBusy(true);
-  setStatus("");
+  setStatus(pendingMessage);
 
   try {
     await savePreferences();
@@ -579,21 +591,44 @@ apiModeSelect.addEventListener("change", () => {
   updateServiceMode();
   savePreferences().catch((error) => setStatus(error.message, true));
 });
-apiUrlInput.addEventListener("change", () => {
+apiUrlInput.addEventListener("input", () => {
   customApiUrl = apiUrlInput.value;
   savePreferences().catch((error) => setStatus(error.message, true));
 });
 
-selectBoardButton.addEventListener("click", () => runAction(handleSelectBoard));
-autoDetectButton.addEventListener("click", () => runAction(handleAutoDetect));
-solveButton.addEventListener("click", () => runAction(handleSolve));
-solveAndApplyButton.addEventListener("click", () => runAction(handleSolveAndApply));
-applyButton.addEventListener("click", () => runAction(handleApply));
-clearOverlayButton.addEventListener("click", () => runAction(handleClearOverlay));
+for (const id of ["apiModeOnline", "apiModeLocal"]) {
+  document.getElementById(id).addEventListener("change", (event) => {
+    if (event.target.checked) {
+      apiModeSelect.value = event.target.value;
+      apiModeSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  });
+}
+
+selectBoardButton.addEventListener("click", () => runAction(handleSelectBoard, "Select the board area on the page…"));
+autoDetectButton.addEventListener("click", () => runAction(handleAutoDetect, "Looking for the board…"));
+solveButton.addEventListener("click", () => runAction(handleSolve, "Finding your solution…"));
+solveAndApplyButton.addEventListener("click", () => runAction(handleSolveAndApply, "Solving and applying to the board…"));
+applyButton.addEventListener("click", () => runAction(handleApply, "Applying your last solution…"));
+clearOverlayButton.addEventListener("click", () => runAction(handleClearOverlay, "Clearing the preview…"));
+
+puzzleTypeSelect.addEventListener("change", () => {
+  updateGameAppearance();
+  document.getElementById("gameContext").textContent = "Selected manually";
+  setResult("");
+  setStatus("");
+  savePreferences().catch((error) => setStatus(error.message, true));
+});
+for (const control of [autoCloseAfterApplyCheckbox, interClickDelayInput, interMoveDelayInput]) {
+  control.addEventListener("change", () => {
+    savePreferences().catch((error) => setStatus(error.message, true));
+  });
+}
 
 populatePuzzleTypeOptions();
 loadPreferences()
   .then(() => selectPuzzleFromActiveTab())
+  .then(() => updateGameAppearance())
   .catch((error) => {
     setStatus(error.message || String(error), true);
   });

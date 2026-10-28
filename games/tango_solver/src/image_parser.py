@@ -267,12 +267,14 @@ class TangoImageParser:
         # Look specifically for constraint color
         target_color = np.array([140, 114, 76])
         color_diff = np.sqrt(np.sum((border_img - target_color) ** 2, axis=2))
-        constraint_pixels = np.sum(color_diff < 30)
+        # Current small SVG signs are mostly antialiased pixels. Their color
+        # shifts towards the white background at browser zoom levels below 2x.
+        constraint_pixels = np.sum(color_diff < 55)
 
         if constraint_pixels < 8:
             return None
 
-        constraint_mask = (color_diff < 30).astype(np.uint8) * 255
+        constraint_mask = (color_diff < 55).astype(np.uint8) * 255
 
         if np.sum(constraint_mask > 0) < 5:
             return None

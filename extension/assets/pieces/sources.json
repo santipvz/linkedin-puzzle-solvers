@@ -1,0 +1,9 @@
+{
+  "retrieved": "2026-10-28",
+  "source_pages": {
+    "queen": "https://www.linkedin.com/games/queens/",
+    "sun": "https://www.linkedin.com/games/tango/",
+    "moon": "https://www.linkedin.com/games/tango/"
+  },
+  "method": "Original rendered game SVG geometry; computed paint styles inlined to remove dependency on LinkedIn CSS."
+}
