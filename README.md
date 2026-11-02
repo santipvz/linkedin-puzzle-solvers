@@ -40,35 +40,37 @@
 
 ## Demo Gallery
 
+Click an animated preview to open the original WebM recording of the current interface.
+
 <table border="0" cellspacing="0" cellpadding="0">
   <tr>
     <td width="50%">
       <h3 align="center">Queens</h3>
-      <img src="docs/assets/readme/queens.gif" alt="Queens solver demo">
+      <a href="docs/assets/readme/queens.webm"><img src="docs/assets/readme/queens.gif" alt="Queens solver demo — open WebM video"></a>
     </td>
     <td width="50%">
       <h3 align="center">Tango</h3>
-      <img src="docs/assets/readme/tango.gif" alt="Tango solver demo">
+      <a href="docs/assets/readme/tango.webm"><img src="docs/assets/readme/tango.gif" alt="Tango solver demo — open WebM video"></a>
     </td>
   </tr>
   <tr>
     <td width="50%">
       <h3 align="center">Mini Sudoku</h3>
-      <img src="docs/assets/readme/minisudoku.gif" alt="Mini Sudoku solver demo">
+      <a href="docs/assets/readme/minisudoku.webm"><img src="docs/assets/readme/minisudoku.gif" alt="Mini Sudoku solver demo — open WebM video"></a>
     </td>
     <td width="50%">
       <h3 align="center">Zip</h3>
-      <img src="docs/assets/readme/zip.gif" alt="Zip solver demo">
+      <a href="docs/assets/readme/zip.webm"><img src="docs/assets/readme/zip.gif" alt="Zip solver demo — open WebM video"></a>
     </td>
   </tr>
   <tr>
     <td width="50%">
       <h3 align="center">Patches</h3>
-      <img src="docs/assets/readme/patches.gif" alt="Patches solver demo">
+      <a href="docs/assets/readme/patches.webm"><img src="docs/assets/readme/patches.gif" alt="Patches solver demo — open WebM video"></a>
     </td>
     <td width="50%">
       <h3 align="center">Wend</h3>
-      <img src="docs/assets/readme/wend.gif" alt="Wend solver demo">
+      <a href="docs/assets/readme/wend.webm"><img src="docs/assets/readme/wend.gif" alt="Wend solver demo — open WebM video"></a>
     </td>
   </tr>
 </table>
