@@ -30,6 +30,13 @@ def main() -> int:
             os.environ[variable] = "1"
     client = httpx.Client(base_url=args.base_url.rstrip("/"), timeout=120) if args.base_url else TestClient(create_app())
 
+    for path in ("/", "/privacy", "/support"):
+        response = client.get(path)
+        if response.status_code != 200 or "text/html" not in response.headers.get("content-type", ""):
+            print(f"[error] {path}: expected HTML page, got HTTP {response.status_code}")
+            return 1
+        print(f"[ok] {path}: public HTML page", flush=True)
+
     for definition in PUZZLE_DEFINITIONS:
         puzzle = definition.key
         sample_path = definition.sample_image

@@ -6,8 +6,24 @@ import struct
 import zipfile
 
 import pytest
+from PIL import Image
 
 from scripts.package_extension import RUNTIME_FILES, build
+
+
+@pytest.mark.parametrize('browser', ('chrome', 'firefox'))
+def test_repository_extension_builds_with_real_installation_assets(tmp_path: Path, browser: str) -> None:
+    package = build(tmp_path / f'{browser}.zip')
+    with zipfile.ZipFile(package) as archive:
+        manifest = json.loads(archive.read('manifest.json'))
+        for size in (16, 32, 48, 128):
+            with archive.open(manifest['icons'][str(size)]) as file:
+                with Image.open(file) as icon:
+                    assert icon.format == 'PNG'
+                    assert icon.size == (size, size)
+                    icon.verify()
+        for filename in RUNTIME_FILES:
+            assert archive.read(filename)
 
 
 def sources(tmp_path: Path) -> Path:
