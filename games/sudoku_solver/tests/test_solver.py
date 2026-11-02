@@ -59,3 +59,21 @@ def test_parser_and_worker_solve_tracked_sample() -> None:
     assert response["details"]["parse_reliable"]
     assert response["details"]["unique_solution"]
     assert response["moves"]
+
+
+def test_daily_board_capture_preserves_the_frame_and_all_visible_clues() -> None:
+    image = Path(__file__).parent / "fixtures" / "linkedin-2026-11-02.png"
+    parsed = MiniSudokuImageParser().parse_image(image)
+    assert parsed["board"] == [
+        [0, 0, 0, 0, 0, 0],
+        [1, 0, 5, 4, 0, 3],
+        [2, 0, 6, 5, 0, 4],
+        [3, 0, 4, 6, 0, 1],
+        [4, 0, 2, 1, 0, 6],
+        [0, 0, 0, 0, 0, 0],
+    ]
+    assert len(parsed["grid_lines"]["rows"]) == len(parsed["grid_lines"]["cols"]) == 7
+    response = solve_sudoku_worker(image)
+    assert response["solved"]
+    assert response["details"]["unique_solution"]
+    assert response["details"]["fixed_count"] == 16
