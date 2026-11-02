@@ -12,6 +12,7 @@ errors/
 !docs/assets/readme/*.png
 !docs/assets/readme/*.gif
 !docs/assets/readme/*.svg
+!games/sudoku_solver/tests/fixtures/*.png
 !games/patches_solver/examples/*.png
 !games/patches_solver/assets/*.png
 !games/wend_solver/examples/*.png

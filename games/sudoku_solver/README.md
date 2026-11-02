@@ -29,3 +29,5 @@ python3 games/sudoku_solver/main.py games/sudoku_solver/examples/sample1.png --j
 
 - OCR training reuses glyph masks from local sans-serif fonts. The training dataset is cached on disk by font fingerprint, and the model is cached for the process lifetime.
 - Input images can be full screenshots or already-cropped board captures.
+
+The extension captures the outer `.sudoku-board` frame with an 8 CSS-pixel margin so all seven grid lines survive fractional display scaling. Applying numbers continues to locate the inner `.sudoku-grid` cells. The November 2 fixture contains only the public daily board and its frame, without account or page content.
