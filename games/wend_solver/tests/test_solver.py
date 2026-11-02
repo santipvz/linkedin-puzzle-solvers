@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -102,6 +103,28 @@ class WendSolverTests(unittest.TestCase):
 
 
 class WendParserTests(unittest.TestCase):
+    def test_page_board_solves_october_29_without_ocr(self) -> None:
+        payload = json.loads((Path(__file__).parent / "fixtures/linkedin-2026-10-29.json").read_text())
+        with patch.object(WendImageParser, "parse_image", side_effect=AssertionError("Must bypass OCR")):
+            result = solve_wend_worker("unused.png", parsed_board=payload)
+        self.assertTrue(result["solved"], result.get("error"))
+        self.assertEqual("page", result["details"]["input_source"])
+        self.assertTrue(result["details"]["unique_solution"])
+        self.assertEqual({"OAR", "FLOOR", "MIRROR", "OREGANO", "FOOTWORK"}, {entry["word"] for entry in result["words"]})
+        self.assertIsNone(result["details"]["ocr"])
+
+    def test_page_input_keeps_rejecting_real_dictionary_ambiguity(self) -> None:
+        board = [[None] * 5 for _ in range(5)]
+        board[0][:3] = list("CAT")
+        board[1][:3] = list("DOG")
+        payload = {"board": board, "lengths": [3, 3]}
+        with patch.object(wend_worker, "_get_solver", return_value=WendSolver(["CAT", "TAC", "DOG"])):
+            result = solve_wend_worker("unused.png", parsed_board=payload)
+        self.assertFalse(result["solved"])
+        self.assertEqual(2, result["details"]["solution_count"])
+        self.assertEqual([], result["words"])
+        self.assertEqual(2, len(result["details"]["candidate_word_sets"]))
+
     def test_worker_solves_recent_captures_without_inventing_ocr_ambiguity(self) -> None:
         captures = {
             "sample3.png": {"TIE", "PEER", "UNIFORM", "ALIKE"},

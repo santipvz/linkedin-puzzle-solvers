@@ -15,3 +15,4 @@ class SolveRequest:
     filename: str | None = None
     content_type: str | None = None
     capture: bool = False
+    parsed_board: JsonDict | None = None

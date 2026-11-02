@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import json
 import tempfile
 from dataclasses import replace
 from pathlib import Path
@@ -14,7 +15,7 @@ from services.solver_api.app.adapters.http import create_http_app
 from services.solver_api.app.adapters.memory import MemorySolutionCache
 from services.solver_api.app.adapters.workers import WorkerSolver
 from services.solver_api.app.application.solve_puzzle import SolvePuzzle
-from services.solver_api.app.domain.errors import EmptyImage, ImageTooLarge, SolverTimeout, UnknownPuzzle, UnsupportedImage, WorkerFailure
+from services.solver_api.app.domain.errors import EmptyImage, ImageTooLarge, InvalidBoard, SolverTimeout, UnknownPuzzle, UnsupportedImage, WorkerFailure
 from services.solver_api.app.domain.models import SolveRequest
 
 
@@ -23,8 +24,8 @@ class FakeSolver:
         self.calls = []
         self.error = error
 
-    def solve(self, puzzle, image, filename):
-        self.calls.append((puzzle, image, filename))
+    def solve(self, puzzle, image, filename, *, parsed_board=None):
+        self.calls.append((puzzle, image, filename, parsed_board))
         if self.error:
             raise self.error
         return {"puzzle": puzzle, "solved": True, "details": {"parse_reliable": True}}
@@ -135,3 +136,60 @@ def test_capture_failure_does_not_fail_a_solve(caplog) -> None:
     with patch.object(use_case.captures, "_archive_board_capture", side_effect=PermissionError("read-only")):
         assert use_case.execute(SolveRequest("wend", b"image", capture=True))["solved"]
     assert "read-only" in caplog.text
+
+
+def page_board():
+    path = Path(__file__).resolve().parents[3] / "games/wend_solver/tests/fixtures/linkedin-2026-10-29.json"
+    return json.loads(path.read_text())
+
+
+def test_page_board_is_validated_and_has_a_separate_cache_entry():
+    use_case, solver, _ = service()
+    request = SolveRequest("wend", b"image", parsed_board=page_board())
+    use_case.execute(request)
+    use_case.execute(request)
+    assert len(solver.calls) == 1
+    assert solver.calls[0][-1] == page_board()
+    use_case.execute(replace(request, parsed_board=None))
+    assert len(solver.calls) == 2
+    changed = page_board()
+    changed["board"][0][0] = "A"
+    use_case.execute(replace(request, parsed_board=changed))
+    assert len(solver.calls) == 3
+
+
+@pytest.mark.parametrize("payload", [
+    {}, {"board": [["A"]], "lengths": [1]},
+    {"board": [["A"] * 5] * 5, "lengths": [True, 8, 16]},
+    {"board": [["A"] * 5] * 5, "lengths": [3]},
+    {"board": [["?"] * 5] * 5, "lengths": [9, 16]},
+    {"board": [["é"] * 5] * 5, "lengths": [9, 16]},
+])
+def test_malformed_page_boards_never_reach_the_worker(payload):
+    use_case, solver, _ = service()
+    with pytest.raises(InvalidBoard):
+        use_case.execute(SolveRequest("wend", b"image", parsed_board=payload))
+    assert not solver.calls
+
+
+def test_http_page_board_round_trip_and_validation():
+    use_case, solver, _ = service()
+    use_case.cache_revisions["zip"] = 1
+    client = TestClient(create_http_app(use_case, ["wend", "zip"]))
+    image = {"image": ("board.png", b"image", "image/png")}
+    response = client.post("/solve/wend", files=image, data={"parsed_board": json.dumps(page_board())})
+    assert response.status_code == 200
+    assert solver.calls[-1][-1] == page_board()
+    for payload in ["{", "null", "[]", "{}", " " * 4097]:
+        assert client.post("/solve/wend", files=image, data={"parsed_board": payload}).status_code == 422
+    assert client.post("/solve/zip", files=image, data={"parsed_board": json.dumps(page_board())}).status_code == 422
+
+
+@pytest.mark.parametrize("mode", ["subprocess", "inprocess"])
+def test_page_board_reaches_the_real_worker(mode):
+    root = Path(__file__).resolve().parents[3]
+    worker = WorkerSolver({"wend": "solve_wend_worker.py"}, root / "services/solver_api/app/workers", mode=mode)
+    result = worker.solve("wend", b"unused image", "board.png", parsed_board=page_board())
+    assert result["solved"]
+    assert result["details"]["input_source"] == "page"
+    assert {word["word"] for word in result["words"]} == {"OAR", "FLOOR", "MIRROR", "OREGANO", "FOOTWORK"}

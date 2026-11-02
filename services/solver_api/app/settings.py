@@ -31,7 +31,7 @@ class Settings:
         return cls(
             capture_directory=Path(os.getenv("DATASET_CAPTURE_DIR") or REPO_ROOT / "datasets").expanduser(),
             capture_enabled=os.getenv("DATASET_CAPTURE_ENABLED", "0" if hosted else "1").strip().lower() not in {"0", "false", "no"},
-            worker_mode=os.getenv("SOLVER_WORKER_MODE", "subprocess").strip().lower(),
+            worker_mode=os.getenv("SOLVER_WORKER_MODE", "persistent" if hosted else "subprocess").strip().lower(),
             max_upload_bytes=4 * 1024 * 1024 if hosted else 10 * 1024 * 1024,
             max_concurrent_workers=1 if hosted else 0,
             cors_origins=tuple(parse_cors_origins(os.getenv("CORS_ALLOW_ORIGINS", "*"))),

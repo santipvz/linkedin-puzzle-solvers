@@ -1,4 +1,4 @@
-const DEFAULT_API_URL = globalThis.SolverApiConfig.localUrl;
+const DEFAULT_API_URL = globalThis.SolverApiConfig.defaultUrl;
 const STORAGE_API_KEY = "solver_api_url";
 const STORAGE_CUSTOM_API_KEY = "solver_custom_api_url";
 const STORAGE_PUZZLE_KEY = "solver_puzzle_type";
@@ -15,7 +15,7 @@ const apiModeSelect = document.getElementById("apiMode");
 const serviceNote = document.getElementById("serviceNote");
 const layout = document.querySelector(".layout");
 const gameChoices = [];
-let customApiUrl = DEFAULT_API_URL;
+let customApiUrl = globalThis.SolverApiConfig.localUrl;
 
 function updateServiceMode() {
   const online = apiModeSelect.value === "online";
@@ -334,7 +334,7 @@ async function loadPreferences() {
 
   apiUrlInput.value = stored[STORAGE_API_KEY] || DEFAULT_API_URL;
   apiModeSelect.value = globalThis.SolverApiConfig.isOnline(apiUrlInput.value) ? "online" : "local";
-  customApiUrl = stored[STORAGE_CUSTOM_API_KEY] || (apiModeSelect.value === "local" ? apiUrlInput.value : DEFAULT_API_URL);
+  customApiUrl = stored[STORAGE_CUSTOM_API_KEY] || (apiModeSelect.value === "local" ? apiUrlInput.value : globalThis.SolverApiConfig.localUrl);
   updateServiceMode();
   puzzleTypeSelect.value = stored[STORAGE_PUZZLE_KEY] || "queens";
 
@@ -572,6 +572,7 @@ async function runAction(action, pendingMessage) {
   setStatus(pendingMessage);
 
   try {
+    if (action === handleSolve || action === handleSolveAndApply) await ensureApiPermission();
     await savePreferences();
     await action();
   } catch (error) {
@@ -579,6 +580,22 @@ async function runAction(action, pendingMessage) {
   } finally {
     setBusy(false);
   }
+}
+
+async function ensureApiPermission() {
+  const origin = globalThis.SolverApiConfig.permissionOrigin(apiUrlInput.value);
+  const allowed = await new Promise((resolve, reject) => {
+    chrome.permissions.contains({ origins: [origin] }, (granted) => {
+      if (chrome.runtime.lastError) { reject(new Error(chrome.runtime.lastError.message)); return; }
+      if (granted) { resolve(true); return; }
+      // Only the exact custom service host is requested, from the Solve gesture.
+      chrome.permissions.request({ origins: [origin] }, (accepted) => {
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+        else resolve(accepted);
+      });
+    });
+  });
+  if (!allowed) throw new Error("Access to this solver service was not granted. Choose Online or allow your custom service.");
 }
 
 apiModeSelect.addEventListener("change", () => {

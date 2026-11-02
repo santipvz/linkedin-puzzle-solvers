@@ -67,7 +67,9 @@ class _ParsedSudokuBoard(TypedDict):
 
 class _MiniSudokuOcr:
     def __init__(self) -> None:
+        self._digit_masks: dict[tuple[int, ImageFont.ImageFont], Image.Image] = {}
         self._model = self._train_model()
+        self._digit_masks.clear()
 
     def predict(self, normalized_digit: np.ndarray) -> tuple[int, float, list[tuple[int, float]]]:
         feature = normalized_digit.reshape(1, -1).astype(np.float32)
@@ -102,12 +104,16 @@ class _MiniSudokuOcr:
         labels: list[int] = []
 
         font_paths = self._candidate_font_paths()
+        fonts: dict[tuple[str, int], ImageFont.FreeTypeFont] = {}
 
         for digit in range(1, BOARD_SIZE + 1):
             for font_path in font_paths:
                 for font_size in (24, 28, 32, 36):
                     try:
-                        font = ImageFont.truetype(font_path, font_size)
+                        key = (font_path, font_size)
+                        if key not in fonts:
+                            fonts[key] = ImageFont.truetype(font_path, font_size)
+                        font = fonts[key]
                     except OSError:
                         continue
 
@@ -190,18 +196,20 @@ class _MiniSudokuOcr:
         np_rng: np.random.Generator,
     ) -> np.ndarray:
         canvas = Image.new("L", (64, 64), 255)
-        draw = ImageDraw.Draw(canvas)
+        key = (digit, font)
+        mask = self._digit_masks.get(key)
+        if mask is None:
+            mask = Image.new("L", (64, 64), 0)
+            draw = ImageDraw.Draw(mask)
+            text = str(digit)
+            bbox = draw.textbbox((0, 0), text, font=font)
+            draw.text(((64 - (bbox[2] - bbox[0])) // 2, (64 - (bbox[3] - bbox[1])) // 2), text, fill=255, font=font)
+            self._digit_masks[key] = mask
 
-        text = str(digit)
-        bbox = draw.textbbox((0, 0), text, font=font)
-        text_width = bbox[2] - bbox[0]
-        text_height = bbox[3] - bbox[1]
-
-        x = (64 - text_width) // 2 + rng.randint(-5, 5)
-        y = (64 - text_height) // 2 + rng.randint(-5, 5)
+        x = rng.randint(-5, 5)
+        y = rng.randint(-5, 5)
         fill = rng.randint(72, 150)
-
-        draw.text((x, y), text, fill=fill, font=font)
+        canvas.paste(fill, (x, y, x + 64, y + 64), mask)
 
         image = np.array(canvas, dtype=np.uint8)
 

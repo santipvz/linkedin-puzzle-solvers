@@ -6,6 +6,10 @@ class EmptyImage(SolverError):
     pass
 
 
+class InvalidBoard(SolverError):
+    pass
+
+
 class ImageTooLarge(SolverError):
     pass
 

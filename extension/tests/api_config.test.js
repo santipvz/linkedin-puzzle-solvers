@@ -17,6 +17,7 @@ test("only the hosted URL opts into the online upload policy; saved local/custom
 async function popup(storage) {
   const elements = new Map();
   const context = vm.createContext({
+    URL,
     document: { querySelector() { return { dataset: {}, setAttribute() {} }; }, getElementById(id) {
       if (!elements.has(id)) elements.set(id, {
         value: "", checked: true, classList: { toggle() {} }, events: {},
@@ -32,6 +33,7 @@ async function popup(storage) {
   for (const file of ["api_config.js", "popup.js"])
     vm.runInContext(fs.readFileSync(path.join(__dirname, "..", file), "utf8"), context);
   await new Promise(setImmediate);
+  elements.context = context;
   return elements;
 }
 
@@ -87,4 +89,41 @@ test("an image still over the online limit is rejected before sending a request"
   const { context, calls } = transport(true);
   await assert.rejects(context.callSolverApi(globalThis.SolverApiConfig.onlineUrl, "sudoku", { size: 5 * 1024 * 1024 }), /too large/);
   assert.equal(calls.url, undefined);
+});
+
+
+test("new installations default to Online without changing saved local addresses", async () => {
+  assert.equal(globalThis.SolverApiConfig.defaultUrl, globalThis.SolverApiConfig.onlineUrl);
+  const ui = await popup({});
+  assert.equal(ui.get("apiMode").value, "online");
+  ui.get("apiMode").value = "local";
+  ui.get("apiMode").events.change();
+  assert.equal(ui.get("apiUrl").value, globalThis.SolverApiConfig.localUrl);
+});
+
+test("custom service permissions are scoped to one host and reject embedded credentials", () => {
+  const config = globalThis.SolverApiConfig;
+  assert.equal(config.permissionOrigin("https://solver.example:8443/api/"), "https://solver.example/*");
+  assert.equal(config.permissionOrigin("http://127.0.0.1:18000"), "http://127.0.0.1/*");
+  assert.throws(() => config.permissionOrigin("https://name:password@solver.example/"), /credentials/);
+  assert.throws(() => config.permissionOrigin("file:///tmp/solver"), /HTTP/);
+});
+
+
+test("a custom service asks for only its host and a declined request stops the action", async () => {
+  const ui = await popup({solver_api_url: "https://solver.example:8443/api"});
+  let requested;
+  ui.context.chrome.permissions = {
+    contains: (permissions, callback) => callback(false),
+    request: (permissions, callback) => { requested = JSON.parse(JSON.stringify(permissions)); callback(false); },
+  };
+  await assert.rejects(ui.context.ensureApiPermission(), /not granted/);
+  assert.deepEqual(requested, {origins: ["https://solver.example/*"]});
+});
+
+test("already allowed services do not trigger a permission prompt", async () => {
+  const ui = await popup({});
+  ui.context.chrome.permissions = {contains: (permissions, callback) => callback(true),
+    request: () => { throw new Error("Unexpected prompt"); }};
+  await ui.context.ensureApiPermission();
 });

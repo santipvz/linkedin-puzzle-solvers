@@ -27,5 +27,5 @@ python3 games/sudoku_solver/main.py games/sudoku_solver/examples/sample1.png --j
 
 ## Notes
 
-- OCR is trained on startup from local sans-serif fonts and then cached for the process lifetime.
+- OCR training reuses glyph masks from local sans-serif fonts. The training dataset is cached on disk by font fingerprint, and the model is cached for the process lifetime.
 - Input images can be full screenshots or already-cropped board captures.
