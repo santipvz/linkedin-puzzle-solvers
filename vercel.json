@@ -3,8 +3,11 @@
   "framework": "fastapi",
   "functions": {
     "app.py": {
-      "maxDuration": 120
+      "maxDuration": 120,
+      "includeFiles": "services/solver_api/app/public/**"
     }
   },
-  "regions": ["cdg1"]
+  "regions": [
+    "cdg1"
+  ]
 }
