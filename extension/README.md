@@ -94,6 +94,21 @@ Notes:
 
 Chrome requires the `<all_urls>` host permission for capture from an in-page button without a prior toolbar grant. The extension checks that the target is an active supported HTTPS LinkedIn game before capturing. Content scripts remain restricted to LinkedIn. Chrome may ask you to accept expanded site access after updating; reload the extension and refresh the game tab.
 
+## Input timing
+
+Preferences default to 45 ms between clicks and 40 ms between moves. Each game has a different input unit and extra waits, so equal preferences do not produce equal total application times. These waits run in the browser, independently of the API solve time.
+
+| Game | Input and additional waits |
+| --- | --- |
+| Queens | Two clicks per queen; click delay between them and move delay after the queen. |
+| Tango | One or two clicks per empty cell; polls acceptance every 50 ms, then applies click and move delays. |
+| Mini Sudoku | Selects a cell, waits at least 80 ms, types one number and checks acceptance; selection and value checks may poll every 50 ms. The configured move delay follows each accepted number. |
+| Zip | One start click with at least 80 ms activation time, then arrow keys separated by the move delay. |
+| Patches | One drag per rectangle, with at least 150 ms between rectangles so the game accepts consecutive drags. |
+| Wend | A drag per word, including 8 ms per interpolation step; polls acceptance every 50 ms, then waits at least 80 ms between words. |
+
+Mini Sudoku captures its outer board frame plus an 8 CSS-pixel margin. The inner grid remains the reference for locating cells when applying numbers.
+
 ## Troubleshooting
 
 - If solve fails, check API health:

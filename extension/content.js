@@ -480,14 +480,25 @@ function readWendPageBoard() {
 }
 
 function nativeBoardSelection(puzzleType) {
-  const rect = nativeGameBoard(puzzleType)?.getBoundingClientRect();
+  return boardElementSelection(nativeGameBoard(puzzleType));
+}
+
+function boardElementSelection(board) {
+  const rect = board?.getBoundingClientRect();
   if (!isRectVisible(rect) || Math.abs(rect.width / rect.height - 1) >= .1) return null;
   return normalizeSelection({ x: rect.left, y: rect.top, width: rect.width,
     height: rect.height, devicePixelRatio: window.devicePixelRatio });
 }
 
+function nativeCaptureBoard(puzzleType) {
+  const grid = nativeGameBoard(puzzleType);
+  // Sudoku paints its outer grid lines on the parent, outside .sudoku-grid.
+  // Keep nativeBoardSelection on the cells for applying, but capture the frame.
+  return puzzleType === "sudoku" ? grid?.closest?.(".sudoku-board") || grid : grid;
+}
+
 async function prepareBoardCapture(puzzleType) {
-  const board = nativeGameBoard(puzzleType);
+  const board = nativeCaptureBoard(puzzleType);
   if (board) {
     const rect = board.getBoundingClientRect();
     if (rect.top < 0 || rect.left < 0 || rect.bottom > window.innerHeight || rect.right > window.innerWidth) {
@@ -496,10 +507,19 @@ async function prepareBoardCapture(puzzleType) {
     let previous = null;
     for (let attempt = 0; attempt < 20; attempt += 1) {
       await sleep(50);
-      const current = nativeBoardSelection(puzzleType);
+      const current = boardElementSelection(nativeCaptureBoard(puzzleType));
       if (current && current.x >= 0 && current.y >= 0 && current.x + current.width <= window.innerWidth + 1 &&
           current.y + current.height <= window.innerHeight + 1 && previous &&
-          ["x", "y", "width", "height"].every(key => Math.abs(current[key] - previous[key]) < .5)) return current;
+          ["x", "y", "width", "height"].every(key => Math.abs(current[key] - previous[key]) < .5)) {
+        if (puzzleType !== "sudoku") return current;
+        // Preserve the frame through fractional browser scaling and rounding.
+        const x = Math.max(0, current.x - 8);
+        const y = Math.max(0, current.y - 8);
+        return normalizeSelection({x, y,
+          width: Math.min(window.innerWidth, current.x + current.width + 8) - x,
+          height: Math.min(window.innerHeight, current.y + current.height + 8) - y,
+          devicePixelRatio: current.devicePixelRatio});
+      }
       previous = current;
     }
     throw new Error("The whole board must be visible and stable before solving.");
