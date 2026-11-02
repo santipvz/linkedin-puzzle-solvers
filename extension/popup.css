@@ -83,4 +83,5 @@ summary:hover { background: #edf4fa; }
 .result-details summary { padding: 9px 10px; color: #365c7c; font-size: 11px; }
 .result { margin: 0; padding: 10px; max-height: 160px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 10px/1.6 ui-monospace, "SFMono-Regular", Consolas, monospace; border-top: 1px solid var(--line); }
 footer { padding: 9px 16px; border-top: 1px solid var(--line); color: #62758a; font-size: 9px; line-height: 1.5; }
+footer a { color: #0a66c2; text-underline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { *, *::before { animation: none !important; transition: none !important; } }

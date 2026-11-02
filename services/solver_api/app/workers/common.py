@@ -45,6 +45,10 @@ def ensure_sys_path(path: Path) -> None:
 
 
 def activate_game_import_context(game_root: Path) -> None:
+    # Keep OCR/template caches when this process continues solving the same game.
+    active_src = sys.modules.get("src")
+    if active_src is not None and str(game_root / "src") in getattr(active_src, "__path__", ()):
+        return
     for module_name in list(sys.modules):
         if module_name == "src" or module_name.startswith("src."):
             del sys.modules[module_name]

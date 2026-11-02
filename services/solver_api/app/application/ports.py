@@ -6,7 +6,7 @@ from ..domain.models import JsonDict
 
 
 class Solver(Protocol):
-    def solve(self, puzzle: str, image: bytes, filename: str | None) -> JsonDict: ...
+    def solve(self, puzzle: str, image: bytes, filename: str | None, *, parsed_board: JsonDict | None = None) -> JsonDict: ...
 
 
 class SolutionCache(Protocol):

@@ -34,11 +34,13 @@ def test_serverless_defaults_keep_uploads_below_platform_limit_and_disable_archi
     assert not settings.capture_enabled
     assert settings.max_upload_bytes == 4 * 1024 * 1024
     assert settings.max_concurrent_workers == 1
+    assert settings.worker_mode == "persistent"
     with patch.dict(os.environ, {}, clear=True):
         local = Settings.from_env()
     assert local.capture_enabled
     assert local.max_upload_bytes == 10 * 1024 * 1024
     assert local.max_concurrent_workers == 0
+    assert local.worker_mode == "subprocess"
 
 
 def test_fonts_work_without_system_fonts_and_hosted_ocr_is_deterministic(tmp_path):

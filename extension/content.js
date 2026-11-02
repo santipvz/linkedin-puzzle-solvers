@@ -448,6 +448,37 @@ function nativeGameBoard(puzzleType) {
   return selectors[puzzleType] ? document.querySelector(selectors[puzzleType]) : null;
 }
 
+function readWendPageBoard() {
+  const root = nativeGameBoard("wend");
+  if (!root) return null;
+  const cells = Array.from(root.querySelectorAll("[data-cell-idx]"));
+  const size = Math.sqrt(cells.length);
+  if (!Number.isInteger(size) || size < 5 || size > 8) return null;
+  const board = Array.from({ length: size }, () => Array(size).fill(null));
+  const seen = new Set();
+  for (const cell of cells) {
+    const rawIndex = cell.getAttribute("data-cell-idx");
+    if (!/^\d+$/.test(rawIndex || "")) return null;
+    const index = Number(rawIndex);
+    if (index >= cells.length || seen.has(index)) return null;
+    seen.add(index);
+    const letter = cell.textContent.trim();
+    if (cell.getAttribute("data-cell-is-hole") === "true") {
+      if (letter) return null;
+    } else {
+      if (!/^[A-Z]$/.test(letter)) return null;
+      board[Math.floor(index / size)][index % size] = letter;
+    }
+  }
+  const rows = Array.from(document.querySelectorAll('[data-testid^="wend-word-list-slots-"]'));
+  const lengths = rows.map(row => row.querySelectorAll('[data-testid^="wend-word-list-slot-"]').length);
+  const visible = board.flat().filter(letter => letter !== null).length;
+  if (!lengths.length || lengths.some(length => length < 3 || length > 16) ||
+      lengths.reduce((sum, length) => sum + length, 0) !== visible) return null;
+  const selection = nativeBoardSelection("wend");
+  return selection ? { board, lengths, selection } : null;
+}
+
 function nativeBoardSelection(puzzleType) {
   const rect = nativeGameBoard(puzzleType)?.getBoundingClientRect();
   if (!isRectVisible(rect) || Math.abs(rect.width / rect.height - 1) >= .1) return null;
@@ -2143,6 +2174,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "getBoardSelection") {
     sendResponse({ ok: true, selection: boardSelection });
+    return;
+  }
+
+  if (message.type === "readWendPageBoard") {
+    const parsedBoard = readWendPageBoard();
+    sendResponse({ ok: Boolean(parsedBoard), parsedBoard });
     return;
   }
 

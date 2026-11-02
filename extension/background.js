@@ -2,7 +2,7 @@ if (typeof importScripts === "function") {
   importScripts("puzzle_registry.js", "api_config.js");
 }
 
-const DEFAULT_API_BASE = globalThis.SolverApiConfig.localUrl;
+const DEFAULT_API_BASE = globalThis.SolverApiConfig.defaultUrl;
 const DEFAULT_INTER_CLICK_DELAY_MS = 45;
 const DEFAULT_INTER_MOVE_DELAY_MS = 40;
 const DEFAULT_TANGO_APPLY_MODE = "left-cycle";
@@ -591,16 +591,30 @@ function storageGet(keys) {
   });
 }
 
-function captureVisibleTab(windowId) {
+function captureVisibleTab(tab) {
+  let url;
+  try {
+    url = new URL(tab.url);
+  } catch {
+    return Promise.reject(new Error("Open a supported LinkedIn game before solving."));
+  }
+  if (url.protocol !== "https:" ||
+      !(url.hostname === "linkedin.com" || url.hostname.endsWith(".linkedin.com")) ||
+      !detectPuzzleTypeFromUrl(url.pathname)) {
+    return Promise.reject(new Error("Capture is only available on supported LinkedIn game pages."));
+  }
+  if (!tab.active) {
+    return Promise.reject(new Error("Keep the game tab active while solving."));
+  }
   return new Promise((resolve, reject) => {
-    chrome.tabs.captureVisibleTab(windowId, { format: "png" }, (dataUrl) => {
+    chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" }, (dataUrl) => {
       const error = chrome.runtime.lastError;
       if (error) {
         const message = String(error.message || "");
         if (message.includes("Either the '<all_urls>' or 'activeTab' permission is required")) {
           reject(
             new Error(
-              "Missing screenshot permission. Reload the extension and accept updated permissions."
+              "Capture access is unavailable. Reload the updated extension and allow its site access in Chrome's extension settings."
             )
           );
           return;
@@ -689,6 +703,9 @@ async function callSolverApi(apiBaseUrl, puzzleType, imageBlob, options = {}) {
   const formData = new FormData();
   const extension = imageBlob.type === "image/jpeg" ? "jpg" : "png";
   formData.append("image", imageBlob, `${safePuzzleType}_board.${extension}`);
+  if (safePuzzleType === "wend" && options.parsedBoard) {
+    formData.append("parsed_board", JSON.stringify(options.parsedBoard));
+  }
 
   const headers = {};
   if (options.captureBoardStart) {
@@ -721,7 +738,7 @@ async function callSolverApi(apiBaseUrl, puzzleType, imageBlob, options = {}) {
 async function solveBoardCore({ tabId, puzzleType, apiBaseUrl, selection }) {
   const normalizedSelection = normalizeSelection(selection);
   const tab = await tabsGet(tabId);
-  const screenshotDataUrl = await captureVisibleTab(tab.windowId);
+  const screenshotDataUrl = await captureVisibleTab(tab);
 
   let result;
   let refinedSelection;
@@ -736,11 +753,34 @@ async function solveBoardCore({ tabId, puzzleType, apiBaseUrl, selection }) {
     const tangoSelection = normalizeSelection(tangoSolved.selection) || normalizedSelection;
     refinedSelection = refineSelectionWithBoardBbox(tangoSelection, result) || tangoSelection;
   } else {
+    let parsedBoard = null;
+    if (puzzleType === "wend") {
+      const frameContext = await getGameFrameContext(tabId, puzzleType);
+      const frameId = Number.isInteger(frameContext?.gameFrameId) ? frameContext.gameFrameId : 0;
+      for (const targetFrameId of new Set([frameId, 0])) {
+        const response = await safeSendTabMessage(tabId, { type: "readWendPageBoard" }, { frameId: targetFrameId });
+        const page = response?.ok && response.parsedBoard;
+        let pageSelection = normalizeSelection(page?.selection);
+        if (pageSelection && targetFrameId !== 0) {
+          pageSelection = translateFrameSelectionToTab(pageSelection, frameContext.iframeRect, frameContext.frameViewport);
+        }
+        // Only use page data for the board inside the user's captured region.
+        if (pageSelection && normalizedSelection &&
+            Math.abs(pageSelection.x - normalizedSelection.x) < pageSelection.width * .15 &&
+            Math.abs(pageSelection.y - normalizedSelection.y) < pageSelection.height * .15 &&
+            Math.abs(pageSelection.width - normalizedSelection.width) < pageSelection.width * .15 &&
+            Math.abs(pageSelection.height - normalizedSelection.height) < pageSelection.height * .15) {
+          parsedBoard = { board: page.board, lengths: page.lengths };
+          break;
+        }
+      }
+    }
     const boardImage = await cropCapturedImage(screenshotDataUrl, normalizedSelection, {
       extraBottomRatio: puzzleType === "wend" ? 0.45 : 0,
     });
     result = await callSolverApi(apiBaseUrl, puzzleType, boardImage, {
       captureBoardStart: true,
+      parsedBoard,
     });
     refinedSelection = refineSelectionWithBoardBbox(normalizedSelection, result);
   }

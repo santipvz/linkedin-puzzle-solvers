@@ -17,9 +17,10 @@ Package from the tagged release on `main`, not from `develop`. From a clean chec
 ```bash
 git fetch origin --tags
 git switch --detach v<version>
-(cd extension && zip -r ../linkedin-puzzle-solver-extension.zip .)
+python3 scripts/package_extension.py --browser chrome
+python3 scripts/package_extension.py --browser firefox
 ```
 
-Attach the zip to the GitHub release. For a local installation, use `extension/` from `main` or the release tag, reload the extension, and refresh the game tabs.
+Attach the ZIPs generated in `dist/` to the GitHub release. For a local installation, use `extension/` from `main` or the release tag, reload the extension, and refresh the game tabs.
 
 Merging into `main` does not update installed extensions or publish to browser stores. Store publication and Firefox signing are separate manual steps; no workflow currently automates them. Deploy the API locally with [Docker Compose](../deploy/local/README.md), or promote the tagged release to the [Vercel online service](vercel.md). Keep the hosted API compatible with existing extension releases.

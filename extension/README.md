@@ -20,7 +20,7 @@ Install from the stable `main` branch or a release tag. `develop` contains work 
 - Main action: `Solve & apply`, with a separate `Preview solution` option.
 - `Board tools`: detect/select a board, apply the last solution, or clear the preview.
 - `Preferences`: custom service address, input timing and auto-close.
-- In-page quick solve widget (`Solve <Game>`).
+- In-page quick solve widget (`Solve <Game>`), available on the first visit without opening the toolbar popup.
 
 ## Step 1: Start the Solver API (Choose One)
 
@@ -87,10 +87,12 @@ Notes:
    - `https://www.linkedin.com/games/zip/`
    - `https://www.linkedin.com/games/patches/`
    - `https://www.linkedin.com/games/wend/`
-2. Click the extension icon.
+2. Click `Solve <Game>` directly on the page, or open the extension icon in Chrome’s toolbar for preview and preferences. No toolbar activation is required before using the page button.
 3. Choose `Online`, or `Local / custom` with a service address in `Preferences` (`8000` for Uvicorn or `18000` for Docker).
 4. The game is detected from the active tab; change `Your game` if needed. Keep the whole board visible, including Wend's answer slots.
 5. Click `Solve & apply` in the popup or `Solve <Game>` on the page. For a preview first, use `Preview solution`, then `Board tools → Apply last solution`.
+
+Chrome requires the `<all_urls>` host permission for capture from an in-page button without a prior toolbar grant. The extension checks that the target is an active supported HTTPS LinkedIn game before capturing. Content scripts remain restricted to LinkedIn. Chrome may ask you to accept expanded site access after updating; reload the extension and refresh the game tab.
 
 ## Troubleshooting
 
