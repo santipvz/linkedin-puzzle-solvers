@@ -1,0 +1,11 @@
+{
+  "board": [
+    ["W", "O", "F", "L", "O", "O"],
+    ["T", "R", "K", "I", "M", "R"],
+    ["O", null, null, "R", null, null],
+    ["O", null, null, "R", null, "O"],
+    ["F", "R", "O", "O", "R", "R"],
+    ["O", "A", "N", "A", "G", "E"]
+  ],
+  "lengths": [3, 5, 6, 7, 8]
+}

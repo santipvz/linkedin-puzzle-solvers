@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 from functools import lru_cache
 import io
+import json
 import sys
 from pathlib import Path
 
@@ -16,14 +17,14 @@ REPO_ROOT = repo_root_for_worker(__file__)
 ensure_sys_path(REPO_ROOT)
 
 from games.wend_solver.src.dictionary import load_wend_dictionary
-from games.wend_solver.src.image_parser import WendImageParser
 from games.wend_solver.src.wend_solver import WendSolver
+from services.solver_api.app.domain.wend_board import validate_wend_board
 
 
 OCR_ALTERNATE_SCORE_DELTA = 0.14
 MIN_OCR_CELL_CONFIDENCE = 0.35
 MIN_OCR_AVG_CONFIDENCE = 0.72
-PIPELINE_REVISION = 4
+PIPELINE_REVISION = 5
 
 
 @lru_cache(maxsize=1)
@@ -69,11 +70,18 @@ def _ocr_letter_options(parsed: JsonDict) -> dict[tuple[int, int], list[tuple[st
     return options
 
 
-def solve(image_path: str | Path) -> JsonDict:
+def solve(image_path: str | Path, *, parsed_board: JsonDict | None = None) -> JsonDict:
     captured_logs = io.StringIO()
     with contextlib.redirect_stdout(captured_logs):
         try:
-            parsed = WendImageParser().parse_image(image_path)
+            if parsed_board is None:
+                from games.wend_solver.src.image_parser import WendImageParser
+
+                parsed = WendImageParser().parse_image(image_path)
+            else:
+                parsed = validate_wend_board(parsed_board)
+                parsed["board_size"] = len(parsed["board"])
+                parsed["visible_cells"] = sum(letter is not None for row in parsed["board"] for letter in row)
         except Exception as exc:
             response: JsonDict = {
                 "puzzle": "wend",
@@ -123,7 +131,7 @@ def solve(image_path: str | Path) -> JsonDict:
             typed_lengths,
             max_solutions=10,
         )
-        if not solve_result:
+        if not solve_result and parsed_board is None:
             search_mode = "weighted_ocr_exact_cover"
             solve_result = solver.solve(
                 typed_board,
@@ -144,10 +152,12 @@ def solve(image_path: str | Path) -> JsonDict:
             and len(typed_board) == board_size
             and all(isinstance(row, list) and len(row) == board_size for row in typed_board)
             and visible_cells == sum(typed_lengths)
-            and len(ocr_cells) == visible_cells
             and all(value != "?" for row in typed_board for value in row if value is not None)
-            and min_ocr_confidence >= MIN_OCR_CELL_CONFIDENCE
-            and avg_ocr_confidence >= MIN_OCR_AVG_CONFIDENCE
+            and (parsed_board is not None or (
+                len(ocr_cells) == visible_cells
+                and min_ocr_confidence >= MIN_OCR_CELL_CONFIDENCE
+                and avg_ocr_confidence >= MIN_OCR_AVG_CONFIDENCE
+            ))
         )
         unique_solution = solve_result.solution_count_is_exact and len(solutions) == 1
         solved = bool(parse_reliable and unique_solution)
@@ -197,6 +207,10 @@ def solve(image_path: str | Path) -> JsonDict:
                 "solution_limit": solve_result.solution_limit,
                 "unique_solution": unique_solution,
                 "pipeline_revision": PIPELINE_REVISION,
+                "input_source": "page" if parsed_board is not None else "image",
+                # Diagnostic alternatives are never exposed as applicable words.
+                # Counts may be capped; solution_count_is_exact describes that.
+                "candidate_word_sets": [sorted(candidate.word for candidate in solution.words) for solution in solutions],
                 "solution_costs": [
                     float(sum(candidate.ocr_cost for candidate in solution.words))
                     for solution in solutions
@@ -228,4 +242,7 @@ def solve(image_path: str | Path) -> JsonDict:
 
 
 if __name__ == "__main__":
+    if len(sys.argv) == 3 and sys.argv[2] == "--parsed-board":
+        page_board = json.load(sys.stdin)
+        raise SystemExit(run_worker_cli(sys.argv[:2], lambda path: solve(path, parsed_board=page_board), Path(__file__).name, "Wend"))
     raise SystemExit(run_worker_cli(sys.argv, solve, Path(__file__).name, "Wend"))

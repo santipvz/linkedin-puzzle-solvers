@@ -12,6 +12,7 @@ from typing import Any
 
 from ..domain.errors import SolverBusy, SolverError, SolverTimeout, WorkerFailure
 from ..domain.models import JsonDict
+from .persistent import PersistentWorker
 
 
 ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
@@ -27,14 +28,22 @@ class WorkerSolver:
         self.timeout = timeout
         self._solve_functions: dict[str, Any] = {}
         self._slots = threading.BoundedSemaphore(max_concurrent_workers) if max_concurrent_workers else None
+        self._persistent = PersistentWorker(timeout) if mode == "persistent" else None
 
-    def solve(self, puzzle: str, image: bytes, filename: str | None) -> JsonDict:
+    def close(self) -> None:
+        if self._persistent is not None:
+            self._persistent.close()
+
+    def solve(self, puzzle: str, image: bytes, filename: str | None, *, parsed_board: JsonDict | None = None) -> JsonDict:
         if self._slots is not None and not self._slots.acquire(blocking=False):
             raise SolverBusy("Solver is busy. Try again in a moment.")
         try:
             path = self._write_temp_image(image, filename)
             try:
-                response = self._run_solver_worker(self.worker_filenames[puzzle], path)
+                if parsed_board is None:
+                    response = self._run_solver_worker(self.worker_filenames[puzzle], path)
+                else:
+                    response = self._run_solver_worker(self.worker_filenames[puzzle], path, parsed_board=parsed_board)
                 if not isinstance(response, dict):
                     raise WorkerFailure("Worker returned an invalid response.")
                 return response
@@ -57,14 +66,15 @@ class WorkerSolver:
 
         return Path(handle.name)
 
-    def _run_solver_worker_subprocess(self, worker_filename: str, image_path: Path) -> JsonDict:
+    def _run_solver_worker_subprocess(self, worker_filename: str, image_path: Path, *, parsed_board: JsonDict | None = None) -> JsonDict:
         worker_path = self.workers_directory / worker_filename
         if not worker_path.exists():
             raise WorkerFailure(f"Worker not found: {worker_filename}")
 
         try:
             result = subprocess.run(
-                [sys.executable, str(worker_path), str(image_path)],
+                [sys.executable, str(worker_path), str(image_path)] + (["--parsed-board"] if parsed_board is not None else []),
+                input=json.dumps(parsed_board) if parsed_board is not None else None,
                 capture_output=True,
                 text=True,
                 timeout=self.timeout,
@@ -125,7 +135,7 @@ class WorkerSolver:
         self._solve_functions[worker_filename] = solve_fn
         return solve_fn
 
-    def _run_solver_worker_inprocess(self, worker_filename: str, image_path: Path) -> JsonDict:
+    def _run_solver_worker_inprocess(self, worker_filename: str, image_path: Path, *, parsed_board: JsonDict | None = None) -> JsonDict:
         worker_path = self.workers_directory / worker_filename
         if not worker_path.exists():
             raise WorkerFailure(f"Worker not found: {worker_filename}")
@@ -135,7 +145,7 @@ class WorkerSolver:
         with _IMPORT_LOCK:
             try:
                 solve_fn = self._load_worker_solve_function(worker_filename)
-                response = solve_fn(image_path)
+                response = solve_fn(image_path) if parsed_board is None else solve_fn(image_path, parsed_board=parsed_board)
             except SolverError:
                 raise
             except Exception as exc:
@@ -146,7 +156,12 @@ class WorkerSolver:
 
         return response
 
-    def _run_solver_worker(self, worker_filename: str, image_path: Path) -> JsonDict:
+    def _run_solver_worker(self, worker_filename: str, image_path: Path, *, parsed_board: JsonDict | None = None) -> JsonDict:
+        if self._persistent is not None:
+            worker_path = self.workers_directory / worker_filename
+            if not worker_path.is_file():
+                raise WorkerFailure(f"Worker not found: {worker_filename}")
+            return self._persistent.solve(worker_path, image_path, parsed_board)
         if self.mode in {"subprocess", "process", "isolated"}:
-            return self._run_solver_worker_subprocess(worker_filename, image_path)
-        return self._run_solver_worker_inprocess(worker_filename, image_path)
+            return self._run_solver_worker_subprocess(worker_filename, image_path, parsed_board=parsed_board)
+        return self._run_solver_worker_inprocess(worker_filename, image_path, parsed_board=parsed_board)

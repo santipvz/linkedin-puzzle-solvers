@@ -259,15 +259,14 @@ class _PatchesClueOcr:
                     except OSError:
                         continue
                     for stroke_width in (0, 1, 2):
+                        # Rasterize once. The extra border preserves ink that
+                        # would enter the canvas when translating a large glyph.
+                        padded = self._render_digit_template(
+                            text=text, font=font, stroke_width=stroke_width, dx=0, dy=0, padding=1,
+                        )
                         for dx in (-1, 0, 1):
                             for dy in (-1, 0, 1):
-                                bitmap = self._render_digit_template(
-                                    text=text,
-                                    font=font,
-                                    stroke_width=stroke_width,
-                                    dx=dx,
-                                    dy=dy,
-                                )
+                                bitmap = padded[1 - dy:1 - dy + DIGIT_CANVAS_SIZE, 1 - dx:1 - dx + DIGIT_CANVAS_SIZE]
                                 features.append(bitmap.flatten().astype(np.float32))
                                 labels.append(int(digit))
 
@@ -314,8 +313,9 @@ class _PatchesClueOcr:
         stroke_width: int,
         dx: int,
         dy: int,
+        padding: int = 0,
     ) -> np.ndarray:
-        image = Image.new("L", (DIGIT_CANVAS_SIZE, DIGIT_CANVAS_SIZE), 0)
+        image = Image.new("L", (DIGIT_CANVAS_SIZE + 2 * padding, DIGIT_CANVAS_SIZE + 2 * padding), 0)
         draw = ImageDraw.Draw(image)
 
         left, top, right, bottom = draw.textbbox(
@@ -327,8 +327,8 @@ class _PatchesClueOcr:
         width = right - left
         height = bottom - top
 
-        x = ((DIGIT_CANVAS_SIZE - width) // 2) - left + dx
-        y = ((DIGIT_CANVAS_SIZE - height) // 2) - top + dy
+        x = ((DIGIT_CANVAS_SIZE - width) // 2) - left + dx + padding
+        y = ((DIGIT_CANVAS_SIZE - height) // 2) - top + dy + padding
 
         draw.text(
             (x, y),

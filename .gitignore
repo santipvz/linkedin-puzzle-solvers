@@ -18,3 +18,7 @@ errors/
 deploy/local/.env
 datasets/
 .env*
+
+/dist/
+!docs/chrome-web-store/assets/*.png
+!docs/chrome-web-store/assets/*.jpg

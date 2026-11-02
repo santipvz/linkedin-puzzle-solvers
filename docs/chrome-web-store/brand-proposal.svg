@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <title>Puzzle Solver — independent identity proposal</title>
+  <path d="M28 16H60V29C51 26 49 40 58 42H60V60H43C46 51 32 49 30 58V60H16V28A12 12 0 0 1 28 16Z" fill="#0a66c2"/>
+  <path d="M68 16H100A12 12 0 0 1 112 28V60H99C102 51 88 49 86 58V60H68V46C77 49 79 35 70 33H68Z" fill="#b4c4d3"/>
+  <path d="M16 68H29C26 77 40 79 42 70V68H60V85C51 82 49 96 58 98H60V112H28A12 12 0 0 1 16 100Z" fill="#18354d"/>
+  <path d="M68 68H85C82 77 96 79 98 70V68H112V100A12 12 0 0 1 100 112H68V102C77 105 79 91 70 89H68Z" fill="#0a66c2"/>
+</svg>

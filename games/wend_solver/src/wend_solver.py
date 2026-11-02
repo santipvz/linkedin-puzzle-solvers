@@ -279,6 +279,9 @@ class WendSolver:
         cached = self._tries.get(cache_key)
         if cached is not None:
             return cached
+        # A persistent worker must retain at most one length-specific trie.
+        # Release the old tree before allocating its replacement.
+        self._tries.clear()
         trie: dict[str, object] = {}
         for word in self.dictionary:
             if len(word) not in target_lengths:

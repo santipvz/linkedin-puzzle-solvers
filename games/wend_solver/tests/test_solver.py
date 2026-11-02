@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -21,6 +22,20 @@ from services.solver_api.app.workers.solve_wend_worker import solve as solve_wen
 
 
 class WendSolverTests(unittest.TestCase):
+    def test_repeated_length_sets_reuse_the_trie_without_retaining_older_sets(self) -> None:
+        dictionary = ["CAT", "CATS", "CATCH", "CATCHES", "CATCHERS"]
+        solver = WendSolver(dictionary)
+        board = [list("CATCHERS")]
+        for mask in range(1, 41):
+            lengths = [length for bit, length in enumerate(range(3, 9)) if mask & (1 << bit)]
+            expected = WendSolver(dictionary).find_candidates(board, lengths)
+            self.assertEqual(expected, solver.find_candidates(board, lengths))
+            # Growing combinations must not grow retained dictionary trees.
+            self.assertEqual(1, len(solver._tries))
+            cached = next(iter(solver._tries.values()))
+            self.assertEqual(expected, solver.find_candidates(board, reversed(lengths)))
+            self.assertIs(cached, next(iter(solver._tries.values())))
+
     def test_solves_linkedin_example_board(self) -> None:
         board = [
             ["E", "R", "O", "R", "E", "T"],
@@ -102,6 +117,28 @@ class WendSolverTests(unittest.TestCase):
 
 
 class WendParserTests(unittest.TestCase):
+    def test_page_board_solves_october_29_without_ocr(self) -> None:
+        payload = json.loads((Path(__file__).parent / "fixtures/linkedin-2026-10-29.json").read_text())
+        with patch.object(WendImageParser, "parse_image", side_effect=AssertionError("Must bypass OCR")):
+            result = solve_wend_worker("unused.png", parsed_board=payload)
+        self.assertTrue(result["solved"], result.get("error"))
+        self.assertEqual("page", result["details"]["input_source"])
+        self.assertTrue(result["details"]["unique_solution"])
+        self.assertEqual({"OAR", "FLOOR", "MIRROR", "OREGANO", "FOOTWORK"}, {entry["word"] for entry in result["words"]})
+        self.assertIsNone(result["details"]["ocr"])
+
+    def test_page_input_keeps_rejecting_real_dictionary_ambiguity(self) -> None:
+        board = [[None] * 5 for _ in range(5)]
+        board[0][:3] = list("CAT")
+        board[1][:3] = list("DOG")
+        payload = {"board": board, "lengths": [3, 3]}
+        with patch.object(wend_worker, "_get_solver", return_value=WendSolver(["CAT", "TAC", "DOG"])):
+            result = solve_wend_worker("unused.png", parsed_board=payload)
+        self.assertFalse(result["solved"])
+        self.assertEqual(2, result["details"]["solution_count"])
+        self.assertEqual([], result["words"])
+        self.assertEqual(2, len(result["details"]["candidate_word_sets"]))
+
     def test_worker_solves_recent_captures_without_inventing_ocr_ambiguity(self) -> None:
         captures = {
             "sample3.png": {"TIE", "PEER", "UNIFORM", "ALIKE"},

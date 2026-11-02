@@ -105,30 +105,26 @@ class _ZipClueOcr:
         return templates
 
     def _build_template_bank(self, templates: dict[int, list[np.ndarray]]) -> _ZipTemplateBank:
-        labels: list[int] = []
-        counts: list[int] = []
+        labels: list[np.ndarray] = []
+        counts: list[np.ndarray] = []
         packed_templates: list[np.ndarray] = []
 
         for value, rendered_templates in templates.items():
-            for template in rendered_templates:
-                padded = cv2.copyMakeBorder(template, 2, 2, 2, 2, cv2.BORDER_CONSTANT, value=0)
-                for offset_y in range(5):
-                    for offset_x in range(5):
-                        shifted = padded[
-                            offset_y : offset_y + OCR_CANVAS_SIZE,
-                            offset_x : offset_x + OCR_CANVAS_SIZE,
-                        ] > 0
-                        pixel_count = int(np.count_nonzero(shifted))
-                        if pixel_count <= 0:
-                            continue
+            # Keep the original template / y / x ordering, but prepare all 25
+            # translations together instead of 76,800 individual Python calls.
+            padded = np.pad(np.asarray(rendered_templates) > 0, ((0, 0), (2, 2), (2, 2)))
+            shifted = np.lib.stride_tricks.sliding_window_view(
+                padded, (OCR_CANVAS_SIZE, OCR_CANVAS_SIZE), axis=(1, 2),
+            ).reshape(-1, OCR_CANVAS_SIZE * OCR_CANVAS_SIZE)
+            pixel_counts = np.count_nonzero(shifted, axis=1)
+            valid = pixel_counts > 0
+            labels.append(np.full(np.count_nonzero(valid), value, dtype=np.int16))
+            counts.append(pixel_counts[valid].astype(np.float32))
+            packed_templates.append(np.packbits(shifted[valid], axis=1))
 
-                        labels.append(int(value))
-                        counts.append(pixel_count)
-                        packed_templates.append(np.packbits(shifted.reshape(-1)))
-
-        label_array = np.asarray(labels, dtype=np.int16)
-        count_array = np.asarray(counts, dtype=np.float32)
-        packed_array = np.vstack(packed_templates).astype(np.uint8)
+        label_array = np.concatenate(labels)
+        count_array = np.concatenate(counts)
+        packed_array = np.vstack(packed_templates)
         value_ends = np.searchsorted(label_array, np.arange(OCR_MAX_VALUE + 1), side="right").astype(np.int32)
         popcount_lookup = np.asarray([int(value).bit_count() for value in range(256)], dtype=np.uint8)
 

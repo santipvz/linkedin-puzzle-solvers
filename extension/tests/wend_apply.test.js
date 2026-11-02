@@ -29,3 +29,68 @@ test('Wend does not report a dispatched but rejected word path as applied',async
 test('Wend stops before overwriting part of an already accepted word',async()=>{
   const g=game({partial:true});assert.equal((await g.apply()).ok,false);assert.equal(g.drags,0);
 });
+
+function pageGame() {
+  const board = [Array.from('WOFLOO'), Array.from('TRKIMR'), ['O',null,null,'R',null,null],
+    ['O',null,null,'R',null,'O'], Array.from('FROORR'), Array.from('OANAGE')];
+  const cells = board.flat().map((letter, index) => ({textContent:letter || '',
+    getAttribute:name=>name==='data-cell-idx'?String(index):name==='data-cell-is-hole'&&!letter?'true':null}));
+  const lengths=[3,5,6,7,8];
+  const rows=lengths.map(length=>({querySelectorAll:()=>Array(length).fill({})}));
+  const root={querySelectorAll:()=>cells,
+    getBoundingClientRect:()=>({left:20,top:40,width:300,height:300,right:320,bottom:340})};
+  const context=vm.createContext({document:{querySelector:()=>root,querySelectorAll:()=>rows},
+    window:{self:{},top:{},innerWidth:400,innerHeight:400,devicePixelRatio:1},
+    chrome:{runtime:{onMessage:{addListener(){}}}}});
+  for(const file of ['puzzle_registry.js','content.js']) vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),context);
+  return {context,cells,rows,board};
+}
+
+test('Wend reads all letters and holes by index and counts answer slots without OCR',()=>{
+  const {context,cells,board}=pageGame();cells.reverse();
+  const read=JSON.parse(JSON.stringify(context.readWendPageBoard()));
+  assert.deepEqual(read.board,board);assert.deepEqual(read.lengths,[3,5,6,7,8]);
+  assert.equal(read.selection.width,300);
+});
+
+test('Wend falls back to the image for incomplete, duplicate or unreadable page cells',()=>{
+  for(const corrupt of [
+    game=>game.cells.pop(),
+    game=>game.cells[1].getAttribute=name=>name==='data-cell-idx'?'0':null,
+    game=>game.cells[0].textContent='?',
+    game=>game.cells[0].textContent='',
+    game=>game.rows.pop(),
+  ]) {
+    const game=pageGame();corrupt(game);assert.equal(game.context.readWendPageBoard(),null);
+  }
+});
+
+test('Wend only sends page data when its live geometry matches the captured board',async()=>{
+  const context=vm.createContext({chrome:{runtime:{onMessage:{addListener(){}}}}});
+  for(const file of ['puzzle_registry.js','api_config.js','background.js']) vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),context);
+  const selection={x:20,y:40,width:300,height:300,devicePixelRatio:1};
+  context.tabsGet=async()=>({windowId:1});context.captureVisibleTab=async()=>'';
+  context.cropCapturedImage=async()=>({});context.getGameFrameContext=async()=>({gameFrameId:0});
+  context.safeSendTabMessage=async()=>({ok:true,parsedBoard:{board:[],lengths:[],selection}});
+  let options;
+  context.callSolverApi=async(_base,_puzzle,_image,value)=>{options=value;return {};};
+  await context.solveBoardCore({tabId:1,puzzleType:'wend',apiBaseUrl:'http://localhost',selection});
+  assert.ok(options.parsedBoard);
+  await context.solveBoardCore({tabId:1,puzzleType:'wend',apiBaseUrl:'http://localhost',selection:{...selection,x:400}});
+  assert.equal(options.parsedBoard,null);
+});
+
+test('the API upload includes page data only for Wend and preserves the image capture',async()=>{
+  let request;
+  const context=vm.createContext({Blob,FormData,chrome:{runtime:{onMessage:{addListener(){}}}},
+    fetch:async(url,options)=>{request={url,...options};return {ok:true,text:async()=>'{"solved":true}'};}});
+  for(const file of ['puzzle_registry.js','api_config.js','background.js']) vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),context);
+  const board={board:[['A']],lengths:[1]}, image=new Blob(['image'],{type:'image/png'});
+  await context.callSolverApi('http://127.0.0.1:18000','wend',image,{parsedBoard:board,captureBoardStart:true});
+  assert.equal(request.url,'http://127.0.0.1:18000/solve/wend');
+  assert.deepEqual(JSON.parse(request.body.get('parsed_board')),board);
+  assert.equal(await request.body.get('image').text(),'image');
+  assert.equal(request.headers['X-Board-Capture'],'start');
+  await context.callSolverApi('http://127.0.0.1:18000','zip',image,{parsedBoard:board});
+  assert.equal(request.body.has('parsed_board'),false);
+});

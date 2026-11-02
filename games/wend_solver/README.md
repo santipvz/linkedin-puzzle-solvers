@@ -11,6 +11,8 @@ Wend combines computer vision, letter OCR, dictionary-constrained path generatio
 
 ## Pipeline
 
+When the extension can read every indexed page cell, explicit hole marker and answer-slot row, it sends validated `parsed_board` data alongside the capture. The worker then searches the exact visible letters without initializing OCR. Invalid or incomplete page reads fall back to the image pipeline below. The page board must match the captured board's geometry, and the API checks size, alphabet, lengths and visible-cell totals before using it.
+
 1. Detect and safely crop the board using shared core geometry.
 2. Read answer lengths from the slot rows below the board.
 3. Select the board size using visible-cell count and grid alignment.
@@ -22,7 +24,9 @@ The parser owns Wend-specific thresholds, blocked-cell detection, answer-slot pa
 
 ## Reliability
 
-The worker auto-applies only when the board structure is consistent and the solution is uniquely enumerated. Responses expose OCR corrections, retained solution costs, exact-count status, and pipeline revision under `details`.
+The worker auto-applies only when the board structure is consistent and the solution is uniquely enumerated. Responses expose `input_source` (`page` or `image`), diagnostic `candidate_word_sets`, OCR corrections, retained solution costs, exact-count status, and pipeline revision under `details`. Page input still rejects genuine dictionary/path ambiguity; it does not choose an arbitrary cover.
+
+`tests/fixtures/linkedin-2026-10-29.json` records the public letters and lengths from Wend 143. Those letters have one cover: OAR, FLOOR, MIRROR, OREGANO and FOOTWORK.
 
 The Docker image includes DejaVu, Liberation, and Noto Sans fonts for letter templates. Missing Noto templates can confuse letters such as R/P and introduce spurious alternatives. The template cache is keyed by the available font files and their metadata so font changes rebuild the OCR templates.
 

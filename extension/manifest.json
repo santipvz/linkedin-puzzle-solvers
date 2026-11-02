@@ -2,18 +2,28 @@
   "manifest_version": 3,
   "name": "LinkedIn Puzzle Solver Assistant",
   "version": "0.3.0",
-  "description": "Capture puzzle boards, solve through a local API, and overlay/apply solutions.",
-  "permissions": ["activeTab", "scripting", "storage", "tabs", "webNavigation"],
+  "description": "Preview and apply solutions for six LinkedIn games using the online solver or your own local API.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "webNavigation"
+  ],
   "host_permissions": [
+    "<all_urls>",
     "http://127.0.0.1/*",
     "http://localhost/*",
     "https://www.linkedin.com/*",
     "https://*.linkedin.com/*",
-    "<all_urls>"
+    "https://linkedin-puzzle-solvers.vercel.app/*"
   ],
   "background": {
     "service_worker": "background.js",
-    "scripts": ["puzzle_registry.js", "api_config.js", "background.js"]
+    "scripts": [
+      "puzzle_registry.js",
+      "api_config.js",
+      "background.js"
+    ]
   },
   "action": {
     "default_title": "Puzzle Solver",
@@ -21,14 +31,28 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["assets/logo.png", "assets/games/*.svg", "assets/pieces/*.svg"],
-      "matches": ["https://linkedin.com/*", "https://*.linkedin.com/*"]
+      "resources": [
+        "assets/logo.png",
+        "assets/games/*.svg",
+        "assets/pieces/*.svg"
+      ],
+      "matches": [
+        "https://linkedin.com/*",
+        "https://*.linkedin.com/*"
+      ]
     }
   ],
   "content_scripts": [
     {
-      "matches": ["https://linkedin.com/*", "https://*.linkedin.com/*"],
-      "js": ["puzzle_registry.js", "wend_paths.js", "content.js"],
+      "matches": [
+        "https://linkedin.com/*",
+        "https://*.linkedin.com/*"
+      ],
+      "js": [
+        "puzzle_registry.js",
+        "wend_paths.js",
+        "content.js"
+      ],
       "run_at": "document_idle",
       "all_frames": true
     }
@@ -38,5 +62,9 @@
       "id": "linkedin-puzzle-solver@example.com",
       "strict_min_version": "128.0"
     }
-  }
+  },
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ]
 }
