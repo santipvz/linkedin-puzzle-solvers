@@ -22,6 +22,20 @@ from services.solver_api.app.workers.solve_wend_worker import solve as solve_wen
 
 
 class WendSolverTests(unittest.TestCase):
+    def test_repeated_length_sets_reuse_the_trie_without_retaining_older_sets(self) -> None:
+        dictionary = ["CAT", "CATS", "CATCH", "CATCHES", "CATCHERS"]
+        solver = WendSolver(dictionary)
+        board = [list("CATCHERS")]
+        for mask in range(1, 41):
+            lengths = [length for bit, length in enumerate(range(3, 9)) if mask & (1 << bit)]
+            expected = WendSolver(dictionary).find_candidates(board, lengths)
+            self.assertEqual(expected, solver.find_candidates(board, lengths))
+            # Growing combinations must not grow retained dictionary trees.
+            self.assertEqual(1, len(solver._tries))
+            cached = next(iter(solver._tries.values()))
+            self.assertEqual(expected, solver.find_candidates(board, reversed(lengths)))
+            self.assertIs(cached, next(iter(solver._tries.values())))
+
     def test_solves_linkedin_example_board(self) -> None:
         board = [
             ["E", "R", "O", "R", "E", "T"],

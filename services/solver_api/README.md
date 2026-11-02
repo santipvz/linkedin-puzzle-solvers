@@ -72,6 +72,7 @@ If running in Docker mode, change port `8000` -> `18000`.
 
 - Local workers run in fresh isolated subprocesses by default with a hard timeout. Hosted workers default to `SOLVER_WORKER_MODE=persistent`: one reusable isolated child retains imports and OCR caches between solves of the same game. Changing games replaces the child to bound memory; timeout, crash or worker failure kills it, and the next request starts a new one. API shutdown closes it. Set `SOLVER_WORKER_MODE=subprocess` to restore fresh processes.
 - Set `SOLVER_WORKER_MODE=inprocess` only for trusted development workloads; legacy import contexts serialize that mode.
+- Wend retains only the most recent answer-length trie per solver, releasing it before building a different one so persistent workers cannot accumulate dictionary trees.
 - Solve responses are cached in memory by puzzle revision and image hash.
 - Dataset capture is enabled for start-board requests by default.
 - Default capture path: `datasets/<puzzle>/<YYYY-MM-DD>/`.
