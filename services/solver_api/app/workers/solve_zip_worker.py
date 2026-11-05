@@ -92,7 +92,7 @@ def _build_clue_options(clue_entries: list[_ZipClueEntry]) -> list[list[tuple[in
                 continue
             seen.add(value)
             ranked.append((value, float(candidate.get("confidence") or 0.0), rank))
-            if len(ranked) >= 4:
+            if len(ranked) >= 6:
                 break
 
         options_per_cell.append(ranked)
@@ -294,7 +294,10 @@ def _recover_duplicate_clues(
             if best_payload is not None:
                 return best_payload[1], best_payload[2]
 
-    if has_duplicate:
+    # The exhaustive fallback is useful for small, ambiguous boards. On a
+    # full board its Cartesian product grows too quickly; the constrained
+    # contiguous assignment above already searches those alternatives.
+    if has_duplicate and len(clue_entries) <= 6:
         for combo in itertools.product(*options_per_cell):
             consider_assignment(list(combo))
 
