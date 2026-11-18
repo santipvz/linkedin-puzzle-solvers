@@ -697,13 +697,15 @@ async function callSolverApi(apiBaseUrl, puzzleType, imageBlob, options = {}) {
       ? "patches"
       : puzzleType === "wend"
       ? "wend"
+      : puzzleType === "sumbreak"
+      ? "sumbreak"
       : "queens";
   const endpoint = `${normalizeApiBase(apiBaseUrl)}/solve/${safePuzzleType}`;
 
   const formData = new FormData();
   const extension = imageBlob.type === "image/jpeg" ? "jpg" : "png";
   formData.append("image", imageBlob, `${safePuzzleType}_board.${extension}`);
-  if (safePuzzleType === "wend" && options.parsedBoard) {
+  if ((safePuzzleType === "wend" || safePuzzleType === "sumbreak") && options.parsedBoard) {
     formData.append("parsed_board", JSON.stringify(options.parsedBoard));
   }
 
@@ -754,11 +756,12 @@ async function solveBoardCore({ tabId, puzzleType, apiBaseUrl, selection }) {
     refinedSelection = refineSelectionWithBoardBbox(tangoSelection, result) || tangoSelection;
   } else {
     let parsedBoard = null;
-    if (puzzleType === "wend") {
+    if (puzzleType === "wend" || puzzleType === "sumbreak") {
       const frameContext = await getGameFrameContext(tabId, puzzleType);
       const frameId = Number.isInteger(frameContext?.gameFrameId) ? frameContext.gameFrameId : 0;
+      const messageType = puzzleType === "wend" ? "readWendPageBoard" : "readSumbreakPageBoard";
       for (const targetFrameId of new Set([frameId, 0])) {
-        const response = await safeSendTabMessage(tabId, { type: "readWendPageBoard" }, { frameId: targetFrameId });
+        const response = await safeSendTabMessage(tabId, { type: messageType }, { frameId: targetFrameId });
         const page = response?.ok && response.parsedBoard;
         let pageSelection = normalizeSelection(page?.selection);
         if (pageSelection && targetFrameId !== 0) {
@@ -770,7 +773,7 @@ async function solveBoardCore({ tabId, puzzleType, apiBaseUrl, selection }) {
             Math.abs(pageSelection.y - normalizedSelection.y) < pageSelection.height * .15 &&
             Math.abs(pageSelection.width - normalizedSelection.width) < pageSelection.width * .15 &&
             Math.abs(pageSelection.height - normalizedSelection.height) < pageSelection.height * .15) {
-          parsedBoard = { board: page.board, lengths: page.lengths };
+          parsedBoard = puzzleType === "wend" ? { board: page.board, lengths: page.lengths } : { board: page.board };
           break;
         }
       }
@@ -799,6 +802,8 @@ async function solveBoardCore({ tabId, puzzleType, apiBaseUrl, selection }) {
       ? "patches"
       : puzzleType === "wend"
       ? "wend"
+      : puzzleType === "sumbreak"
+      ? "sumbreak"
       : "queens",
   };
 }
@@ -1424,7 +1429,7 @@ async function quickSolveFromPage(message, sender) {
   const puzzleType = resolvePuzzleTypeForTab(message.puzzleType, tab.url);
 
   if (!puzzleType) {
-    throw new Error("Open LinkedIn Queens, Tango, Mini Sudoku, Zip, Patches, or Wend page first.");
+    throw new Error("Open LinkedIn Queens, Tango, Mini Sudoku, Zip, Patches, Wend, or Sumbreak page first.");
   }
 
   const quickSettings = await loadQuickSettings();
@@ -1594,7 +1599,7 @@ async function autoDetectBoardSelection(message, sender) {
   const tab = await tabsGet(tabId);
   const puzzleType = resolvePuzzleTypeForTab(message.puzzleType, tab.url);
   if (!puzzleType) {
-    throw new Error("Open LinkedIn Queens, Tango, Mini Sudoku, Zip, Patches, or Wend page first.");
+    throw new Error("Open LinkedIn Queens, Tango, Mini Sudoku, Zip, Patches, Wend, or Sumbreak page first.");
   }
 
   const frameContext = await getGameFrameContext(tabId, puzzleType);
@@ -1653,7 +1658,7 @@ async function applySolvedPayload(message, sender) {
   const tab = await tabsGet(tabId);
   const puzzleType = resolvePuzzleTypeForTab(message.puzzleType, tab.url);
   if (!puzzleType) {
-    throw new Error("Open LinkedIn Queens, Tango, Mini Sudoku, Zip, Patches, or Wend page first.");
+    throw new Error("Open LinkedIn Queens, Tango, Mini Sudoku, Zip, Patches, Wend, or Sumbreak page first.");
   }
 
   if (!message || !message.result || typeof message.result !== "object") {

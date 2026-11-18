@@ -8,7 +8,7 @@ Install from the stable `main` branch or a release tag. `develop` contains work 
 
 - Manual board selection on the active tab.
 - Auto board detection (top page + iframe-aware).
-- Solve via API endpoints for Queens, Tango, Mini Sudoku, Zip, Patches, and Wend.
+- Solve via API endpoints for Queens, Tango, Mini Sudoku, Zip, Patches, Wend, and Sumbreak.
 - Overlay preview for detected moves.
 - Auto-apply support:
   - Queens: click-based input.
@@ -17,6 +17,7 @@ Install from the stable `main` branch or a release tag. `develop` contains work 
   - Zip: start click + arrow keys.
   - Patches: rectangle drag from corner to corner.
   - Wend: progressive drag through each solved word path.
+  - Sumbreak: tap the source tile, then the equal neighbour it merges into; each merge is verified before the next.
 - Main action: `Solve & apply`, with a separate `Preview solution` option.
 - `Board tools`: detect/select a board, apply the last solution, or clear the preview.
 - `Preferences`: custom service address, input timing and auto-close.
@@ -87,6 +88,7 @@ Notes:
    - `https://www.linkedin.com/games/zip/`
    - `https://www.linkedin.com/games/patches/`
    - `https://www.linkedin.com/games/wend/`
+   - `https://www.linkedin.com/games/sumbreak/`
 2. Click `Solve <Game>` directly on the page, or open the extension icon in Chrome’s toolbar for preview and preferences. No toolbar activation is required before using the page button.
 3. Choose `Online`, or `Local / custom` with a service address in `Preferences` (`8000` for Uvicorn or `18000` for Docker).
 4. The game is detected from the active tab; change `Your game` if needed. Keep the whole board visible, including Wend's answer slots.
@@ -106,6 +108,7 @@ Preferences default to 45 ms between clicks and 40 ms between moves. Each game h
 | Zip | One start click with at least 80 ms activation time, then arrow keys separated by the move delay. |
 | Patches | One drag per rectangle, with at least 150 ms between rectangles so the game accepts consecutive drags. |
 | Wend | A drag per word, including 8 ms per interpolation step; polls acceptance every 50 ms, then waits at least 80 ms between words. |
+| Sumbreak | Two taps per merge (at least 40 ms apart); polls the board every 50 ms until the merge shows, then waits at least 60 ms. |
 
 Mini Sudoku captures its outer board frame plus an 8 CSS-pixel margin. The inner grid remains the reference for locating cells when applying numbers.
 

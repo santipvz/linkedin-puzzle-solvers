@@ -32,6 +32,7 @@
   <img alt="Zip" src="https://img.shields.io/badge/Zip-F97316?style=for-the-badge">
   <img alt="Patches" src="https://img.shields.io/badge/Patches-E11D48?style=for-the-badge">
   <img alt="Wend" src="https://img.shields.io/badge/Wend-14B8A6?style=for-the-badge">
+  <img alt="Sumbreak" src="https://img.shields.io/badge/Sumbreak-8B5CF6?style=for-the-badge">
 </p>
 
 <p align="center">

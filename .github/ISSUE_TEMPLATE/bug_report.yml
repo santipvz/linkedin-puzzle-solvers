@@ -7,7 +7,7 @@ body:
     id: puzzle
     attributes:
       label: Puzzle or component
-      options: [Queens, Tango, Mini Sudoku, Zip, Patches, Wend, Extension, API, CI or setup]
+      options: [Queens, Tango, Mini Sudoku, Zip, Patches, Wend, Sumbreak, Extension, API, CI or setup]
     validations:
       required: true
   - type: textarea

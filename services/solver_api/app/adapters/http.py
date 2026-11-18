@@ -46,7 +46,7 @@ def create_http_app(
         lifespan=lifespan,
         title="LinkedIn Puzzle Solver API",
         version="0.3.2",
-        description="Local API wrapper for Queens, Tango, Mini Sudoku, Zip, Patches, and Wend image solvers.",
+        description="Local API wrapper for Queens, Tango, Mini Sudoku, Zip, Patches, Wend, and Sumbreak solvers.",
     )
     app.add_middleware(
         CORSMiddleware,

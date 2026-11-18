@@ -91,7 +91,7 @@ function removeQuickSolveWidget() {
 async function onQuickSolveClick() {
   const puzzleType = detectPuzzleTypeFromPage();
   if (!puzzleType) {
-    setQuickSolveStatus("Open Queens, Tango, Mini Sudoku, Zip, Patches, or Wend page.", true);
+    setQuickSolveStatus("Open Queens, Tango, Mini Sudoku, Zip, Patches, Wend, or Sumbreak page.", true);
     return;
   }
 
@@ -444,6 +444,7 @@ function nativeGameBoard(puzzleType) {
     patches: '[data-testid="patches-game-board"] [data-testid="interactive-grid"]',
     sudoku: ".sudoku-grid",
     wend: '[data-testid="wend-game-board"]',
+    sumbreak: '[data-numo-design][data-numo-rows][data-numo-columns]',
   };
   return selectors[puzzleType] ? document.querySelector(selectors[puzzleType]) : null;
 }
@@ -479,13 +480,62 @@ function readWendPageBoard() {
   return selection ? { board, lengths, selection } : null;
 }
 
-function nativeBoardSelection(puzzleType) {
-  return boardElementSelection(nativeGameBoard(puzzleType));
+// Sumbreak boards may be rectangular; every other native board is square.
+function boardMustBeSquare(puzzleType) {
+  return puzzleType !== "sumbreak";
 }
 
-function boardElementSelection(board) {
+function sumbreakBoardDimensions(root) {
+  const rows = Number(root?.getAttribute("data-numo-rows"));
+  const columns = Number(root?.getAttribute("data-numo-columns"));
+  return Number.isInteger(rows) && Number.isInteger(columns) && rows >= 2 && rows <= 8 && columns >= 2 && columns <= 8
+    ? { rows, columns }
+    : null;
+}
+
+function sumbreakCellValue(root, index) {
+  const cell = root.querySelector(`[data-numo-index="${index}"]`);
+  if (!cell) return undefined;
+  const tile = cell.querySelector('button[data-numo-kind="number"]');
+  if (!tile) return null;
+  // The SVG label holds the digits; the aria-label is localized but also carries them.
+  const label = root.querySelector(`[data-numo-svg-cell="${index}"] [data-numo-label]`)?.textContent?.trim();
+  const text = /^\d+$/.test(label || "") ? label : (tile.getAttribute("aria-label") || "").match(/\d+/)?.[0];
+  const value = Number(text);
+  return Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+function readSumbreakBoardValues(root) {
+  const size = sumbreakBoardDimensions(root);
+  if (!size) return null;
+  const board = [];
+  for (let row = 0; row < size.rows; row += 1) {
+    const values = [];
+    for (let col = 0; col < size.columns; col += 1) {
+      const value = sumbreakCellValue(root, row * size.columns + col);
+      if (value === undefined) return null;
+      values.push(value);
+    }
+    board.push(values);
+  }
+  return board;
+}
+
+function readSumbreakPageBoard() {
+  const root = nativeGameBoard("sumbreak");
+  const board = root && readSumbreakBoardValues(root);
+  if (!board || !board.flat().some(value => value !== null)) return null;
+  const selection = nativeBoardSelection("sumbreak");
+  return selection ? { board, selection } : null;
+}
+
+function nativeBoardSelection(puzzleType) {
+  return boardElementSelection(nativeGameBoard(puzzleType), boardMustBeSquare(puzzleType));
+}
+
+function boardElementSelection(board, requireSquare = true) {
   const rect = board?.getBoundingClientRect();
-  if (!isRectVisible(rect) || Math.abs(rect.width / rect.height - 1) >= .1) return null;
+  if (!isRectVisible(rect) || (requireSquare && Math.abs(rect.width / rect.height - 1) >= .1)) return null;
   return normalizeSelection({ x: rect.left, y: rect.top, width: rect.width,
     height: rect.height, devicePixelRatio: window.devicePixelRatio });
 }
@@ -507,7 +557,7 @@ async function prepareBoardCapture(puzzleType) {
     let previous = null;
     for (let attempt = 0; attempt < 20; attempt += 1) {
       await sleep(50);
-      const current = boardElementSelection(nativeCaptureBoard(puzzleType));
+      const current = boardElementSelection(nativeCaptureBoard(puzzleType), boardMustBeSquare(puzzleType));
       if (current && current.x >= 0 && current.y >= 0 && current.x + current.width <= window.innerWidth + 1 &&
           current.y + current.height <= window.innerHeight + 1 && previous &&
           ["x", "y", "width", "height"].every(key => Math.abs(current[key] - previous[key]) < .5)) {
@@ -933,6 +983,56 @@ function renderWendOverlay(root, selection, result) {
   }
 }
 
+function buildSumbreakMoveList(result) {
+  const rows = Number(result?.details?.rows), columns = Number(result?.details?.columns);
+  const moves = Array.isArray(result?.moves) ? result.moves : [];
+  if (!Number.isInteger(rows) || !Number.isInteger(columns) || rows < 1 || columns < 1) return null;
+  const parsed = [];
+  for (const move of moves) {
+    const entry = { row: Number(move?.row), col: Number(move?.col), toRow: Number(move?.to_row),
+      toCol: Number(move?.to_col), value: Number(move?.value) };
+    const inside = (row, col) => Number.isInteger(row) && Number.isInteger(col) && row >= 0 && row < rows && col >= 0 && col < columns;
+    if (!inside(entry.row, entry.col) || !inside(entry.toRow, entry.toCol) ||
+        Math.abs(entry.row - entry.toRow) + Math.abs(entry.col - entry.toCol) !== 1 || !Number.isInteger(entry.value)) {
+      return null;
+    }
+    parsed.push(entry);
+  }
+  return { rows, columns, moves: parsed };
+}
+
+function renderSumbreakOverlay(root, selection, result) {
+  const plan = buildSumbreakMoveList(result);
+  if (!plan || !plan.moves.length) return;
+  const svg = createPreviewCanvas(root, selection);
+  const cw = selection.width / plan.columns, ch = selection.height / plan.rows;
+  const arrow = Math.min(cw, ch);
+  plan.moves.forEach((move, index) => {
+    const color = PREVIEW_COLORS[index % PREVIEW_COLORS.length];
+    const from = { x: (move.col + .5) * cw, y: (move.row + .5) * ch };
+    const to = { x: (move.toCol + .5) * cw, y: (move.toRow + .5) * ch };
+    const dx = Math.sign(to.x - from.x), dy = Math.sign(to.y - from.y);
+    // Offset parallel moves sideways a little so arrows between the same cells stay readable.
+    const shift = ((index % 3) - 1) * arrow * .12;
+    const start = { x: from.x + dx * arrow * .18 + dy * shift, y: from.y + dy * arrow * .18 + dx * shift };
+    const end = { x: to.x - dx * arrow * .18 + dy * shift, y: to.y - dy * arrow * .18 + dx * shift };
+    previewPath(svg, [start, end], color, Math.max(3, Math.min(5, arrow * .05)));
+    const head = arrow * .09;
+    previewSvgNode(svg, "polygon", {
+      points: [
+        `${end.x + dx * head},${end.y + dy * head}`,
+        `${end.x - dx * head + dy * head},${end.y - dy * head + dx * head}`,
+        `${end.x - dx * head - dy * head},${end.y - dy * head - dx * head}`,
+      ].join(" "),
+      fill: color, stroke: "#ffffff", "stroke-width": 1,
+    });
+    const label = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+    previewSvgNode(svg, "circle", { cx: label.x, cy: label.y, r: 10, fill: "#ffffff", stroke: color, "stroke-width": 1.5 });
+    previewSvgNode(svg, "text", { x: label.x, y: label.y, "text-anchor": "middle", "dominant-baseline": "central",
+      fill: color, "font-size": 10, "font-weight": 700 }, String(index + 1));
+  });
+}
+
 function buildPatchesRegionList(result) {
   const boardSize = Number(result?.board_size);
   const rawRegions =
@@ -1085,6 +1185,11 @@ function renderSolutionOverlay(puzzleType, result, selection) {
 
   if (puzzleType === "wend") {
     renderWendOverlay(root, normalized, result);
+    return;
+  }
+
+  if (puzzleType === "sumbreak") {
+    renderSumbreakOverlay(root, normalized, result);
     return;
   }
 
@@ -2150,6 +2255,71 @@ async function applyWendSolution(result, selection, settings) {
   return { ok: true, appliedCount, clickCount: appliedCount, strategy: "verified-word-path-drag" };
 }
 
+function sumbreakTileButton(root, row, col, columns) {
+  return root?.querySelector(`[data-numo-index="${row * columns + col}"] button[data-numo-kind="number"]`) || null;
+}
+
+function sumbreakFinished() {
+  return /\/games\/(view\/)?sumbreak\/results\//.test(window.location.pathname);
+}
+
+async function applySumbreakSolution(result, selection, settings) {
+  const applySettings = normalizeApplySettings(settings);
+  const plan = buildSumbreakMoveList(result);
+  if (!plan) return { ok: false, error: "No valid Sumbreak moves are available." };
+  let appliedCount = 0, clickCount = 0;
+  const fail = error => ({ ok: false, error, appliedCount, clickCount, strategy: "verified-tap-merge" });
+  const initial = Array.isArray(result?.details?.board) ? result.details.board : null;
+  const startRoot = nativeGameBoard("sumbreak");
+  const startBoard = startRoot && readSumbreakBoardValues(startRoot);
+  if (!startBoard || startBoard.length !== plan.rows || startBoard[0].length !== plan.columns) {
+    return fail("Could not read the Sumbreak board. Stopped before applying.");
+  }
+  if (initial && JSON.stringify(initial) !== JSON.stringify(startBoard)) {
+    return fail("Sumbreak board no longer matches the solved puzzle. Solve again before applying.");
+  }
+
+  for (const move of plan.moves) {
+    if (sumbreakFinished()) break;
+    const root = nativeGameBoard("sumbreak");
+    const source = sumbreakTileButton(root, move.row, move.col, plan.columns);
+    const target = sumbreakTileButton(root, move.toRow, move.toCol, plan.columns);
+    const before = root && readSumbreakBoardValues(root);
+    if (!source || !target || !before) return fail("Could not find the Sumbreak tiles for the next move. Stopped applying.");
+    const half = move.value / 2;
+    if (before[move.row][move.col] !== half || before[move.toRow][move.toCol] !== half) {
+      return fail("Sumbreak tiles do not match the planned move. Stopped applying.");
+    }
+    // A selected tile from a previous manual tap would turn our first tap into a merge attempt.
+    for (const pressed of root.querySelectorAll('button[aria-pressed="true"]')) {
+      if (pressed !== source) pressed.click();
+    }
+    if (source.getAttribute("aria-pressed") !== "true") {
+      source.click();
+      clickCount += 1;
+      await sleep(Math.max(40, applySettings.interClickDelayMs));
+    }
+    target.click();
+    clickCount += 1;
+
+    let merged = false;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      await sleep(50);
+      if (sumbreakFinished()) { merged = true; break; }
+      const live = nativeGameBoard("sumbreak");
+      const after = live && readSumbreakBoardValues(live);
+      if (after && after[move.row][move.col] === null && after[move.toRow][move.toCol] === move.value) {
+        merged = true;
+        break;
+      }
+    }
+    if (!merged) return fail(`Sumbreak did not accept merge ${appliedCount + 1}. Stopped applying.`);
+    appliedCount += 1;
+    await sleep(Math.max(60, applySettings.interMoveDelayMs));
+  }
+  return { ok: true, appliedCount, clickCount, strategy: "verified-tap-merge" };
+}
+
 async function applySolution(puzzleType, result, selection, settings) {
   if (puzzleType === "tango") {
     return applyTangoSolution(result, selection, settings);
@@ -2169,6 +2339,10 @@ async function applySolution(puzzleType, result, selection, settings) {
 
   if (puzzleType === "wend") {
     return applyWendSolution(result, selection, settings);
+  }
+
+  if (puzzleType === "sumbreak") {
+    return applySumbreakSolution(result, selection, settings);
   }
 
   return applyQueensSolution(result, selection, settings);
@@ -2194,6 +2368,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "getBoardSelection") {
     sendResponse({ ok: true, selection: boardSelection });
+    return;
+  }
+
+  if (message.type === "readSumbreakPageBoard") {
+    const parsedBoard = readSumbreakPageBoard();
+    sendResponse({ ok: Boolean(parsedBoard), parsedBoard });
     return;
   }
 

@@ -193,3 +193,29 @@ def test_page_board_reaches_the_real_worker(mode):
     assert result["solved"]
     assert result["details"]["input_source"] == "page"
     assert {word["word"] for word in result["words"]} == {"OAR", "FLOOR", "MIRROR", "OREGANO", "FOOTWORK"}
+
+
+def test_sumbreak_page_board_is_validated_and_cached_separately():
+    use_case, solver, _ = service()
+    use_case.cache_revisions["sumbreak"] = 1
+    board = {"board": [[1, 1, 64], [4, 2, 32], [4, 4, 16]]}
+    use_case.execute(SolveRequest("sumbreak", b"image", parsed_board=board))
+    use_case.execute(SolveRequest("sumbreak", b"image", parsed_board=board))
+    assert len(solver.calls) == 1
+    assert solver.calls[0][-1] == board
+    use_case.execute(SolveRequest("sumbreak", b"image", parsed_board={"board": [[2, 2], [4, None]]}))
+    assert len(solver.calls) == 2
+    with pytest.raises(InvalidBoard):
+        use_case.execute(SolveRequest("sumbreak", b"image", parsed_board=page_board()))
+    with pytest.raises(InvalidBoard):
+        use_case.execute(SolveRequest("wend", b"image", parsed_board=board))
+
+
+@pytest.mark.parametrize("mode", ["subprocess", "inprocess"])
+def test_sumbreak_page_board_reaches_the_real_worker(mode):
+    root = Path(__file__).resolve().parents[3]
+    worker = WorkerSolver({"sumbreak": "solve_sumbreak_worker.py"}, root / "services/solver_api/app/workers", mode=mode)
+    result = worker.solve("sumbreak", b"unused image", "board.png", parsed_board={"board": [[1, 1, 64], [4, 2, 32], [4, 4, 16]]})
+    assert result["solved"]
+    assert result["details"]["final_value"] == 128
+    assert len(result["moves"]) == 8

@@ -101,8 +101,9 @@ def test_repeated_real_solves_match_isolated_workers(puzzle, monkeypatch):
     worker = WorkerSolver(files, directory, mode="persistent")
     isolated = WorkerSolver(files, directory)
     image = (REPO_ROOT / puzzle.sample_image).read_bytes()
+    board = json.loads((REPO_ROOT / puzzle.page_board_fixture).read_text()) if puzzle.page_board_fixture else None
     try:
-        expected = isolated.solve(puzzle.key, image, "board.png")
+        expected = isolated.solve(puzzle.key, image, "board.png", parsed_board=board)
         assert expected["solved"]
         def stable(value):
             if isinstance(value, dict):
@@ -112,7 +113,7 @@ def test_repeated_real_solves_match_isolated_workers(puzzle, monkeypatch):
             return value
 
         for _ in range(2):
-            result = worker.solve(puzzle.key, image, "board.png")
+            result = worker.solve(puzzle.key, image, "board.png", parsed_board=board)
             assert stable(result) == stable(expected)
     finally:
         worker.close()

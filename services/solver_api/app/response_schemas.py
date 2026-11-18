@@ -5,7 +5,7 @@ from typing import Literal, NotRequired, TypedDict
 from .workers.common import BoardBBox, JsonValue
 
 
-PuzzleKey = Literal["queens", "tango", "sudoku", "zip", "patches", "wend"]
+PuzzleKey = Literal["queens", "tango", "sudoku", "zip", "patches", "wend", "sumbreak"]
 
 
 class GridCell(TypedDict):
@@ -15,6 +15,8 @@ class GridCell(TypedDict):
 
 class Move(GridCell, total=False):
     value: int
+    to_row: int
+    to_col: int
     area: int
     top: int
     left: int

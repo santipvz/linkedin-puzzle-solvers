@@ -15,13 +15,13 @@ The Vercel GitHub integration is connected to this repository: `main` deploys to
 
 The CLI command above also creates a protected preview. Use `npx vercel@65.4.0 curl /health --deployment <preview-url>` to test it while authenticated. For a manual production deploy or recovery, run `npx vercel@65.4.0 deploy --prod` from the tested release on `main`.
 
-Validate the public API with the six tracked game samples:
+Validate the public API with the seven tracked game samples:
 
 ```bash
 python3 scripts/api_endpoint_smoke.py --base-url https://linkedin-puzzle-solvers.vercel.app
 ```
 
-CI also runs `python3 scripts/api_endpoint_smoke.py --hosted` to solve all six samples with the Vercel profile and bundled fonts before merging.
+CI also runs `python3 scripts/api_endpoint_smoke.py --hosted` to solve all seven samples with the Vercel profile and bundled fonts before merging.
 
 ## Runtime
 

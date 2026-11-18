@@ -12,6 +12,9 @@ class PuzzleDefinition:
     sample_required: bool = True
     smoke_samples: tuple[str, ...] = ()
     cache_revision: int = 1
+    # Puzzles whose values are read from the page are smoke-tested with this
+    # page board (JSON) alongside the sample image.
+    page_board_fixture: str | None = None
 
     @property
     def endpoint_path(self) -> str:
@@ -74,6 +77,14 @@ PUZZLE_DEFINITIONS: tuple[PuzzleDefinition, ...] = (
         expected_board_size=6,
         sample_required=True,
         cache_revision=5,
+    ),
+    PuzzleDefinition(
+        key="sumbreak",
+        worker_filename="solve_sumbreak_worker.py",
+        sample_image="games/sumbreak_solver/examples/sample1.png",
+        expected_board_size=3,
+        sample_required=True,
+        page_board_fixture="games/sumbreak_solver/tests/fixtures/linkedin-2026-11-18.json",
     ),
 )
 

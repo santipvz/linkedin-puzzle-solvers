@@ -35,4 +35,4 @@ flowchart LR
 - Adapters depend inward; only the composition root chooses implementations.
 - Puzzle-specific parsing stays in each game; generic vision mechanics stay in `core/`.
 
-`python3 scripts/check_architecture.py` enforces these import boundaries in CI. Application tests inject fake ports; integration fixtures verify all six game pipelines and the existing HTTP contracts.
+`python3 scripts/check_architecture.py` enforces these import boundaries in CI. Application tests inject fake ports; integration fixtures verify all seven game pipelines and the existing HTTP contracts.
