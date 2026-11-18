@@ -29,10 +29,24 @@ def font_fingerprint(paths: Sequence[str]) -> str:
     return hashlib.sha256("\n".join(signatures).encode()).hexdigest()[:16]
 
 
+def rasterizer_signature() -> str:
+    """Pillow and FreeType versions: glyph pixels can differ between them."""
+    try:
+        import PIL
+        from PIL import features
+
+        freetype = features.version("freetype2") or "none"
+        return f"pillow-{PIL.__version__}-freetype-{freetype}"
+    except Exception:
+        return "unknown"
+
+
 @lru_cache(maxsize=32)
 def _bundled_content_fingerprint(paths: tuple[str, ...]) -> str | None:
     bundled_root = BUNDLED_FONTS.resolve()
     digest = hashlib.sha256()
+    # Prebuilt templates are only valid where glyphs rasterize identically.
+    digest.update(rasterizer_signature().encode())
     for path in paths:
         resolved = Path(path).resolve()
         if resolved.parent != bundled_root:
@@ -45,8 +59,10 @@ def _bundled_content_fingerprint(paths: tuple[str, ...]) -> str | None:
 def packaged_ocr_cache_path(prefix: str, paths: Sequence[str]) -> Path | None:
     """Prebuilt cache for ``paths`` when they are all bundled fonts.
 
-    Keyed by font names and contents, not by install path or modification time,
-    so it matches on any machine that ships the same fonts.
+    Keyed by font names and contents plus the Pillow/FreeType versions, not by
+    install path or modification time, so it matches on any machine that ships
+    the same fonts and renders them with the same pinned Pillow (CI, Docker
+    and Vercel). Other setups rebuild the templates as before.
     """
     if not paths:
         return None

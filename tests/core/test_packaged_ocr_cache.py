@@ -15,6 +15,13 @@ build_ocr_caches = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(build_ocr_caches)
 
 
+def _pinned_pillow() -> bool:
+    import PIL
+
+    return PIL.__version__ == build_ocr_caches.pinned_pillow_version()
+
+
+@pytest.mark.skipif(not _pinned_pillow(), reason="packaged OCR caches are built for the pinned Pillow (CI, Docker, Vercel)")
 @pytest.mark.parametrize("game", sorted(build_ocr_caches.BUILDERS))
 def test_packaged_cache_matches_a_fresh_build(game, tmp_path):
     built, name = build_ocr_caches.build_into(game, tmp_path)
@@ -30,6 +37,19 @@ def test_packaged_caches_have_no_orphans():
     names = {path.name for path in PACKAGED_OCR_CACHE.glob("*.npz")}
     prefixes = [name.rsplit("_", 1)[0] for name in names]
     assert len(prefixes) == len(set(prefixes)) == len(build_ocr_caches.BUILDERS)
+
+
+def test_packaged_path_depends_on_the_rasterizer(monkeypatch):
+    import core.ocr_fonts as fonts
+
+    paths = [str(BUNDLED_FONTS / "DejaVuSans.ttf")]
+    current = packaged_ocr_cache_path("prefix", paths)
+    fonts._bundled_content_fingerprint.cache_clear()
+    monkeypatch.setattr(fonts, "rasterizer_signature", lambda: "pillow-0-freetype-0")
+    try:
+        assert packaged_ocr_cache_path("prefix", paths) != current
+    finally:
+        fonts._bundled_content_fingerprint.cache_clear()
 
 
 def test_packaged_path_depends_on_font_content_not_location(tmp_path):

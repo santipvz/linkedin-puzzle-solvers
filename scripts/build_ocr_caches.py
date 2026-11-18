@@ -53,10 +53,31 @@ def build_into(game: str, directory: Path) -> tuple[Path, str]:
     return built, result.stdout.strip().splitlines()[-1]
 
 
+def pinned_pillow_version() -> str:
+    for line in (REPO_ROOT / "services" / "solver_api" / "requirements.txt").read_text().splitlines():
+        if line.strip().lower().startswith("pillow=="):
+            return line.split("==", 1)[1].strip()
+    raise RuntimeError("Pillow is not pinned in services/solver_api/requirements.txt")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--games", nargs="+", choices=sorted(BUILDERS), default=sorted(BUILDERS))
     args = parser.parse_args()
+
+    import PIL
+
+    if PIL.__version__ != pinned_pillow_version():
+        # Caches from another Pillow are keyed for that Pillow and never used online.
+        print(
+            f"[error] Pillow {PIL.__version__} is installed but the API pins {pinned_pillow_version()}. "
+            "Run this inside the CI image:\n"
+            "  docker build --target ci -f deploy/local/Dockerfile -t solver-ci-env .\n"
+            '  docker run --rm --user "$(id -u):$(id -g)" --volume "$PWD:/app" solver-ci-env '
+            "python3 scripts/build_ocr_caches.py",
+            file=sys.stderr,
+        )
+        return 1
 
     from core.ocr_fonts import PACKAGED_OCR_CACHE
 
