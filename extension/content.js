@@ -135,7 +135,7 @@ async function onQuickSolveClick() {
     }
 
     const appliedCount = Number(response.appliedCount) || 0;
-    setQuickSolveStatus(`Solution applied \u00b7 ${appliedCount} moves.`);
+    setQuickSolveStatus(`Solution applied \u00b7 ${appliedCount} moves.${formatQuickSolveTimings(response.timings)}`);
   } catch (error) {
     setQuickSolveStatus(error.message || String(error), true);
   } finally {
@@ -145,6 +145,19 @@ async function onQuickSolveClick() {
     }
     updateQuickSolveButtonText();
   }
+}
+
+// "board 0.1 s · solve 0.6 s (server 0.2 s) · apply 2.3 s": where a quick solve spent its time.
+function formatQuickSolveTimings(timings) {
+  if (!timings || typeof timings !== "object") return "";
+  const seconds = (ms) => `${(Number(ms) / 1000).toFixed(1)} s`;
+  const parts = [];
+  if (Number.isFinite(timings.detectMs)) parts.push(`board ${seconds(timings.detectMs)}`);
+  if (Number.isFinite(timings.solveMs)) {
+    parts.push(`solve ${seconds(timings.solveMs)}${Number.isFinite(timings.serverMs) ? ` (server ${seconds(timings.serverMs)})` : ""}`);
+  }
+  if (Number.isFinite(timings.applyMs)) parts.push(`apply ${seconds(timings.applyMs)}`);
+  return parts.length ? `\n${parts.join(" \u00b7 ")}` : "";
 }
 
 function createQuickSolveWidget() {
@@ -183,7 +196,7 @@ function createQuickSolveWidget() {
     button[aria-busy="true"]::after { content: ""; width: 12px; height: 12px;
       flex: none; border: 1.5px solid #ffffff40; border-top-color: #d5ecff;
       border-radius: 50%; animation: spin .8s linear infinite; }
-    .status { margin: 10px 0 0; font-size: 11px; line-height: 1.5;
+    .status { margin: 10px 0 0; font-size: 11px; line-height: 1.5; white-space: pre-line;
       color: #4f6c85; overflow-wrap: anywhere; }
     .status.error { color: #aa3827; }
     [hidden] { display: none; }
@@ -1317,6 +1330,10 @@ function createMovePacer(intervalMs) {
 }
 
 const ACCEPT_POLL_MS = 10;
+// A path drawn in one stroke (a Zip path, a Wend word) is a single move. It
+// advances one cell every PATH_CELL_MS, the speed of a Wend word drag (four
+// 8 ms interpolation steps per cell).
+const PATH_CELL_MS = 32;
 
 // Poll a page condition until it holds; returns its value, or null on timeout.
 async function waitFor(check, timeoutMs, pollMs = ACCEPT_POLL_MS) {
@@ -1531,8 +1548,9 @@ function scoreSudokuSelectionCandidate(candidate, boardSize) {
 }
 
 async function getReadySudokuSelectionCandidates(selection, boardSize, moves) {
+  // Two equal readings 40 ms apart mean the grid has stopped moving (3 s budget).
   let previousGeometry = new Set();
-  for (let attempt = 0; attempt < 30; attempt += 1) {
+  for (let attempt = 0; attempt < 75; attempt += 1) {
     const ready = [];
     const currentGeometry = new Set();
     for (const entry of buildApplySelectionCandidates("sudoku", selection)) {
@@ -1544,7 +1562,7 @@ async function getReadySudokuSelectionCandidates(selection, boardSize, moves) {
     }
     if (ready.length) return ready;
     previousGeometry = currentGeometry;
-    await sleep(100);
+    await sleep(40);
   }
   return [];
 }
@@ -2169,11 +2187,11 @@ async function applyZipSolution(result, selection, settings) {
 
   await sleep(Math.max(80, applySettings.interClickDelayMs));
 
+  // The whole path is one stroke, drawn at the same speed as a Wend word.
   let keyCount = 0;
-  const nextMove = createMovePacer(applySettings.moveIntervalMs);
-  for (const direction of directions) {
-    await nextMove();
-    if (dispatchArrowKey(direction)) {
+  for (let index = 0; index < directions.length; index += 1) {
+    if (index > 0) await sleep(PATH_CELL_MS);
+    if (dispatchArrowKey(directions[index])) {
       keyCount += 1;
     }
   }
@@ -2282,7 +2300,7 @@ async function applyWendSolution(result, selection, settings) {
       return fail("Wend board moved outside the viewport. Stopped applying.");
     }
     await nextMove();
-    if (!await dragViewportPath(points, 4)) return fail("Could not draw a Wend word path.");
+    if (!await dragViewportPath(points, PATH_CELL_MS / 8)) return fail("Could not draw a Wend word path.");
     const accepted = await waitFor(() => {
       const live = nativeGameBoard("wend");
       return entry.path.every(step => live?.querySelector(`[data-cell-idx="${step.row * boardSize + step.col}"]`)

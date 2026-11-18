@@ -98,7 +98,7 @@ Chrome requires the `<all_urls>` host permission for capture from an in-page but
 
 ## Input timing
 
-Every game applies its solution at the same pace. **Move interval** (default 100 ms) is the time from the start of one move to the start of the next; a move is one queen, one Tango or Sudoku cell, one Zip step, one Patches rectangle, one Wend word or one Sumbreak merge. Waits inside a move count toward the interval rather than being added after it, and the extension checks the game's confirmation every 10 ms. **Between clicks** (default 45 ms) only separates two clicks within the same move. These waits run in the browser, independently of the API solve time.
+Every game applies its solution at the same pace. **Move interval** (default 100 ms) is the time from the start of one move to the start of the next; a move is one queen, one Tango or Sudoku cell, one Patches rectangle, one Wend word or one Sumbreak merge. A path drawn in one stroke (the Zip path, a Wend word) advances one cell every 32 ms. Waits inside a move count toward the interval rather than being added after it, and the extension checks the game's confirmation every 10 ms. **Between clicks** (default 45 ms) only separates two clicks within the same move. These waits run in the browser, independently of the API solve time.
 
 A move only takes longer than the interval when the game itself needs more time:
 
@@ -107,7 +107,7 @@ A move only takes longer than the interval when the game itself needs more time:
 | Queens | One queen | Two clicks, separated by the click delay. |
 | Tango | One cell | One or two clicks; each is confirmed before the next. |
 | Mini Sudoku | One cell | Select, at least 80 ms for the game to take keyboard input, type, confirm. |
-| Zip | One arrow step | A single start click with at least 80 ms activation time precedes the first step. |
+| Zip | The whole path | A start click with at least 80 ms activation time, then one arrow key every 32 ms. |
 | Patches | One rectangle | Drag, then up to 150 ms for the board to settle (the game drops drags that start too soon). |
 | Wend | One word | The drag itself (8 ms per interpolation step), then the game locking the word. |
 | Sumbreak | One merge | Two taps separated by the click delay, then the merged tile appearing. |

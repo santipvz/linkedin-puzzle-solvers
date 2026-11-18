@@ -736,6 +736,12 @@ async function callSolverApi(apiBaseUrl, puzzleType, imageBlob, options = {}) {
     throw new Error(message);
   }
 
+  // Server-side parse and solve time, without upload or network.
+  const serverTiming = /solve;dur=([\d.]+)/.exec(response.headers?.get?.("Server-Timing") || "");
+  if (serverTiming && payload && typeof payload === "object" && payload.details && typeof payload.details === "object") {
+    payload.details.server_solve_ms = Number(serverTiming[1]);
+  }
+
   return payload;
 }
 
@@ -1434,12 +1440,14 @@ async function quickSolveFromPage(message, sender) {
     throw new Error("Open LinkedIn Queens, Tango, Mini Sudoku, Zip, Patches, Wend, or Sumbreak page first.");
   }
 
+  const startedAt = Date.now();
   const quickSettings = await loadQuickSettings();
   const previewOnly = Boolean(message && message.previewOnly);
   const frameContext = await getGameFrameContext(tabId, puzzleType);
   await clearOverlaysForFrameContext(tabId, frameContext);
 
   const selectionContext = await detectSelectionForQuickSolve(tabId, puzzleType, frameContext, tab);
+  const detectedAt = Date.now();
 
   const solvedPayload = await solveBoardCore({
     tabId,
@@ -1447,6 +1455,7 @@ async function quickSolveFromPage(message, sender) {
     apiBaseUrl: quickSettings.apiBaseUrl,
     selection: selectionContext.topSelection,
   });
+  const solvedAt = Date.now();
 
   if (!solvedPayload.result || !solvedPayload.result.solved) {
     return {
@@ -1578,8 +1587,10 @@ async function quickSolveFromPage(message, sender) {
     };
   }
 
+  const appliedAt = Date.now();
   await clearOverlaysForFrameContext(tabId, frameContext);
 
+  const serverMs = Number(solvedPayload.result?.details?.server_solve_ms);
   return {
     puzzleType,
     solved: true,
@@ -1589,6 +1600,12 @@ async function quickSolveFromPage(message, sender) {
     appliedCount: Number(applyResponse.appliedCount) || 0,
     clickCount: Number(applyResponse.clickCount) || 0,
     strategy: applyResponse.strategy || null,
+    timings: {
+      detectMs: detectedAt - startedAt,
+      solveMs: solvedAt - detectedAt,
+      serverMs: Number.isFinite(serverMs) ? Math.round(serverMs) : null,
+      applyMs: appliedAt - solvedAt,
+    },
   };
 }
 
