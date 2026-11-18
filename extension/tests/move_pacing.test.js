@@ -17,37 +17,45 @@ function contentContext() {
   return context;
 }
 
+// A fake clock: sleep() advances time exactly, so pacing is checked without
+// depending on how punctual the test machine's timers are.
+function withFakeClock(context) {
+  const clock = { now: 1_000_000, sleeps: [] };
+  context.Date = { now: () => clock.now };
+  context.sleep = async (ms) => { clock.sleeps.push(ms); clock.now += ms; };
+  return clock;
+}
+
 test('every game shares one move interval, starting moves at a fixed pace', async () => {
   const context = contentContext();
+  const clock = withFakeClock(context);
   const nextMove = context.createMovePacer(40);
   const starts = [];
   for (let move = 0; move < 4; move += 1) {
     await nextMove();
-    starts.push(Date.now());
+    starts.push(clock.now);
   }
-  const gaps = starts.slice(1).map((start, index) => start - starts[index]);
-  assert.ok(gaps.every(gap => gap >= 38 && gap < 80), `gaps ${gaps}`);
+  assert.deepEqual(starts.slice(1).map((start, index) => start - starts[index]), [40, 40, 40]);
 });
 
 test('time spent inside a move counts toward the interval instead of adding to it', async () => {
   const context = contentContext();
+  const clock = withFakeClock(context);
   const nextMove = context.createMovePacer(60);
   await nextMove();
-  const started = Date.now();
-  await new Promise(resolve => setTimeout(resolve, 45));
+  clock.now += 45; // the move itself: clicks and waiting for the game
   await nextMove();
-  const gap = Date.now() - started;
-  assert.ok(gap >= 58 && gap < 90, `gap ${gap}`);
+  assert.deepEqual(clock.sleeps, [15]);
 });
 
 test('a move slower than the interval is followed immediately by the next one', async () => {
   const context = contentContext();
+  const clock = withFakeClock(context);
   const nextMove = context.createMovePacer(10);
   await nextMove();
-  await new Promise(resolve => setTimeout(resolve, 30));
-  const before = Date.now();
+  clock.now += 30;
   await nextMove();
-  assert.ok(Date.now() - before < 5);
+  assert.deepEqual(clock.sleeps, []);
 });
 
 test('the default move interval is the same for every game', () => {
@@ -59,11 +67,13 @@ test('the default move interval is the same for every game', () => {
 
 test('waitFor returns as soon as the game confirms and null on timeout', async () => {
   const context = contentContext();
+  const clock = withFakeClock(context);
   let calls = 0;
-  const started = Date.now();
   assert.equal(await context.waitFor(() => (++calls >= 3 ? 'ok' : null), 500, 5), 'ok');
-  assert.ok(Date.now() - started < 100);
+  assert.deepEqual(clock.sleeps, [5, 5]);
+  clock.sleeps.length = 0;
   assert.equal(await context.waitFor(() => null, 20, 5), null);
+  assert.deepEqual(clock.sleeps, [5, 5, 5, 5]);
 });
 
 test('a Zip path is one stroke drawn at the Wend drag speed, not one move per step', async () => {
