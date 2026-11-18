@@ -46,7 +46,7 @@ def create_http_app(
     app = FastAPI(
         lifespan=lifespan,
         title="LinkedIn Puzzle Solver API",
-        version="0.3.4",
+        version="0.4.0",
         description="Local API wrapper for Queens, Tango, Mini Sudoku, Zip, Patches, Wend, and Sumbreak solvers.",
     )
     app.add_middleware(

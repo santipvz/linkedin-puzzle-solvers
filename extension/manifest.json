@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LinkedIn Puzzle Solver Assistant",
-  "version": "0.3.4",
+  "version": "0.4.0",
   "description": "Preview and apply solutions for seven LinkedIn games using the online solver or your own local API.",
   "permissions": [
     "activeTab",
