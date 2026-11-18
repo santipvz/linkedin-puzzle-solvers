@@ -7,8 +7,10 @@ It contains the uppercase ASCII alphabetic entries of length 3 through 16 from D
 Reproduce it with:
 
 ```bash
-python3 scripts/build_wend_wordlist.py /usr/share/dict/american-english games/wend_solver/data/words.txt
+python3 scripts/build_wend_wordlist.py /usr/share/dict/american-english games/wend_solver/data/words.txt --proper-nouns games/wend_solver/data/proper_nouns.txt
 ```
+
+`proper_nouns.txt` lists the 9,384 entries that appear only capitalized in that source (names, places and acronyms). `rare_words.txt` lists reviewed uncommon words, currently WEN. Both stay searchable: they only decide ties, as described in the solver README.
 
 At runtime, `WEND_WORDLIST_PATH=/path/to/words.txt` can add a reviewed custom wordlist without changing the repository data. Missing configured files are treated as deployment errors.
 

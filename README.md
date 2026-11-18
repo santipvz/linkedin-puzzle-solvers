@@ -32,6 +32,7 @@
   <img alt="Zip" src="https://img.shields.io/badge/Zip-F97316?style=for-the-badge">
   <img alt="Patches" src="https://img.shields.io/badge/Patches-E11D48?style=for-the-badge">
   <img alt="Wend" src="https://img.shields.io/badge/Wend-14B8A6?style=for-the-badge">
+  <img alt="Sumbreak" src="https://img.shields.io/badge/Sumbreak-8B5CF6?style=for-the-badge">
 </p>
 
 <p align="center">
@@ -95,7 +96,7 @@ For online solving, load the extension as in step 2 and select **Online** in its
 
 2. Load the extension:
    - **Chrome/Chromium:** open `chrome://extensions`, enable Developer mode, and load `extension/` unpacked.
-   - **Firefox:** open `about:debugging#/runtime/this-firefox` and load `extension/manifest.json` as a temporary add-on.
+   - **Firefox:** build the Firefox package with `python3 scripts/package_extension.py --browser firefox`, extract it, then load its `manifest.json` from `about:debugging#/runtime/this-firefox` as a temporary add-on.
 
 3. Open a supported [LinkedIn game](https://www.linkedin.com/games/), choose **Local / custom**, set **Preferences → Service address** to **`http://127.0.0.1:18000`**, and click **Solve & apply**.
 

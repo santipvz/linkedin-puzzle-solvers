@@ -63,3 +63,20 @@ def _load_words_from_path(path: Path, *, min_length: int, max_length: int) -> se
         if min_length <= len(word) <= max_length and word.isascii() and word.isalpha():
             words.add(word)
     return words
+
+
+def load_wend_deprioritized_words(
+    *,
+    min_length: int = DEFAULT_MIN_WORD_LENGTH,
+    max_length: int = DEFAULT_MAX_WORD_LENGTH,
+) -> frozenset[str]:
+    """Valid words that lose ties: proper nouns and reviewed rare words.
+
+    When a board has several exact covers, the cover using the fewest of these
+    words is preferred. They are never removed from the searchable dictionary.
+    """
+    data = Path(__file__).resolve().parents[1] / "data"
+    words: set[str] = set()
+    for name in ("proper_nouns.txt", "rare_words.txt"):
+        words.update(_load_words_from_path(data / name, min_length=min_length, max_length=max_length))
+    return frozenset(words)

@@ -1,0 +1,6 @@
+# Valid but uncommon words that lose ties against covers made of everyday
+# words. One uppercase word per line; lines with other characters are ignored.
+# Add a word here when a real board has two exact covers and the rare one is
+# not the intended answer.
+# WEN (a cyst): 2026-11-18, against NEW in GAME LAUNCH NEW TODAY.
+WEN

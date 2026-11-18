@@ -5,8 +5,12 @@ let quickSolveButton = null;
 let quickSolveStatus = null;
 let quickSolveBusy = false;
 let quickSolveObservedUrl = "";
+let quickSolveIntervalId = null;
+let extensionContextInvalidated = false;
 let sudokuApplyBusy = false;
 let tangoApplyBusy = false;
+
+const EXTENSION_RELOAD_MESSAGE = "Extension updated. Reload this page to continue.";
 
 const puzzleRegistry = globalThis.PuzzleRegistry;
 if (!puzzleRegistry) {
@@ -36,17 +40,99 @@ function detectPuzzleTypeFromPage() {
   return null;
 }
 
+function isInvalidatedContextError(error) {
+  return String(error?.message || error).includes("Extension context invalidated");
+}
+
+function showExtensionReloadNotice() {
+  if (quickSolveButton) {
+    quickSolveButton.disabled = false;
+    quickSolveButton.textContent = "Reload page";
+    quickSolveButton.setAttribute("aria-label", "Reload this page to use Puzzle Solver");
+    quickSolveButton.setAttribute("aria-busy", "false");
+    quickSolveButton.style.backgroundImage = "none";
+  }
+  setQuickSolveStatus(EXTENSION_RELOAD_MESSAGE, true);
+}
+
+function invalidateExtensionContext() {
+  extensionContextInvalidated = true;
+  if (quickSolveIntervalId !== null) {
+    clearInterval(quickSolveIntervalId);
+    quickSolveIntervalId = null;
+  }
+  quickSolveBusy = false;
+  clearSolutionOverlay();
+  showExtensionReloadNotice();
+}
+
+function hasExtensionContext() {
+  if (extensionContextInvalidated) {
+    return false;
+  }
+  try {
+    if (chrome.runtime.id) {
+      return true;
+    }
+  } catch (error) {
+    if (!isInvalidatedContextError(error)) {
+      throw error;
+    }
+  }
+  invalidateExtensionContext();
+  return false;
+}
+
+function runtimeMessageError(error) {
+  if (extensionContextInvalidated || isInvalidatedContextError(error)) {
+    invalidateExtensionContext();
+    return new Error(EXTENSION_RELOAD_MESSAGE);
+  }
+  return new Error(error?.message || String(error));
+}
+
 function sendRuntimeMessage(message) {
   return new Promise((resolve, reject) => {
-    chrome.runtime.sendMessage(message, (response) => {
-      const error = chrome.runtime.lastError;
-      if (error) {
-        reject(new Error(error.message));
-        return;
-      }
-      resolve(response);
-    });
+    if (!hasExtensionContext()) {
+      reject(new Error(EXTENSION_RELOAD_MESSAGE));
+      return;
+    }
+    try {
+      chrome.runtime.sendMessage(message, (response) => {
+        try {
+          const error = chrome.runtime.lastError;
+          if (error) {
+            reject(runtimeMessageError(error));
+          } else if (!hasExtensionContext()) {
+            reject(new Error(EXTENSION_RELOAD_MESSAGE));
+          } else {
+            resolve(response);
+          }
+        } catch (error) {
+          reject(runtimeMessageError(error));
+        }
+      });
+    } catch (error) {
+      reject(runtimeMessageError(error));
+    }
   });
+}
+
+function extensionAssetUrl(path) {
+  if (extensionContextInvalidated) {
+    return "";
+  }
+  try {
+    return chrome.runtime.getURL(path);
+  } catch (error) {
+    // A content script can outlive an extension reload in an already-open tab.
+    // Chrome invalidates its runtime APIs until that tab is refreshed.
+    if (isInvalidatedContextError(error)) {
+      invalidateExtensionContext();
+      return "";
+    }
+    throw error;
+  }
 }
 
 function setQuickSolveStatus(text, isError = false) {
@@ -63,6 +149,10 @@ function updateQuickSolveButtonText() {
   if (!quickSolveButton) {
     return;
   }
+  if (extensionContextInvalidated) {
+    showExtensionReloadNotice();
+    return;
+  }
 
   const puzzleType = detectPuzzleTypeFromPage();
   const puzzleLabel = puzzleTypeToLabel(puzzleType);
@@ -74,7 +164,8 @@ function updateQuickSolveButtonText() {
   }
   quickSolveButton.setAttribute("aria-label", quickSolveButton.textContent);
   quickSolveButton.setAttribute("aria-busy", String(quickSolveBusy));
-  quickSolveButton.style.backgroundImage = `url("${chrome.runtime.getURL(`assets/games/${puzzleType}.svg`)}")`;
+  const iconUrl = extensionAssetUrl(`assets/games/${puzzleType}.svg`);
+  quickSolveButton.style.backgroundImage = iconUrl ? `url("${iconUrl}")` : "none";
 }
 
 function removeQuickSolveWidget() {
@@ -89,9 +180,16 @@ function removeQuickSolveWidget() {
 }
 
 async function onQuickSolveClick() {
+  if (extensionContextInvalidated) {
+    window.location.reload();
+    return;
+  }
+  if (!hasExtensionContext()) {
+    return;
+  }
   const puzzleType = detectPuzzleTypeFromPage();
   if (!puzzleType) {
-    setQuickSolveStatus("Open Queens, Tango, Mini Sudoku, Zip, Patches, or Wend page.", true);
+    setQuickSolveStatus("Open Queens, Tango, Mini Sudoku, Zip, Patches, Wend, or Sumbreak page.", true);
     return;
   }
 
@@ -135,16 +233,29 @@ async function onQuickSolveClick() {
     }
 
     const appliedCount = Number(response.appliedCount) || 0;
-    setQuickSolveStatus(`Solution applied \u00b7 ${appliedCount} moves.`);
+    setQuickSolveStatus(`Solution applied \u00b7 ${appliedCount} moves.${formatQuickSolveTimings(response.timings)}`);
   } catch (error) {
     setQuickSolveStatus(error.message || String(error), true);
   } finally {
     quickSolveBusy = false;
     if (quickSolveButton) {
-      quickSolveButton.disabled = false;
+      quickSolveButton.disabled = extensionContextInvalidated;
     }
     updateQuickSolveButtonText();
   }
+}
+
+// "board 0.1 s · solve 0.6 s (server 0.2 s) · apply 2.3 s": where a quick solve spent its time.
+function formatQuickSolveTimings(timings) {
+  if (!timings || typeof timings !== "object") return "";
+  const seconds = (ms) => `${(Number(ms) / 1000).toFixed(1)} s`;
+  const parts = [];
+  if (Number.isFinite(timings.detectMs)) parts.push(`board ${seconds(timings.detectMs)}`);
+  if (Number.isFinite(timings.solveMs)) {
+    parts.push(`solve ${seconds(timings.solveMs)}${Number.isFinite(timings.serverMs) ? ` (server ${seconds(timings.serverMs)})` : ""}`);
+  }
+  if (Number.isFinite(timings.applyMs)) parts.push(`apply ${seconds(timings.applyMs)}`);
+  return parts.length ? `\n${parts.join(" \u00b7 ")}` : "";
 }
 
 function createQuickSolveWidget() {
@@ -183,7 +294,7 @@ function createQuickSolveWidget() {
     button[aria-busy="true"]::after { content: ""; width: 12px; height: 12px;
       flex: none; border: 1.5px solid #ffffff40; border-top-color: #d5ecff;
       border-radius: 50%; animation: spin .8s linear infinite; }
-    .status { margin: 10px 0 0; font-size: 11px; line-height: 1.5;
+    .status { margin: 10px 0 0; font-size: 11px; line-height: 1.5; white-space: pre-line;
       color: #4f6c85; overflow-wrap: anywhere; }
     .status.error { color: #aa3827; }
     [hidden] { display: none; }
@@ -197,7 +308,7 @@ function createQuickSolveWidget() {
   const title = document.createElement("div");
   title.className = "title";
   const logo = document.createElement("img");
-  logo.src = chrome.runtime.getURL("assets/logo.png");
+  logo.src = extensionAssetUrl("assets/logo.png");
   logo.alt = "";
   title.append(logo, "Puzzle Solver");
 
@@ -225,6 +336,9 @@ function createQuickSolveWidget() {
 }
 
 function syncQuickSolveWidget() {
+  if (!hasExtensionContext()) {
+    return;
+  }
   if (window.self !== window.top) {
     removeQuickSolveWidget();
     return;
@@ -251,7 +365,13 @@ function initializeQuickSolveWidget() {
   quickSolveObservedUrl = window.location.href;
   syncQuickSolveWidget();
 
-  setInterval(() => {
+  if (extensionContextInvalidated) {
+    return;
+  }
+  quickSolveIntervalId = setInterval(() => {
+    if (!hasExtensionContext()) {
+      return;
+    }
     if (window.location.href !== quickSolveObservedUrl) {
       quickSolveObservedUrl = window.location.href;
       boardSelection = null;
@@ -444,6 +564,7 @@ function nativeGameBoard(puzzleType) {
     patches: '[data-testid="patches-game-board"] [data-testid="interactive-grid"]',
     sudoku: ".sudoku-grid",
     wend: '[data-testid="wend-game-board"]',
+    sumbreak: '[data-numo-design][data-numo-rows][data-numo-columns]',
   };
   return selectors[puzzleType] ? document.querySelector(selectors[puzzleType]) : null;
 }
@@ -479,13 +600,62 @@ function readWendPageBoard() {
   return selection ? { board, lengths, selection } : null;
 }
 
-function nativeBoardSelection(puzzleType) {
-  return boardElementSelection(nativeGameBoard(puzzleType));
+// Sumbreak boards may be rectangular; every other native board is square.
+function boardMustBeSquare(puzzleType) {
+  return puzzleType !== "sumbreak";
 }
 
-function boardElementSelection(board) {
+function sumbreakBoardDimensions(root) {
+  const rows = Number(root?.getAttribute("data-numo-rows"));
+  const columns = Number(root?.getAttribute("data-numo-columns"));
+  return Number.isInteger(rows) && Number.isInteger(columns) && rows >= 2 && rows <= 8 && columns >= 2 && columns <= 8
+    ? { rows, columns }
+    : null;
+}
+
+function sumbreakCellValue(root, index) {
+  const cell = root.querySelector(`[data-numo-index="${index}"]`);
+  if (!cell) return undefined;
+  const tile = cell.querySelector('button[data-numo-kind="number"]');
+  if (!tile) return null;
+  // The SVG label holds the digits; the aria-label is localized but also carries them.
+  const label = root.querySelector(`[data-numo-svg-cell="${index}"] [data-numo-label]`)?.textContent?.trim();
+  const text = /^\d+$/.test(label || "") ? label : (tile.getAttribute("aria-label") || "").match(/\d+/)?.[0];
+  const value = Number(text);
+  return Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+function readSumbreakBoardValues(root) {
+  const size = sumbreakBoardDimensions(root);
+  if (!size) return null;
+  const board = [];
+  for (let row = 0; row < size.rows; row += 1) {
+    const values = [];
+    for (let col = 0; col < size.columns; col += 1) {
+      const value = sumbreakCellValue(root, row * size.columns + col);
+      if (value === undefined) return null;
+      values.push(value);
+    }
+    board.push(values);
+  }
+  return board;
+}
+
+function readSumbreakPageBoard() {
+  const root = nativeGameBoard("sumbreak");
+  const board = root && readSumbreakBoardValues(root);
+  if (!board || !board.flat().some(value => value !== null)) return null;
+  const selection = nativeBoardSelection("sumbreak");
+  return selection ? { board, selection } : null;
+}
+
+function nativeBoardSelection(puzzleType) {
+  return boardElementSelection(nativeGameBoard(puzzleType), boardMustBeSquare(puzzleType));
+}
+
+function boardElementSelection(board, requireSquare = true) {
   const rect = board?.getBoundingClientRect();
-  if (!isRectVisible(rect) || Math.abs(rect.width / rect.height - 1) >= .1) return null;
+  if (!isRectVisible(rect) || (requireSquare && Math.abs(rect.width / rect.height - 1) >= .1)) return null;
   return normalizeSelection({ x: rect.left, y: rect.top, width: rect.width,
     height: rect.height, devicePixelRatio: window.devicePixelRatio });
 }
@@ -507,7 +677,7 @@ async function prepareBoardCapture(puzzleType) {
     let previous = null;
     for (let attempt = 0; attempt < 20; attempt += 1) {
       await sleep(50);
-      const current = boardElementSelection(nativeCaptureBoard(puzzleType));
+      const current = boardElementSelection(nativeCaptureBoard(puzzleType), boardMustBeSquare(puzzleType));
       if (current && current.x >= 0 && current.y >= 0 && current.x + current.width <= window.innerWidth + 1 &&
           current.y + current.height <= window.innerHeight + 1 && previous &&
           ["x", "y", "width", "height"].every(key => Math.abs(current[key] - previous[key]) < .5)) {
@@ -813,7 +983,7 @@ function createPreviewCanvas(root, selection) {
 
 function previewGamePiece(svg, x, y, size, name) {
   previewSvgNode(svg, "image", { x: x - size / 2, y: y - size / 2, width: size, height: size,
-    href: chrome.runtime.getURL(`assets/pieces/${name}.svg`), "aria-label": name });
+    href: extensionAssetUrl(`assets/pieces/${name}.svg`), "aria-label": name });
 }
 
 function renderQueensOverlay(root, selection, result) {
@@ -931,6 +1101,56 @@ function renderWendOverlay(root, selection, result) {
     previewSvgNode(svg, "text", { x: x + labelWidth / 2, y: y + 9, "text-anchor": "middle",
       "dominant-baseline": "central", fill: color, "font-size": 10, "font-weight": 600 }, entry.word);
   }
+}
+
+function buildSumbreakMoveList(result) {
+  const rows = Number(result?.details?.rows), columns = Number(result?.details?.columns);
+  const moves = Array.isArray(result?.moves) ? result.moves : [];
+  if (!Number.isInteger(rows) || !Number.isInteger(columns) || rows < 1 || columns < 1) return null;
+  const parsed = [];
+  for (const move of moves) {
+    const entry = { row: Number(move?.row), col: Number(move?.col), toRow: Number(move?.to_row),
+      toCol: Number(move?.to_col), value: Number(move?.value) };
+    const inside = (row, col) => Number.isInteger(row) && Number.isInteger(col) && row >= 0 && row < rows && col >= 0 && col < columns;
+    if (!inside(entry.row, entry.col) || !inside(entry.toRow, entry.toCol) ||
+        Math.abs(entry.row - entry.toRow) + Math.abs(entry.col - entry.toCol) !== 1 || !Number.isInteger(entry.value)) {
+      return null;
+    }
+    parsed.push(entry);
+  }
+  return { rows, columns, moves: parsed };
+}
+
+function renderSumbreakOverlay(root, selection, result) {
+  const plan = buildSumbreakMoveList(result);
+  if (!plan || !plan.moves.length) return;
+  const svg = createPreviewCanvas(root, selection);
+  const cw = selection.width / plan.columns, ch = selection.height / plan.rows;
+  const arrow = Math.min(cw, ch);
+  plan.moves.forEach((move, index) => {
+    const color = PREVIEW_COLORS[index % PREVIEW_COLORS.length];
+    const from = { x: (move.col + .5) * cw, y: (move.row + .5) * ch };
+    const to = { x: (move.toCol + .5) * cw, y: (move.toRow + .5) * ch };
+    const dx = Math.sign(to.x - from.x), dy = Math.sign(to.y - from.y);
+    // Offset parallel moves sideways a little so arrows between the same cells stay readable.
+    const shift = ((index % 3) - 1) * arrow * .12;
+    const start = { x: from.x + dx * arrow * .18 + dy * shift, y: from.y + dy * arrow * .18 + dx * shift };
+    const end = { x: to.x - dx * arrow * .18 + dy * shift, y: to.y - dy * arrow * .18 + dx * shift };
+    previewPath(svg, [start, end], color, Math.max(3, Math.min(5, arrow * .05)));
+    const head = arrow * .09;
+    previewSvgNode(svg, "polygon", {
+      points: [
+        `${end.x + dx * head},${end.y + dy * head}`,
+        `${end.x - dx * head + dy * head},${end.y - dy * head + dx * head}`,
+        `${end.x - dx * head - dy * head},${end.y - dy * head - dx * head}`,
+      ].join(" "),
+      fill: color, stroke: "#ffffff", "stroke-width": 1,
+    });
+    const label = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+    previewSvgNode(svg, "circle", { cx: label.x, cy: label.y, r: 10, fill: "#ffffff", stroke: color, "stroke-width": 1.5 });
+    previewSvgNode(svg, "text", { x: label.x, y: label.y, "text-anchor": "middle", "dominant-baseline": "central",
+      fill: color, "font-size": 10, "font-weight": 700 }, String(index + 1));
+  });
 }
 
 function buildPatchesRegionList(result) {
@@ -1052,7 +1272,7 @@ function renderSolutionOverlay(puzzleType, result, selection) {
   const badge = document.createElement("div");
   badge.className = "badge";
   const icon = document.createElement("img");
-  icon.src = chrome.runtime.getURL(`assets/games/${puzzleType}.svg`);
+  icon.src = extensionAssetUrl(`assets/games/${puzzleType}.svg`);
   icon.alt = "";
   badge.append(icon, `${puzzleTypeToLabel(puzzleType)} \u00b7 ${result?.solved ? "Preview" : "No solution"}`);
   badge.style.left = `${normalized.x}px`;
@@ -1085,6 +1305,11 @@ function renderSolutionOverlay(puzzleType, result, selection) {
 
   if (puzzleType === "wend") {
     renderWendOverlay(root, normalized, result);
+    return;
+  }
+
+  if (puzzleType === "sumbreak") {
+    renderSumbreakOverlay(root, normalized, result);
     return;
   }
 
@@ -1196,9 +1421,54 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Every game applies its solution at the same pace: one move (a queen, a cell,
+// a Zip step, a rectangle, a word, a merge) starts every moveIntervalMs. Waits
+// inside a move (a second click, the game confirming input) count toward that
+// interval instead of being added after it.
+function createMovePacer(intervalMs) {
+  let lastStart = null;
+  return async function nextMove() {
+    if (lastStart !== null) {
+      const remaining = lastStart + intervalMs - Date.now();
+      if (remaining > 0) await sleep(remaining);
+    }
+    lastStart = Date.now();
+  };
+}
+
+const ACCEPT_POLL_MS = 10;
+// A path drawn in one stroke (a Zip path, a Wend word) is a single move. It
+// advances one cell every PATH_CELL_MS, the speed of a Wend word drag (four
+// 8 ms interpolation steps per cell).
+const PATH_CELL_MS = 32;
+
+// Poll a page condition until it holds; returns its value, or null on timeout.
+async function waitFor(check, timeoutMs, pollMs = ACCEPT_POLL_MS) {
+  const attempts = Math.max(1, Math.ceil(timeoutMs / pollMs));
+  for (let attempt = 0; attempt <= attempts; attempt += 1) {
+    const value = check();
+    if (value) return value;
+    if (attempt < attempts) await sleep(pollMs);
+  }
+  return null;
+}
+
+// Resolve once the element stops changing after some change, or after maxMs.
+// Used where the game gives no readable acceptance signal.
+function waitForDomToSettle(element, maxMs, quietMs = 30) {
+  if (!element || typeof MutationObserver !== "function") return sleep(maxMs);
+  return new Promise((resolve) => {
+    let quietTimer = null;
+    const finish = () => { observer.disconnect(); clearTimeout(quietTimer); clearTimeout(limitTimer); resolve(); };
+    const observer = new MutationObserver(() => { clearTimeout(quietTimer); quietTimer = setTimeout(finish, quietMs); });
+    const limitTimer = setTimeout(finish, maxMs);
+    observer.observe(element, { subtree: true, childList: true, attributes: true, characterData: true });
+  });
+}
+
 const DEFAULT_QUEENS_CLICKS_PER_MOVE = 2;
 const DEFAULT_INTER_CLICK_DELAY_MS = 45;
-const DEFAULT_INTER_MOVE_DELAY_MS = 40;
+const DEFAULT_MOVE_INTERVAL_MS = 100;
 const DEFAULT_TANGO_APPLY_MODE = "left-cycle";
 const TANGO_SUN_LEFT_CLICKS = 1;
 const TANGO_MOON_LEFT_CLICKS = 2;
@@ -1385,8 +1655,9 @@ function scoreSudokuSelectionCandidate(candidate, boardSize) {
 }
 
 async function getReadySudokuSelectionCandidates(selection, boardSize, moves) {
+  // Two equal readings 40 ms apart mean the grid has stopped moving (3 s budget).
   let previousGeometry = new Set();
-  for (let attempt = 0; attempt < 30; attempt += 1) {
+  for (let attempt = 0; attempt < 75; attempt += 1) {
     const ready = [];
     const currentGeometry = new Set();
     for (const entry of buildApplySelectionCandidates("sudoku", selection)) {
@@ -1398,7 +1669,7 @@ async function getReadySudokuSelectionCandidates(selection, boardSize, moves) {
     }
     if (ready.length) return ready;
     previousGeometry = currentGeometry;
-    await sleep(100);
+    await sleep(40);
   }
   return [];
 }
@@ -1517,7 +1788,7 @@ function normalizeApplySettings(settings) {
   return {
     queensClicksPerMove: DEFAULT_QUEENS_CLICKS_PER_MOVE,
     interClickDelayMs: normalizeDelay(settings?.interClickDelayMs, DEFAULT_INTER_CLICK_DELAY_MS),
-    interMoveDelayMs: normalizeDelay(settings?.interMoveDelayMs, DEFAULT_INTER_MOVE_DELAY_MS),
+    moveIntervalMs: normalizeDelay(settings?.moveIntervalMs, DEFAULT_MOVE_INTERVAL_MS),
     tangoApplyMode,
   };
 }
@@ -1650,6 +1921,7 @@ async function applyQueensSolution(result, selection, settings) {
   const cellHeight = normalized.height / boardSize;
   let appliedCount = 0;
   let clickCount = 0;
+  const nextMove = createMovePacer(applySettings.moveIntervalMs);
 
   for (const move of result.moves) {
     const row = Number(move.row);
@@ -1659,6 +1931,7 @@ async function applyQueensSolution(result, selection, settings) {
       continue;
     }
 
+    await nextMove();
     const x = normalized.x + (col + 0.5) * cellWidth;
     const y = normalized.y + (row + 0.5) * cellHeight;
 
@@ -1676,8 +1949,6 @@ async function applyQueensSolution(result, selection, settings) {
         clickCount += 1;
       }
     }
-
-    await sleep(applySettings.interMoveDelayMs);
   }
 
   if (result.moves.length > 0 && appliedCount === 0) {
@@ -1742,11 +2013,14 @@ async function applyVerifiedTangoSolution(result, settings) {
       parsedFixed.some(piece => !board.fixed[piece.row * 6 + piece.col] || expected[piece.row * 6 + piece.col] !== piece.piece_type)) {
     return fail("Tango capture did not identify the original clues correctly. Stopped before applying.");
   }
+  const nextMove = createMovePacer(applySettings.moveIntervalMs);
   for (let index = 0; index < 36; index += 1) {
     if (board.fixed[index] || board.values[index] === expected[index]) continue;
+    await nextMove();
     let changed = false;
     // Read after every click: a cell can already contain a sun or moon.
     for (let step = 0; step < 2 && board.values[index] !== expected[index]; step += 1) {
+      if (step > 0) await sleep(applySettings.interClickDelayMs);
       const before = board.values.slice();
       const finishing = before.every((value, cellIndex) => cellIndex === index || value === expected[cellIndex]);
       const rect = board.cells[index].getBoundingClientRect();
@@ -1755,27 +2029,21 @@ async function applyVerifiedTangoSolution(result, settings) {
       }
       if (!leftClickViewportPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)) return fail("Could not select a Tango cell.");
       counts.clickCount += 1;
-      let accepted = false;
-      for (let attempt = 0; attempt < (finishing ? 40 : 16); attempt += 1) {
-        await sleep(50);
+      const outcome = await waitFor(() => {
         const after = readTangoBoard();
-        if (!after) {
-          if (finishing && tangoCompletionVisible()) return { ok: true, ...counts,
-            appliedCount: counts.appliedCount + 1, strategy: "verified-completed-grid" };
-          continue;
-        }
-        if (after.values.some((value, cellIndex) => cellIndex !== index && value !== before[cellIndex])) {
-          return fail("Tango input changed another cell. Stopped applying.");
-        }
+        if (!after) return finishing && tangoCompletionVisible() ? "completed" : null;
+        if (after.values.some((value, cellIndex) => cellIndex !== index && value !== before[cellIndex])) return "other-cell";
         board = after;
-        if (after.values[index] !== before[index]) { accepted = true; changed = true; break; }
-      }
-      if (!accepted) return fail(`Tango did not confirm the click in cell (${Math.floor(index / 6) + 1}, ${index % 6 + 1}).`);
-      await sleep(applySettings.interClickDelayMs);
+        return after.values[index] !== before[index] ? "accepted" : null;
+      }, finishing ? 2000 : 800);
+      if (outcome === "completed") return { ok: true, ...counts,
+        appliedCount: counts.appliedCount + 1, strategy: "verified-completed-grid" };
+      if (outcome === "other-cell") return fail("Tango input changed another cell. Stopped applying.");
+      if (outcome !== "accepted") return fail(`Tango did not confirm the click in cell (${Math.floor(index / 6) + 1}, ${index % 6 + 1}).`);
+      changed = true;
     }
     if (board.values[index] !== expected[index]) return fail("Tango entered an unexpected piece. Stopped applying.");
     if (changed) counts.appliedCount += 1;
-    await sleep(applySettings.interMoveDelayMs);
   }
   return { ok: true, ...counts, strategy: "verified-tango-cells" };
 }
@@ -1849,12 +2117,14 @@ async function applyVerifiedSudokuSolution(result, selection, settings) {
   for (const move of actionableMoves) expectedFinalValues[move.row * boardSize + move.col] = move.value;
   const completeSolution = expectedFinalValues.every((value) => Number.isInteger(value) && value >= 1 && value <= boardSize);
 
+  const nextMove = createMovePacer(applySettings.moveIntervalMs);
   for (const move of actionableMoves) {
     if (sudokuNotesEnabled()) return fail("Sudoku notes mode was enabled during apply. Stopped before typing.");
     const index = move.row * boardSize + move.col;
     snapshot = getSudokuSnapshot(candidate, boardSize);
     if (!snapshot) return fail("Sudoku grid moved or became unreadable. Stopped applying.");
     if (snapshot.values[index] === move.value) continue;
+    await nextMove();
     const beforeValues = snapshot.values;
     const finishingMove = completeSolution && beforeValues.every((value, cellIndex) =>
       cellIndex === index || value === expectedFinalValues[cellIndex]);
@@ -1867,17 +2137,17 @@ async function applyVerifiedSudokuSolution(result, selection, settings) {
     await sleep(Math.max(80, applySettings.interClickDelayMs));
 
     // A click can rerender the whole grid. Reacquire the live cell and wait for selection.
-    let live = null;
-    for (let attempt = 0; attempt < 12; attempt += 1) {
-      live = getSudokuSnapshot(candidate, boardSize);
-      if (!live || live.geometry !== geometry) return fail("Sudoku grid moved while selecting a cell.");
-      if (live.values.some((value, cellIndex) => value !== beforeValues[cellIndex])) {
-        return fail("Sudoku board changed while selecting a cell. Stopped applying.");
+    let selectionError = null;
+    const live = await waitFor(() => {
+      const current = getSudokuSnapshot(candidate, boardSize);
+      if (!current || current.geometry !== geometry) { selectionError = "Sudoku grid moved while selecting a cell."; return "error"; }
+      if (current.values.some((value, cellIndex) => value !== beforeValues[cellIndex])) {
+        selectionError = "Sudoku board changed while selecting a cell. Stopped applying.";
+        return "error";
       }
-      if (isSudokuCellSelected(live.cells[index])) break;
-      live = null;
-      await sleep(50);
-    }
+      return isSudokuCellSelected(current.cells[index]) ? current : null;
+    }, 600);
+    if (live === "error") return fail(selectionError);
     if (!live) return fail(`Sudoku did not select cell (${move.row + 1}, ${move.col + 1}). Stopped before typing.`);
     // Cells are non-focusable divs. Synthetic clicks do not perform the
     // browser's default focus action, so focus the game's keyboard surface.
@@ -1889,16 +2159,14 @@ async function applyVerifiedSudokuSolution(result, selection, settings) {
     }
     counts.keyCount += 1;
 
-    let verified = false;
-    let completed = false;
-    for (let attempt = 0; attempt < (finishingMove ? 40 : 16); attempt += 1) {
+    const outcome = await waitFor(() => {
       const after = getSudokuSnapshot(candidate, boardSize);
       if (after) {
         if (after.geometry !== geometry || after.values.some((value, cellIndex) => cellIndex !== index && value !== beforeValues[cellIndex])) {
-          return fail("Sudoku input changed another cell or the grid moved. Stopped without replaying moves.");
+          return "other-cell";
         }
-        if (after.values[index] === move.value) { verified = true; break; }
-        if (after.values[index] !== beforeValues[index]) return fail("Sudoku entered an unexpected number. Stopped applying.");
+        if (after.values[index] === move.value) return "verified";
+        if (after.values[index] !== beforeValues[index]) return "unexpected";
       } else if (completeSolution && (
         live.cells.every((cell, cellIndex) => readSudokuCellValue(cell, boardSize) === expectedFinalValues[cellIndex]) ||
         (finishingMove && sudokuCompletionVisible()))) {
@@ -1906,16 +2174,15 @@ async function applyVerifiedSudokuSolution(result, selection, settings) {
         // Accept all 36 retained DOM values, or the game's explicit victory
         // receipt after the other 35 values were verified. Disappearance alone
         // is never success and no key is replayed.
-        verified = true;
-        completed = true;
-        break;
+        return "completed";
       }
-      await sleep(50);
-    }
-    if (!verified) return fail(`Sudoku did not confirm ${move.value} in cell (${move.row + 1}, ${move.col + 1}). Stopped without replaying moves.`);
+      return null;
+    }, finishingMove ? 2000 : 800);
+    if (outcome === "other-cell") return fail("Sudoku input changed another cell or the grid moved. Stopped without replaying moves.");
+    if (outcome === "unexpected") return fail("Sudoku entered an unexpected number. Stopped applying.");
+    if (!outcome) return fail(`Sudoku did not confirm ${move.value} in cell (${move.row + 1}, ${move.col + 1}). Stopped without replaying moves.`);
     counts.appliedCount += 1;
-    if (completed) return { ok: true, ...counts, strategy: "verified-completed-grid" };
-    await sleep(applySettings.interMoveDelayMs);
+    if (outcome === "completed") return { ok: true, ...counts, strategy: "verified-completed-grid" };
   }
   return { ok: true, ...counts, strategy: "verified-cell-then-keyboard" };
 }
@@ -2027,12 +2294,13 @@ async function applyZipSolution(result, selection, settings) {
 
   await sleep(Math.max(80, applySettings.interClickDelayMs));
 
+  // The whole path is one stroke, drawn at the same speed as a Wend word.
   let keyCount = 0;
-  for (const direction of directions) {
-    if (dispatchArrowKey(direction)) {
+  for (let index = 0; index < directions.length; index += 1) {
+    if (index > 0) await sleep(PATH_CELL_MS);
+    if (dispatchArrowKey(directions[index])) {
       keyCount += 1;
     }
-    await sleep(applySettings.interMoveDelayMs);
   }
 
   return {
@@ -2074,8 +2342,11 @@ async function applyPatchesSolution(result, selection, settings) {
 
   let appliedCount = 0;
   let clickCount = 0;
+  const nextMove = createMovePacer(applySettings.moveIntervalMs);
+  const board = nativeGameBoard("patches");
 
   for (const region of regions) {
+    await nextMove();
     const startX = normalized.x + (region.left + 0.5) * cellWidth;
     const startY = normalized.y + (region.top + 0.5) * cellHeight;
     const endX = normalized.x + (region.left + region.width - 0.5) * cellWidth;
@@ -2091,8 +2362,9 @@ async function applyPatchesSolution(result, selection, settings) {
       clickCount += 1;
     }
 
-    // Patches updates its drag state asynchronously; rapid consecutive drags are dropped.
-    await sleep(Math.max(150, applySettings.interMoveDelayMs));
+    // Patches updates its drag state asynchronously and drops a drag that
+    // starts too soon. Wait until the board stops changing (at most 150 ms).
+    await waitForDomToSettle(board, 150);
   }
 
   if (appliedCount === 0) {
@@ -2119,6 +2391,7 @@ async function applyWendSolution(result, selection, settings) {
   if (!boardSize || !words.length) return { ok: false, error: "No valid Wend word paths are available." };
   let appliedCount = 0;
   const fail = error => ({ ok: false, error, appliedCount, strategy: "verified-word-path-drag" });
+  const nextMove = createMovePacer(applySettings.moveIntervalMs);
   for (const entry of words) {
     const board = nativeGameBoard("wend");
     const cells = entry.path.map(step => board?.querySelector(`[data-cell-idx="${step.row * boardSize + step.col}"]`));
@@ -2133,21 +2406,78 @@ async function applyWendSolution(result, selection, settings) {
     if (points.some(point => point.x < 0 || point.y < 0 || point.x >= window.innerWidth || point.y >= window.innerHeight)) {
       return fail("Wend board moved outside the viewport. Stopped applying.");
     }
-    if (!await dragViewportPath(points, 4)) return fail("Could not draw a Wend word path.");
-    let accepted = false;
-    for (let attempt = 0; attempt < 40; attempt += 1) {
-      await sleep(50);
+    await nextMove();
+    if (!await dragViewportPath(points, PATH_CELL_MS / 8)) return fail("Could not draw a Wend word path.");
+    const accepted = await waitFor(() => {
       const live = nativeGameBoard("wend");
-      if (entry.path.every(step => live?.querySelector(`[data-cell-idx="${step.row * boardSize + step.col}"]`)
-          ?.getAttribute("data-cell-is-locked") === "true") || /\/games\/wend\/results\//.test(window.location.pathname)) {
-        accepted = true; break;
-      }
-    }
+      return entry.path.every(step => live?.querySelector(`[data-cell-idx="${step.row * boardSize + step.col}"]`)
+          ?.getAttribute("data-cell-is-locked") === "true") || /\/games\/wend\/results\//.test(window.location.pathname);
+    }, 2000);
     if (!accepted) return fail(`Wend did not accept the word ${entry.word}. Stopped without replaying paths.`);
     appliedCount += 1;
-    await sleep(Math.max(80, applySettings.interMoveDelayMs));
   }
   return { ok: true, appliedCount, clickCount: appliedCount, strategy: "verified-word-path-drag" };
+}
+
+function sumbreakTileButton(root, row, col, columns) {
+  return root?.querySelector(`[data-numo-index="${row * columns + col}"] button[data-numo-kind="number"]`) || null;
+}
+
+function sumbreakFinished() {
+  return /\/games\/(view\/)?sumbreak\/results\//.test(window.location.pathname);
+}
+
+async function applySumbreakSolution(result, selection, settings) {
+  const applySettings = normalizeApplySettings(settings);
+  const plan = buildSumbreakMoveList(result);
+  if (!plan) return { ok: false, error: "No valid Sumbreak moves are available." };
+  let appliedCount = 0, clickCount = 0;
+  const fail = error => ({ ok: false, error, appliedCount, clickCount, strategy: "verified-tap-merge" });
+  const initial = Array.isArray(result?.details?.board) ? result.details.board : null;
+  const startRoot = nativeGameBoard("sumbreak");
+  const startBoard = startRoot && readSumbreakBoardValues(startRoot);
+  if (!startBoard || startBoard.length !== plan.rows || startBoard[0].length !== plan.columns) {
+    return fail("Could not read the Sumbreak board. Stopped before applying.");
+  }
+  if (initial && JSON.stringify(initial) !== JSON.stringify(startBoard)) {
+    return fail("Sumbreak board no longer matches the solved puzzle. Solve again before applying.");
+  }
+
+  const nextMove = createMovePacer(applySettings.moveIntervalMs);
+  for (const move of plan.moves) {
+    if (sumbreakFinished()) break;
+    await nextMove();
+    const root = nativeGameBoard("sumbreak");
+    const source = sumbreakTileButton(root, move.row, move.col, plan.columns);
+    const target = sumbreakTileButton(root, move.toRow, move.toCol, plan.columns);
+    const before = root && readSumbreakBoardValues(root);
+    if (!source || !target || !before) return fail("Could not find the Sumbreak tiles for the next move. Stopped applying.");
+    const half = move.value / 2;
+    if (before[move.row][move.col] !== half || before[move.toRow][move.toCol] !== half) {
+      return fail("Sumbreak tiles do not match the planned move. Stopped applying.");
+    }
+    // A selected tile from a previous manual tap would turn our first tap into a merge attempt.
+    for (const pressed of root.querySelectorAll('button[aria-pressed="true"]')) {
+      if (pressed !== source) pressed.click();
+    }
+    if (source.getAttribute("aria-pressed") !== "true") {
+      source.click();
+      clickCount += 1;
+      await sleep(applySettings.interClickDelayMs);
+    }
+    target.click();
+    clickCount += 1;
+
+    const merged = await waitFor(() => {
+      if (sumbreakFinished()) return true;
+      const live = nativeGameBoard("sumbreak");
+      const after = live && readSumbreakBoardValues(live);
+      return Boolean(after && after[move.row][move.col] === null && after[move.toRow][move.toCol] === move.value);
+    }, 2000);
+    if (!merged) return fail(`Sumbreak did not accept merge ${appliedCount + 1}. Stopped applying.`);
+    appliedCount += 1;
+  }
+  return { ok: true, appliedCount, clickCount, strategy: "verified-tap-merge" };
 }
 
 async function applySolution(puzzleType, result, selection, settings) {
@@ -2169,6 +2499,10 @@ async function applySolution(puzzleType, result, selection, settings) {
 
   if (puzzleType === "wend") {
     return applyWendSolution(result, selection, settings);
+  }
+
+  if (puzzleType === "sumbreak") {
+    return applySumbreakSolution(result, selection, settings);
   }
 
   return applyQueensSolution(result, selection, settings);
@@ -2194,6 +2528,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "getBoardSelection") {
     sendResponse({ ok: true, selection: boardSelection });
+    return;
+  }
+
+  if (message.type === "readSumbreakPageBoard") {
+    const parsedBoard = readSumbreakPageBoard();
+    sendResponse({ ok: Boolean(parsedBoard), parsedBoard });
     return;
   }
 

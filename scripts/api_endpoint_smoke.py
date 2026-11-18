@@ -53,6 +53,11 @@ def main() -> int:
             response = client.post(
                 f"/solve/{puzzle}",
                 files={"image": (absolute_path.name, image_file, "image/png")},
+                data=(
+                    {"parsed_board": (REPO_ROOT / definition.page_board_fixture).read_text(encoding="utf-8")}
+                    if definition.page_board_fixture
+                    else None
+                ),
             )
 
         if response.status_code != 200:

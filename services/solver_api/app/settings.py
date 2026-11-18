@@ -22,6 +22,7 @@ class Settings:
     worker_timeout: int = 60
     max_upload_bytes: int = 10 * 1024 * 1024
     max_concurrent_workers: int = 0
+    max_warm_workers: int = 8
     cors_origins: tuple[str, ...] = ("*",)
     cors_origin_regex: str | None = None
 
@@ -34,6 +35,7 @@ class Settings:
             worker_mode=os.getenv("SOLVER_WORKER_MODE", "persistent" if hosted else "subprocess").strip().lower(),
             max_upload_bytes=4 * 1024 * 1024 if hosted else 10 * 1024 * 1024,
             max_concurrent_workers=1 if hosted else 0,
+            max_warm_workers=int(os.getenv("SOLVER_MAX_WARM_WORKERS", "8")),
             cors_origins=tuple(parse_cors_origins(os.getenv("CORS_ALLOW_ORIGINS", "*"))),
             cors_origin_regex=(os.getenv("CORS_ALLOW_ORIGIN_REGEX") or "").strip() or None,
         )

@@ -8,7 +8,7 @@ Install from the stable `main` branch or a release tag. `develop` contains work 
 
 - Manual board selection on the active tab.
 - Auto board detection (top page + iframe-aware).
-- Solve via API endpoints for Queens, Tango, Mini Sudoku, Zip, Patches, and Wend.
+- Solve via API endpoints for Queens, Tango, Mini Sudoku, Zip, Patches, Wend, and Sumbreak.
 - Overlay preview for detected moves.
 - Auto-apply support:
   - Queens: click-based input.
@@ -17,6 +17,7 @@ Install from the stable `main` branch or a release tag. `develop` contains work 
   - Zip: start click + arrow keys.
   - Patches: rectangle drag from corner to corner.
   - Wend: progressive drag through each solved word path.
+  - Sumbreak: tap the source tile, then the equal neighbour it merges into; each merge is verified before the next.
 - Main action: `Solve & apply`, with a separate `Preview solution` option.
 - `Board tools`: detect/select a board, apply the last solution, or clear the preview.
 - `Preferences`: custom service address, input timing and auto-close.
@@ -87,6 +88,7 @@ Notes:
    - `https://www.linkedin.com/games/zip/`
    - `https://www.linkedin.com/games/patches/`
    - `https://www.linkedin.com/games/wend/`
+   - `https://www.linkedin.com/games/sumbreak/`
 2. Click `Solve <Game>` directly on the page, or open the extension icon in Chrome’s toolbar for preview and preferences. No toolbar activation is required before using the page button.
 3. Choose `Online`, or `Local / custom` with a service address in `Preferences` (`8000` for Uvicorn or `18000` for Docker).
 4. The game is detected from the active tab; change `Your game` if needed. Keep the whole board visible, including Wend's answer slots.
@@ -96,16 +98,19 @@ Chrome requires the `<all_urls>` host permission for capture from an in-page but
 
 ## Input timing
 
-Preferences default to 45 ms between clicks and 40 ms between moves. Each game has a different input unit and extra waits, so equal preferences do not produce equal total application times. These waits run in the browser, independently of the API solve time.
+Every game applies its solution at the same pace. **Move interval** (default 100 ms) is the time from the start of one move to the start of the next; a move is one queen, one Tango or Sudoku cell, one Patches rectangle, one Wend word or one Sumbreak merge. A path drawn in one stroke (the Zip path, a Wend word) advances one cell every 32 ms. Waits inside a move count toward the interval rather than being added after it, and the extension checks the game's confirmation every 10 ms. **Between clicks** (default 45 ms) only separates two clicks within the same move. These waits run in the browser, independently of the API solve time.
 
-| Game | Input and additional waits |
-| --- | --- |
-| Queens | Two clicks per queen; click delay between them and move delay after the queen. |
-| Tango | One or two clicks per empty cell; polls acceptance every 50 ms, then applies click and move delays. |
-| Mini Sudoku | Selects a cell, waits at least 80 ms, types one number and checks acceptance; selection and value checks may poll every 50 ms. The configured move delay follows each accepted number. |
-| Zip | One start click with at least 80 ms activation time, then arrow keys separated by the move delay. |
-| Patches | One drag per rectangle, with at least 150 ms between rectangles so the game accepts consecutive drags. |
-| Wend | A drag per word, including 8 ms per interpolation step; polls acceptance every 50 ms, then waits at least 80 ms between words. |
+A move only takes longer than the interval when the game itself needs more time:
+
+| Game | Move | Waits inside the move |
+| --- | --- | --- |
+| Queens | One queen | Two clicks, separated by the click delay. |
+| Tango | One cell | One or two clicks; each is confirmed before the next. |
+| Mini Sudoku | One cell | Select, at least 80 ms for the game to take keyboard input, type, confirm. |
+| Zip | The whole path | A start click with at least 80 ms activation time, then one arrow key every 32 ms. |
+| Patches | One rectangle | Drag, then up to 150 ms for the board to settle (the game drops drags that start too soon). |
+| Wend | One word | The drag itself (8 ms per interpolation step), then the game locking the word. |
+| Sumbreak | One merge | Two taps separated by the click delay, then the merged tile appearing. |
 
 Mini Sudoku captures its outer board frame plus an 8 CSS-pixel margin. The inner grid remains the reference for locating cells when applying numbers.
 
@@ -124,4 +129,6 @@ curl http://127.0.0.1:18000/health
 - LinkedIn games run in an iframe; this extension includes frame-aware mapping for detection, overlay, and apply.
 - Mini Sudoku disables Notes mode, waits for a complete, stable, readable grid, checks LinkedIn's cell indices and active-cell marker, focuses the keyboard-enabled grid (the cells themselves cannot take focus), and verifies each committed number before continuing. If a click or number is not accepted, it stops instead of replaying the solution or clicking guessed cells. A second apply request cannot run concurrently in the same game frame.
 - After updating extension code, reload the extension and refresh existing LinkedIn tabs once so they use the updated content script.
-- If Firefox shows `background.service_worker is currently disabled. Add background.scripts.`, remove and reload the temporary add-on from `extension/manifest.json` after pulling latest changes.
+- If Chrome invalidates an open game's extension context during an update, the widget stops polling and offers **Reload page** to load the new script.
+- For Firefox, install the extracted Firefox package generated by `python3 scripts/package_extension.py --browser firefox`; the source manifest is kept in Chrome Manifest V3 format.
+- After changing or reloading the extension, refresh existing LinkedIn tabs so their content scripts use the current extension context.

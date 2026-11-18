@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import tempfile
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -11,13 +10,14 @@ from PIL import Image, ImageDraw, ImageFont
 
 from core.commons import BoardBBox, crop_board, external_contour_bbox_candidates, load_bgr_image, uniform_grid_bounds
 from core.vision import CosineTemplateMatcher, OcrPrediction, build_parsed_board_payload
-from core.ocr_fonts import font_fingerprint, ocr_font_paths
+from core.ocr_fonts import ocr_cache_paths, ocr_font_paths
 
 
 MIN_BOARD_SIZE = 5
 MAX_BOARD_SIZE = 8
 OCR_SIZE = 42
 OCR_DARK_THRESHOLD = 120
+WEND_OCR_CACHE_PREFIX = "linkedin_puzzle_solvers_wend_letters_v2"
 
 
 class _LetterOcr:
@@ -50,13 +50,16 @@ class _LetterOcr:
 
     def _load_or_build_templates(self) -> tuple[np.ndarray, list[str]]:
         font_paths = self._candidate_font_paths()
-        cache_path = self._template_cache_path(font_paths)
-        if cache_path.exists():
+        cache_path, packaged_path = self._template_cache_paths(font_paths)
+        for candidate in (cache_path, packaged_path):
+            if candidate is None or not candidate.exists():
+                continue
             try:
-                with np.load(cache_path) as cached:
+                with np.load(candidate) as cached:
                     return cached["features"].astype(np.float32), [str(value) for value in cached["labels"].tolist()]
             except (OSError, ValueError, KeyError, EOFError):
-                cache_path.unlink(missing_ok=True)
+                if candidate == cache_path:
+                    cache_path.unlink(missing_ok=True)
 
         features: list[np.ndarray] = []
         labels: list[str] = []
@@ -87,11 +90,10 @@ class _LetterOcr:
         return feature_array, labels
 
     @staticmethod
-    def _template_cache_path(font_paths: list[str]) -> Path:
+    def _template_cache_paths(font_paths: list[str]) -> tuple[Path, Path | None]:
         # Installed fonts affect OCR predictions. Rebuild after adding/updating a
         # font instead of silently retaining a template bank from an older runtime.
-        fingerprint = font_fingerprint(font_paths)
-        return Path(tempfile.gettempdir()) / f"linkedin_puzzle_solvers_wend_letters_v2_{fingerprint}.npz"
+        return ocr_cache_paths(WEND_OCR_CACHE_PREFIX, font_paths)
 
     def _render_letter(self, letter: str, font: ImageFont.FreeTypeFont, offset_x: int, offset_y: int) -> np.ndarray:
         image = Image.new("L", (OCR_SIZE, OCR_SIZE), 0)

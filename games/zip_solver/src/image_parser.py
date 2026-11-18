@@ -62,7 +62,10 @@ class _ZipClueOcr:
         return _OcrPrediction(
             value=int(best_value),
             score=float(best_score),
-            candidates=[(int(value), float(score)) for value, score in scores[:3]],
+            # Keep a wider tail for ambiguity recovery. LinkedIn highlights the
+            # first clue with an orange ring, which can push the correct OCR
+            # digit below the top three (for example, 1 can rank fifth).
+            candidates=[(int(value), float(score)) for value, score in scores[:8]],
         )
 
     def _build_templates(self) -> dict[int, list[np.ndarray]]:

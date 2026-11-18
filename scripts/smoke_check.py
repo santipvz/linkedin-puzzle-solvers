@@ -23,9 +23,14 @@ def run_worker(
     puzzle_name: str,
     expected_board_size: int,
     sample_label: str | None = None,
+    page_board_path: Path | None = None,
 ) -> None:
+    command = [sys.executable, str(worker_path), str(image_path)]
+    if page_board_path is not None:
+        command.append("--parsed-board")
     result = subprocess.run(
-        [sys.executable, str(worker_path), str(image_path)],
+        command,
+        input=page_board_path.read_text(encoding="utf-8") if page_board_path is not None else None,
         capture_output=True,
         text=True,
         check=False,
@@ -91,6 +96,7 @@ def main() -> int:
                 puzzle_name=definition.key,
                 expected_board_size=int(definition.expected_board_size),
                 sample_label=sample_path.name,
+                page_board_path=(REPO_ROOT / definition.page_board_fixture) if definition.page_board_fixture else None,
             )
 
     return 0

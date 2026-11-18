@@ -1,6 +1,7 @@
-"""One reusable, killable child per API instance; changing games replaces it."""
+"""Reusable, killable children: one per game, kept warm up to a small limit."""
 from __future__ import annotations
 
+from collections import OrderedDict
 import atexit
 import json
 import os
@@ -15,6 +16,8 @@ from ..domain.errors import SolverBusy, SolverTimeout, WorkerFailure
 
 
 class PersistentWorker:
+    """A single child process serving one game worker over JSON lines."""
+
     def __init__(self, timeout: float) -> None:
         self.timeout = timeout
         self.process: subprocess.Popen | None = None
@@ -76,3 +79,52 @@ class PersistentWorker:
             raise WorkerFailure(f"Persistent worker failed: {exc}") from exc
         finally:
             self.lock.release()
+
+
+class PersistentWorkerPool:
+    """Keeps one warm child per game so switching games does not pay start-up again.
+
+    Each child still holds only its own game's imports and OCR caches. The least
+    recently used idle child is closed once more than ``max_workers`` are alive.
+    """
+
+    def __init__(self, timeout: float, max_workers: int = 8) -> None:
+        self.timeout = timeout
+        self.max_workers = max(1, int(max_workers))
+        self.children: OrderedDict[Path, PersistentWorker] = OrderedDict()
+        self._lock = threading.Lock()
+        atexit.register(self.close)
+
+    def close(self) -> None:
+        with self._lock:
+            children = list(self.children.values())
+            self.children.clear()
+        for child in children:
+            child.close()
+
+    def solve(self, worker_path: Path, image_path: Path, parsed_board: dict | None) -> dict:
+        with self._lock:
+            child = self.children.get(worker_path)
+            if child is None:
+                child = PersistentWorker(self.timeout)
+                self.children[worker_path] = child
+            self.children.move_to_end(worker_path)
+            evicted = self._evict_idle_locked(keep=worker_path)
+        for old in evicted:
+            old.close()
+        return child.solve(worker_path, image_path, parsed_board)
+
+    def _evict_idle_locked(self, keep: Path) -> list[PersistentWorker]:
+        evicted: list[PersistentWorker] = []
+        for path in list(self.children):
+            if len(self.children) <= self.max_workers:
+                break
+            if path == keep:
+                continue
+            child = self.children[path]
+            # Never kill a child that is answering another request.
+            if child.lock.acquire(blocking=False):
+                child.lock.release()
+                del self.children[path]
+                evicted.append(child)
+        return evicted

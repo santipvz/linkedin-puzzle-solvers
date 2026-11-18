@@ -15,13 +15,13 @@ The Vercel GitHub integration is connected to this repository: `main` deploys to
 
 The CLI command above also creates a protected preview. Use `npx vercel@65.4.0 curl /health --deployment <preview-url>` to test it while authenticated. For a manual production deploy or recovery, run `npx vercel@65.4.0 deploy --prod` from the tested release on `main`.
 
-Validate the public API with the six tracked game samples:
+Validate the public API with the seven tracked game samples:
 
 ```bash
 python3 scripts/api_endpoint_smoke.py --base-url https://linkedin-puzzle-solvers.vercel.app
 ```
 
-CI also runs `python3 scripts/api_endpoint_smoke.py --hosted` to solve all six samples with the Vercel profile and bundled fonts before merging.
+CI also runs `python3 scripts/api_endpoint_smoke.py --hosted` to solve all seven samples with the Vercel profile and bundled fonts before merging.
 
 ## Runtime
 
@@ -29,7 +29,7 @@ CI also runs `python3 scripts/api_endpoint_smoke.py --hosted` to solve all six s
 - `.vercelignore` excludes development files, examples, captures, secrets and extension assets. Tango templates, OCR fonts and Wend dictionaries remain in the deployment.
 - Open font files and their license notices live in `core/assets/fonts/`. Vercel uses this deterministic font set; local installations keep their system font selection and fall back to the bundled fonts when needed.
 - `VERCEL=1` disables capture archiving by default, caps uploads at 4 MiB (below Vercel's 4.5 MB request limit), and allows one active solver per instance. Oversized online captures are JPEG-compressed by the extension without changing dimensions; images still over the limit are rejected.
-- Hosted solvers reuse one isolated worker process per API instance, with a 60-second timeout and one BLAS thread. Consecutive solves of the same game keep imports and OCR caches; changing games, timeouts or worker failures replace the child. Set `SOLVER_WORKER_MODE=subprocess` to start a fresh child for each solve. Disk OCR caches and temporary images use `/tmp`; temporary uploads are removed after each solve. The function has a 120-second limit.
+- Hosted solvers keep one isolated worker process per game in each API instance (up to `SOLVER_MAX_WARM_WORKERS`, default 8; the least recently used idle one is closed beyond that), with a 60-second timeout and one BLAS thread. Switching between games reuses each game's warm imports and OCR caches; timeouts or worker failures replace that game's child. Together they use roughly 300 MB of private memory. Set `SOLVER_WORKER_MODE=subprocess` to start a fresh child for each solve. OCR template banks for the bundled fonts ship prebuilt in `core/assets/ocr_cache/`, so new instances skip rendering them. They are keyed by font contents and the Pillow/FreeType versions, because glyph pixels differ between versions; other setups rebuild them as before. Regenerate them inside the CI image, which pins the same Pillow as Vercel: `docker build --target ci -f deploy/local/Dockerfile -t solver-ci-env .` then `docker run --rm --user "$(id -u):$(id -g)" --volume "$PWD:/app" solver-ci-env python3 scripts/build_ocr_caches.py`. CI fails when they are stale. Other disk OCR caches and temporary images use `/tmp`; temporary uploads are removed after each solve. The function has a 120-second limit. Each solve response carries a `Server-Timing: solve;dur=<ms>` header with the server-side parse and solve time, excluding upload and network.
 - Busy instances return HTTP 503 with `Retry-After`. This is an instance resource limit, not a global request quota: Vercel may start additional instances. The online service is a trial; measure usage before opening it to a large audience.
 
 Local Uvicorn and Docker commands remain supported. Do not embed Vercel deployment bypass secrets or account credentials in the extension.

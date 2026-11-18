@@ -29,6 +29,8 @@ COMMANDS: tuple[tuple[str, ...], ...] = (
         "extension/tests/sudoku_apply.test.js",
         "extension/tests/tango_apply.test.js",
         "extension/tests/wend_apply.test.js",
+        "extension/tests/sumbreak_apply.test.js",
+        "extension/tests/move_pacing.test.js",
         "scripts/tests/gitflow.test.js",
     ),
 )
