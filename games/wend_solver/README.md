@@ -24,7 +24,7 @@ The parser owns Wend-specific thresholds, blocked-cell detection, answer-slot pa
 
 ## Reliability
 
-The worker auto-applies only when the board structure is consistent and the solution is uniquely enumerated. Responses expose `input_source` (`page` or `image`), diagnostic `candidate_word_sets`, OCR corrections, retained solution costs, exact-count status, and pipeline revision under `details`. Page input still rejects genuine dictionary/path ambiguity; it does not choose an arbitrary cover.
+The worker auto-applies only when the board structure is consistent and the solution is uniquely enumerated. Responses expose `input_source` (`page` or `image`), diagnostic `candidate_word_sets`, OCR corrections, retained solution costs, exact-count status, and pipeline revision under `details`. With page input the letters are exact, so remaining ambiguity is about vocabulary. When every cover was enumerated and exactly one uses the fewest proper nouns and reviewed rare words (`data/proper_nouns.txt`, `data/rare_words.txt`), the worker applies that cover and reports `tie_break: "fewest_rare_words"` with the per-cover counts. Otherwise it still refuses an ambiguous board, and image input always requires a unique cover. Wend 2026-11-18 (`tests/fixtures/linkedin-2026-11-18.json`) has two covers differing only in NEW and WEN; the tie-break selects NEW.
 
 `tests/fixtures/linkedin-2026-10-29.json` records the public letters and lengths from Wend 143. Those letters have one cover: OAR, FLOOR, MIRROR, OREGANO and FOOTWORK.
 
