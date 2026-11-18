@@ -5,8 +5,12 @@ let quickSolveButton = null;
 let quickSolveStatus = null;
 let quickSolveBusy = false;
 let quickSolveObservedUrl = "";
+let quickSolveIntervalId = null;
+let extensionContextInvalidated = false;
 let sudokuApplyBusy = false;
 let tangoApplyBusy = false;
+
+const EXTENSION_RELOAD_MESSAGE = "Extension updated. Reload this page to continue.";
 
 const puzzleRegistry = globalThis.PuzzleRegistry;
 if (!puzzleRegistry) {
@@ -36,17 +40,99 @@ function detectPuzzleTypeFromPage() {
   return null;
 }
 
+function isInvalidatedContextError(error) {
+  return String(error?.message || error).includes("Extension context invalidated");
+}
+
+function showExtensionReloadNotice() {
+  if (quickSolveButton) {
+    quickSolveButton.disabled = false;
+    quickSolveButton.textContent = "Reload page";
+    quickSolveButton.setAttribute("aria-label", "Reload this page to use Puzzle Solver");
+    quickSolveButton.setAttribute("aria-busy", "false");
+    quickSolveButton.style.backgroundImage = "none";
+  }
+  setQuickSolveStatus(EXTENSION_RELOAD_MESSAGE, true);
+}
+
+function invalidateExtensionContext() {
+  extensionContextInvalidated = true;
+  if (quickSolveIntervalId !== null) {
+    clearInterval(quickSolveIntervalId);
+    quickSolveIntervalId = null;
+  }
+  quickSolveBusy = false;
+  clearSolutionOverlay();
+  showExtensionReloadNotice();
+}
+
+function hasExtensionContext() {
+  if (extensionContextInvalidated) {
+    return false;
+  }
+  try {
+    if (chrome.runtime.id) {
+      return true;
+    }
+  } catch (error) {
+    if (!isInvalidatedContextError(error)) {
+      throw error;
+    }
+  }
+  invalidateExtensionContext();
+  return false;
+}
+
+function runtimeMessageError(error) {
+  if (extensionContextInvalidated || isInvalidatedContextError(error)) {
+    invalidateExtensionContext();
+    return new Error(EXTENSION_RELOAD_MESSAGE);
+  }
+  return new Error(error?.message || String(error));
+}
+
 function sendRuntimeMessage(message) {
   return new Promise((resolve, reject) => {
-    chrome.runtime.sendMessage(message, (response) => {
-      const error = chrome.runtime.lastError;
-      if (error) {
-        reject(new Error(error.message));
-        return;
-      }
-      resolve(response);
-    });
+    if (!hasExtensionContext()) {
+      reject(new Error(EXTENSION_RELOAD_MESSAGE));
+      return;
+    }
+    try {
+      chrome.runtime.sendMessage(message, (response) => {
+        try {
+          const error = chrome.runtime.lastError;
+          if (error) {
+            reject(runtimeMessageError(error));
+          } else if (!hasExtensionContext()) {
+            reject(new Error(EXTENSION_RELOAD_MESSAGE));
+          } else {
+            resolve(response);
+          }
+        } catch (error) {
+          reject(runtimeMessageError(error));
+        }
+      });
+    } catch (error) {
+      reject(runtimeMessageError(error));
+    }
   });
+}
+
+function extensionAssetUrl(path) {
+  if (extensionContextInvalidated) {
+    return "";
+  }
+  try {
+    return chrome.runtime.getURL(path);
+  } catch (error) {
+    // A content script can outlive an extension reload in an already-open tab.
+    // Chrome invalidates its runtime APIs until that tab is refreshed.
+    if (isInvalidatedContextError(error)) {
+      invalidateExtensionContext();
+      return "";
+    }
+    throw error;
+  }
 }
 
 function setQuickSolveStatus(text, isError = false) {
@@ -63,6 +149,10 @@ function updateQuickSolveButtonText() {
   if (!quickSolveButton) {
     return;
   }
+  if (extensionContextInvalidated) {
+    showExtensionReloadNotice();
+    return;
+  }
 
   const puzzleType = detectPuzzleTypeFromPage();
   const puzzleLabel = puzzleTypeToLabel(puzzleType);
@@ -74,7 +164,8 @@ function updateQuickSolveButtonText() {
   }
   quickSolveButton.setAttribute("aria-label", quickSolveButton.textContent);
   quickSolveButton.setAttribute("aria-busy", String(quickSolveBusy));
-  quickSolveButton.style.backgroundImage = `url("${chrome.runtime.getURL(`assets/games/${puzzleType}.svg`)}")`;
+  const iconUrl = extensionAssetUrl(`assets/games/${puzzleType}.svg`);
+  quickSolveButton.style.backgroundImage = iconUrl ? `url("${iconUrl}")` : "none";
 }
 
 function removeQuickSolveWidget() {
@@ -89,6 +180,13 @@ function removeQuickSolveWidget() {
 }
 
 async function onQuickSolveClick() {
+  if (extensionContextInvalidated) {
+    window.location.reload();
+    return;
+  }
+  if (!hasExtensionContext()) {
+    return;
+  }
   const puzzleType = detectPuzzleTypeFromPage();
   if (!puzzleType) {
     setQuickSolveStatus("Open Queens, Tango, Mini Sudoku, Zip, Patches, Wend, or Sumbreak page.", true);
@@ -141,7 +239,7 @@ async function onQuickSolveClick() {
   } finally {
     quickSolveBusy = false;
     if (quickSolveButton) {
-      quickSolveButton.disabled = false;
+      quickSolveButton.disabled = extensionContextInvalidated;
     }
     updateQuickSolveButtonText();
   }
@@ -210,7 +308,7 @@ function createQuickSolveWidget() {
   const title = document.createElement("div");
   title.className = "title";
   const logo = document.createElement("img");
-  logo.src = chrome.runtime.getURL("assets/logo.png");
+  logo.src = extensionAssetUrl("assets/logo.png");
   logo.alt = "";
   title.append(logo, "Puzzle Solver");
 
@@ -238,6 +336,9 @@ function createQuickSolveWidget() {
 }
 
 function syncQuickSolveWidget() {
+  if (!hasExtensionContext()) {
+    return;
+  }
   if (window.self !== window.top) {
     removeQuickSolveWidget();
     return;
@@ -264,7 +365,13 @@ function initializeQuickSolveWidget() {
   quickSolveObservedUrl = window.location.href;
   syncQuickSolveWidget();
 
-  setInterval(() => {
+  if (extensionContextInvalidated) {
+    return;
+  }
+  quickSolveIntervalId = setInterval(() => {
+    if (!hasExtensionContext()) {
+      return;
+    }
     if (window.location.href !== quickSolveObservedUrl) {
       quickSolveObservedUrl = window.location.href;
       boardSelection = null;
@@ -876,7 +983,7 @@ function createPreviewCanvas(root, selection) {
 
 function previewGamePiece(svg, x, y, size, name) {
   previewSvgNode(svg, "image", { x: x - size / 2, y: y - size / 2, width: size, height: size,
-    href: chrome.runtime.getURL(`assets/pieces/${name}.svg`), "aria-label": name });
+    href: extensionAssetUrl(`assets/pieces/${name}.svg`), "aria-label": name });
 }
 
 function renderQueensOverlay(root, selection, result) {
@@ -1165,7 +1272,7 @@ function renderSolutionOverlay(puzzleType, result, selection) {
   const badge = document.createElement("div");
   badge.className = "badge";
   const icon = document.createElement("img");
-  icon.src = chrome.runtime.getURL(`assets/games/${puzzleType}.svg`);
+  icon.src = extensionAssetUrl(`assets/games/${puzzleType}.svg`);
   icon.alt = "";
   badge.append(icon, `${puzzleTypeToLabel(puzzleType)} \u00b7 ${result?.solved ? "Preview" : "No solution"}`);
   badge.style.left = `${normalized.x}px`;
