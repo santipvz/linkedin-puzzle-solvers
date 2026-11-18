@@ -18,6 +18,7 @@ def create_app(settings: Settings | None = None):
             mode=settings.worker_mode,
             timeout=settings.worker_timeout,
             max_concurrent_workers=settings.max_concurrent_workers,
+            max_warm_workers=settings.max_warm_workers,
         ),
         cache=MemorySolutionCache(),
         captures=FileCaptureStore(settings.capture_directory, settings.repo_root, settings.capture_enabled),

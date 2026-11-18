@@ -4,12 +4,14 @@ if (typeof importScripts === "function") {
 
 const DEFAULT_API_BASE = globalThis.SolverApiConfig.defaultUrl;
 const DEFAULT_INTER_CLICK_DELAY_MS = 45;
-const DEFAULT_INTER_MOVE_DELAY_MS = 40;
+const DEFAULT_MOVE_INTERVAL_MS = 100;
 const DEFAULT_TANGO_APPLY_MODE = "left-cycle";
 
 const STORAGE_API_KEY = "solver_api_url";
 const STORAGE_INTER_CLICK_DELAY_KEY = "solver_inter_click_delay_ms";
-const STORAGE_INTER_MOVE_DELAY_KEY = "solver_inter_move_delay_ms";
+// The old "between moves" key stored a trailing delay (default 40 ms); the
+// move interval replaces it under a new key so stored values are not reinterpreted.
+const STORAGE_MOVE_INTERVAL_KEY = "solver_move_interval_ms";
 
 const puzzleRegistry = globalThis.PuzzleRegistry;
 if (!puzzleRegistry) {
@@ -1383,14 +1385,14 @@ async function loadQuickSettings() {
   const stored = await storageGet([
     STORAGE_API_KEY,
     STORAGE_INTER_CLICK_DELAY_KEY,
-    STORAGE_INTER_MOVE_DELAY_KEY,
+    STORAGE_MOVE_INTERVAL_KEY,
   ]);
 
   return {
     apiBaseUrl: normalizeApiBase(stored[STORAGE_API_KEY] || DEFAULT_API_BASE),
     applySettings: {
       interClickDelayMs: normalizeDelay(stored[STORAGE_INTER_CLICK_DELAY_KEY], DEFAULT_INTER_CLICK_DELAY_MS),
-      interMoveDelayMs: normalizeDelay(stored[STORAGE_INTER_MOVE_DELAY_KEY], DEFAULT_INTER_MOVE_DELAY_MS),
+      moveIntervalMs: normalizeDelay(stored[STORAGE_MOVE_INTERVAL_KEY], DEFAULT_MOVE_INTERVAL_MS),
       tangoApplyMode: DEFAULT_TANGO_APPLY_MODE,
     },
   };
@@ -1644,7 +1646,7 @@ function normalizeApplySettings(settings, fallbackSettings) {
 
   return {
     interClickDelayMs: normalizeDelay(source.interClickDelayMs, DEFAULT_INTER_CLICK_DELAY_MS),
-    interMoveDelayMs: normalizeDelay(source.interMoveDelayMs, DEFAULT_INTER_MOVE_DELAY_MS),
+    moveIntervalMs: normalizeDelay(source.moveIntervalMs, DEFAULT_MOVE_INTERVAL_MS),
     tangoApplyMode: normalizeTangoApplyMode(source.tangoApplyMode || DEFAULT_TANGO_APPLY_MODE),
   };
 }

@@ -1301,9 +1301,50 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Every game applies its solution at the same pace: one move (a queen, a cell,
+// a Zip step, a rectangle, a word, a merge) starts every moveIntervalMs. Waits
+// inside a move (a second click, the game confirming input) count toward that
+// interval instead of being added after it.
+function createMovePacer(intervalMs) {
+  let lastStart = null;
+  return async function nextMove() {
+    if (lastStart !== null) {
+      const remaining = lastStart + intervalMs - Date.now();
+      if (remaining > 0) await sleep(remaining);
+    }
+    lastStart = Date.now();
+  };
+}
+
+const ACCEPT_POLL_MS = 10;
+
+// Poll a page condition until it holds; returns its value, or null on timeout.
+async function waitFor(check, timeoutMs, pollMs = ACCEPT_POLL_MS) {
+  const attempts = Math.max(1, Math.ceil(timeoutMs / pollMs));
+  for (let attempt = 0; attempt <= attempts; attempt += 1) {
+    const value = check();
+    if (value) return value;
+    if (attempt < attempts) await sleep(pollMs);
+  }
+  return null;
+}
+
+// Resolve once the element stops changing after some change, or after maxMs.
+// Used where the game gives no readable acceptance signal.
+function waitForDomToSettle(element, maxMs, quietMs = 30) {
+  if (!element || typeof MutationObserver !== "function") return sleep(maxMs);
+  return new Promise((resolve) => {
+    let quietTimer = null;
+    const finish = () => { observer.disconnect(); clearTimeout(quietTimer); clearTimeout(limitTimer); resolve(); };
+    const observer = new MutationObserver(() => { clearTimeout(quietTimer); quietTimer = setTimeout(finish, quietMs); });
+    const limitTimer = setTimeout(finish, maxMs);
+    observer.observe(element, { subtree: true, childList: true, attributes: true, characterData: true });
+  });
+}
+
 const DEFAULT_QUEENS_CLICKS_PER_MOVE = 2;
 const DEFAULT_INTER_CLICK_DELAY_MS = 45;
-const DEFAULT_INTER_MOVE_DELAY_MS = 40;
+const DEFAULT_MOVE_INTERVAL_MS = 100;
 const DEFAULT_TANGO_APPLY_MODE = "left-cycle";
 const TANGO_SUN_LEFT_CLICKS = 1;
 const TANGO_MOON_LEFT_CLICKS = 2;
@@ -1622,7 +1663,7 @@ function normalizeApplySettings(settings) {
   return {
     queensClicksPerMove: DEFAULT_QUEENS_CLICKS_PER_MOVE,
     interClickDelayMs: normalizeDelay(settings?.interClickDelayMs, DEFAULT_INTER_CLICK_DELAY_MS),
-    interMoveDelayMs: normalizeDelay(settings?.interMoveDelayMs, DEFAULT_INTER_MOVE_DELAY_MS),
+    moveIntervalMs: normalizeDelay(settings?.moveIntervalMs, DEFAULT_MOVE_INTERVAL_MS),
     tangoApplyMode,
   };
 }
@@ -1755,6 +1796,7 @@ async function applyQueensSolution(result, selection, settings) {
   const cellHeight = normalized.height / boardSize;
   let appliedCount = 0;
   let clickCount = 0;
+  const nextMove = createMovePacer(applySettings.moveIntervalMs);
 
   for (const move of result.moves) {
     const row = Number(move.row);
@@ -1764,6 +1806,7 @@ async function applyQueensSolution(result, selection, settings) {
       continue;
     }
 
+    await nextMove();
     const x = normalized.x + (col + 0.5) * cellWidth;
     const y = normalized.y + (row + 0.5) * cellHeight;
 
@@ -1781,8 +1824,6 @@ async function applyQueensSolution(result, selection, settings) {
         clickCount += 1;
       }
     }
-
-    await sleep(applySettings.interMoveDelayMs);
   }
 
   if (result.moves.length > 0 && appliedCount === 0) {
@@ -1847,11 +1888,14 @@ async function applyVerifiedTangoSolution(result, settings) {
       parsedFixed.some(piece => !board.fixed[piece.row * 6 + piece.col] || expected[piece.row * 6 + piece.col] !== piece.piece_type)) {
     return fail("Tango capture did not identify the original clues correctly. Stopped before applying.");
   }
+  const nextMove = createMovePacer(applySettings.moveIntervalMs);
   for (let index = 0; index < 36; index += 1) {
     if (board.fixed[index] || board.values[index] === expected[index]) continue;
+    await nextMove();
     let changed = false;
     // Read after every click: a cell can already contain a sun or moon.
     for (let step = 0; step < 2 && board.values[index] !== expected[index]; step += 1) {
+      if (step > 0) await sleep(applySettings.interClickDelayMs);
       const before = board.values.slice();
       const finishing = before.every((value, cellIndex) => cellIndex === index || value === expected[cellIndex]);
       const rect = board.cells[index].getBoundingClientRect();
@@ -1860,27 +1904,21 @@ async function applyVerifiedTangoSolution(result, settings) {
       }
       if (!leftClickViewportPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)) return fail("Could not select a Tango cell.");
       counts.clickCount += 1;
-      let accepted = false;
-      for (let attempt = 0; attempt < (finishing ? 40 : 16); attempt += 1) {
-        await sleep(50);
+      const outcome = await waitFor(() => {
         const after = readTangoBoard();
-        if (!after) {
-          if (finishing && tangoCompletionVisible()) return { ok: true, ...counts,
-            appliedCount: counts.appliedCount + 1, strategy: "verified-completed-grid" };
-          continue;
-        }
-        if (after.values.some((value, cellIndex) => cellIndex !== index && value !== before[cellIndex])) {
-          return fail("Tango input changed another cell. Stopped applying.");
-        }
+        if (!after) return finishing && tangoCompletionVisible() ? "completed" : null;
+        if (after.values.some((value, cellIndex) => cellIndex !== index && value !== before[cellIndex])) return "other-cell";
         board = after;
-        if (after.values[index] !== before[index]) { accepted = true; changed = true; break; }
-      }
-      if (!accepted) return fail(`Tango did not confirm the click in cell (${Math.floor(index / 6) + 1}, ${index % 6 + 1}).`);
-      await sleep(applySettings.interClickDelayMs);
+        return after.values[index] !== before[index] ? "accepted" : null;
+      }, finishing ? 2000 : 800);
+      if (outcome === "completed") return { ok: true, ...counts,
+        appliedCount: counts.appliedCount + 1, strategy: "verified-completed-grid" };
+      if (outcome === "other-cell") return fail("Tango input changed another cell. Stopped applying.");
+      if (outcome !== "accepted") return fail(`Tango did not confirm the click in cell (${Math.floor(index / 6) + 1}, ${index % 6 + 1}).`);
+      changed = true;
     }
     if (board.values[index] !== expected[index]) return fail("Tango entered an unexpected piece. Stopped applying.");
     if (changed) counts.appliedCount += 1;
-    await sleep(applySettings.interMoveDelayMs);
   }
   return { ok: true, ...counts, strategy: "verified-tango-cells" };
 }
@@ -1954,12 +1992,14 @@ async function applyVerifiedSudokuSolution(result, selection, settings) {
   for (const move of actionableMoves) expectedFinalValues[move.row * boardSize + move.col] = move.value;
   const completeSolution = expectedFinalValues.every((value) => Number.isInteger(value) && value >= 1 && value <= boardSize);
 
+  const nextMove = createMovePacer(applySettings.moveIntervalMs);
   for (const move of actionableMoves) {
     if (sudokuNotesEnabled()) return fail("Sudoku notes mode was enabled during apply. Stopped before typing.");
     const index = move.row * boardSize + move.col;
     snapshot = getSudokuSnapshot(candidate, boardSize);
     if (!snapshot) return fail("Sudoku grid moved or became unreadable. Stopped applying.");
     if (snapshot.values[index] === move.value) continue;
+    await nextMove();
     const beforeValues = snapshot.values;
     const finishingMove = completeSolution && beforeValues.every((value, cellIndex) =>
       cellIndex === index || value === expectedFinalValues[cellIndex]);
@@ -1972,17 +2012,17 @@ async function applyVerifiedSudokuSolution(result, selection, settings) {
     await sleep(Math.max(80, applySettings.interClickDelayMs));
 
     // A click can rerender the whole grid. Reacquire the live cell and wait for selection.
-    let live = null;
-    for (let attempt = 0; attempt < 12; attempt += 1) {
-      live = getSudokuSnapshot(candidate, boardSize);
-      if (!live || live.geometry !== geometry) return fail("Sudoku grid moved while selecting a cell.");
-      if (live.values.some((value, cellIndex) => value !== beforeValues[cellIndex])) {
-        return fail("Sudoku board changed while selecting a cell. Stopped applying.");
+    let selectionError = null;
+    const live = await waitFor(() => {
+      const current = getSudokuSnapshot(candidate, boardSize);
+      if (!current || current.geometry !== geometry) { selectionError = "Sudoku grid moved while selecting a cell."; return "error"; }
+      if (current.values.some((value, cellIndex) => value !== beforeValues[cellIndex])) {
+        selectionError = "Sudoku board changed while selecting a cell. Stopped applying.";
+        return "error";
       }
-      if (isSudokuCellSelected(live.cells[index])) break;
-      live = null;
-      await sleep(50);
-    }
+      return isSudokuCellSelected(current.cells[index]) ? current : null;
+    }, 600);
+    if (live === "error") return fail(selectionError);
     if (!live) return fail(`Sudoku did not select cell (${move.row + 1}, ${move.col + 1}). Stopped before typing.`);
     // Cells are non-focusable divs. Synthetic clicks do not perform the
     // browser's default focus action, so focus the game's keyboard surface.
@@ -1994,16 +2034,14 @@ async function applyVerifiedSudokuSolution(result, selection, settings) {
     }
     counts.keyCount += 1;
 
-    let verified = false;
-    let completed = false;
-    for (let attempt = 0; attempt < (finishingMove ? 40 : 16); attempt += 1) {
+    const outcome = await waitFor(() => {
       const after = getSudokuSnapshot(candidate, boardSize);
       if (after) {
         if (after.geometry !== geometry || after.values.some((value, cellIndex) => cellIndex !== index && value !== beforeValues[cellIndex])) {
-          return fail("Sudoku input changed another cell or the grid moved. Stopped without replaying moves.");
+          return "other-cell";
         }
-        if (after.values[index] === move.value) { verified = true; break; }
-        if (after.values[index] !== beforeValues[index]) return fail("Sudoku entered an unexpected number. Stopped applying.");
+        if (after.values[index] === move.value) return "verified";
+        if (after.values[index] !== beforeValues[index]) return "unexpected";
       } else if (completeSolution && (
         live.cells.every((cell, cellIndex) => readSudokuCellValue(cell, boardSize) === expectedFinalValues[cellIndex]) ||
         (finishingMove && sudokuCompletionVisible()))) {
@@ -2011,16 +2049,15 @@ async function applyVerifiedSudokuSolution(result, selection, settings) {
         // Accept all 36 retained DOM values, or the game's explicit victory
         // receipt after the other 35 values were verified. Disappearance alone
         // is never success and no key is replayed.
-        verified = true;
-        completed = true;
-        break;
+        return "completed";
       }
-      await sleep(50);
-    }
-    if (!verified) return fail(`Sudoku did not confirm ${move.value} in cell (${move.row + 1}, ${move.col + 1}). Stopped without replaying moves.`);
+      return null;
+    }, finishingMove ? 2000 : 800);
+    if (outcome === "other-cell") return fail("Sudoku input changed another cell or the grid moved. Stopped without replaying moves.");
+    if (outcome === "unexpected") return fail("Sudoku entered an unexpected number. Stopped applying.");
+    if (!outcome) return fail(`Sudoku did not confirm ${move.value} in cell (${move.row + 1}, ${move.col + 1}). Stopped without replaying moves.`);
     counts.appliedCount += 1;
-    if (completed) return { ok: true, ...counts, strategy: "verified-completed-grid" };
-    await sleep(applySettings.interMoveDelayMs);
+    if (outcome === "completed") return { ok: true, ...counts, strategy: "verified-completed-grid" };
   }
   return { ok: true, ...counts, strategy: "verified-cell-then-keyboard" };
 }
@@ -2133,11 +2170,12 @@ async function applyZipSolution(result, selection, settings) {
   await sleep(Math.max(80, applySettings.interClickDelayMs));
 
   let keyCount = 0;
+  const nextMove = createMovePacer(applySettings.moveIntervalMs);
   for (const direction of directions) {
+    await nextMove();
     if (dispatchArrowKey(direction)) {
       keyCount += 1;
     }
-    await sleep(applySettings.interMoveDelayMs);
   }
 
   return {
@@ -2179,8 +2217,11 @@ async function applyPatchesSolution(result, selection, settings) {
 
   let appliedCount = 0;
   let clickCount = 0;
+  const nextMove = createMovePacer(applySettings.moveIntervalMs);
+  const board = nativeGameBoard("patches");
 
   for (const region of regions) {
+    await nextMove();
     const startX = normalized.x + (region.left + 0.5) * cellWidth;
     const startY = normalized.y + (region.top + 0.5) * cellHeight;
     const endX = normalized.x + (region.left + region.width - 0.5) * cellWidth;
@@ -2196,8 +2237,9 @@ async function applyPatchesSolution(result, selection, settings) {
       clickCount += 1;
     }
 
-    // Patches updates its drag state asynchronously; rapid consecutive drags are dropped.
-    await sleep(Math.max(150, applySettings.interMoveDelayMs));
+    // Patches updates its drag state asynchronously and drops a drag that
+    // starts too soon. Wait until the board stops changing (at most 150 ms).
+    await waitForDomToSettle(board, 150);
   }
 
   if (appliedCount === 0) {
@@ -2224,6 +2266,7 @@ async function applyWendSolution(result, selection, settings) {
   if (!boardSize || !words.length) return { ok: false, error: "No valid Wend word paths are available." };
   let appliedCount = 0;
   const fail = error => ({ ok: false, error, appliedCount, strategy: "verified-word-path-drag" });
+  const nextMove = createMovePacer(applySettings.moveIntervalMs);
   for (const entry of words) {
     const board = nativeGameBoard("wend");
     const cells = entry.path.map(step => board?.querySelector(`[data-cell-idx="${step.row * boardSize + step.col}"]`));
@@ -2238,19 +2281,15 @@ async function applyWendSolution(result, selection, settings) {
     if (points.some(point => point.x < 0 || point.y < 0 || point.x >= window.innerWidth || point.y >= window.innerHeight)) {
       return fail("Wend board moved outside the viewport. Stopped applying.");
     }
+    await nextMove();
     if (!await dragViewportPath(points, 4)) return fail("Could not draw a Wend word path.");
-    let accepted = false;
-    for (let attempt = 0; attempt < 40; attempt += 1) {
-      await sleep(50);
+    const accepted = await waitFor(() => {
       const live = nativeGameBoard("wend");
-      if (entry.path.every(step => live?.querySelector(`[data-cell-idx="${step.row * boardSize + step.col}"]`)
-          ?.getAttribute("data-cell-is-locked") === "true") || /\/games\/wend\/results\//.test(window.location.pathname)) {
-        accepted = true; break;
-      }
-    }
+      return entry.path.every(step => live?.querySelector(`[data-cell-idx="${step.row * boardSize + step.col}"]`)
+          ?.getAttribute("data-cell-is-locked") === "true") || /\/games\/wend\/results\//.test(window.location.pathname);
+    }, 2000);
     if (!accepted) return fail(`Wend did not accept the word ${entry.word}. Stopped without replaying paths.`);
     appliedCount += 1;
-    await sleep(Math.max(80, applySettings.interMoveDelayMs));
   }
   return { ok: true, appliedCount, clickCount: appliedCount, strategy: "verified-word-path-drag" };
 }
@@ -2279,8 +2318,10 @@ async function applySumbreakSolution(result, selection, settings) {
     return fail("Sumbreak board no longer matches the solved puzzle. Solve again before applying.");
   }
 
+  const nextMove = createMovePacer(applySettings.moveIntervalMs);
   for (const move of plan.moves) {
     if (sumbreakFinished()) break;
+    await nextMove();
     const root = nativeGameBoard("sumbreak");
     const source = sumbreakTileButton(root, move.row, move.col, plan.columns);
     const target = sumbreakTileButton(root, move.toRow, move.toCol, plan.columns);
@@ -2297,25 +2338,19 @@ async function applySumbreakSolution(result, selection, settings) {
     if (source.getAttribute("aria-pressed") !== "true") {
       source.click();
       clickCount += 1;
-      await sleep(Math.max(40, applySettings.interClickDelayMs));
+      await sleep(applySettings.interClickDelayMs);
     }
     target.click();
     clickCount += 1;
 
-    let merged = false;
-    for (let attempt = 0; attempt < 40; attempt += 1) {
-      await sleep(50);
-      if (sumbreakFinished()) { merged = true; break; }
+    const merged = await waitFor(() => {
+      if (sumbreakFinished()) return true;
       const live = nativeGameBoard("sumbreak");
       const after = live && readSumbreakBoardValues(live);
-      if (after && after[move.row][move.col] === null && after[move.toRow][move.toCol] === move.value) {
-        merged = true;
-        break;
-      }
-    }
+      return Boolean(after && after[move.row][move.col] === null && after[move.toRow][move.toCol] === move.value);
+    }, 2000);
     if (!merged) return fail(`Sumbreak did not accept merge ${appliedCount + 1}. Stopped applying.`);
     appliedCount += 1;
-    await sleep(Math.max(60, applySettings.interMoveDelayMs));
   }
   return { ok: true, appliedCount, clickCount, strategy: "verified-tap-merge" };
 }

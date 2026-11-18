@@ -98,17 +98,19 @@ Chrome requires the `<all_urls>` host permission for capture from an in-page but
 
 ## Input timing
 
-Preferences default to 45 ms between clicks and 40 ms between moves. Each game has a different input unit and extra waits, so equal preferences do not produce equal total application times. These waits run in the browser, independently of the API solve time.
+Every game applies its solution at the same pace. **Move interval** (default 100 ms) is the time from the start of one move to the start of the next; a move is one queen, one Tango or Sudoku cell, one Zip step, one Patches rectangle, one Wend word or one Sumbreak merge. Waits inside a move count toward the interval rather than being added after it, and the extension checks the game's confirmation every 10 ms. **Between clicks** (default 45 ms) only separates two clicks within the same move. These waits run in the browser, independently of the API solve time.
 
-| Game | Input and additional waits |
-| --- | --- |
-| Queens | Two clicks per queen; click delay between them and move delay after the queen. |
-| Tango | One or two clicks per empty cell; polls acceptance every 50 ms, then applies click and move delays. |
-| Mini Sudoku | Selects a cell, waits at least 80 ms, types one number and checks acceptance; selection and value checks may poll every 50 ms. The configured move delay follows each accepted number. |
-| Zip | One start click with at least 80 ms activation time, then arrow keys separated by the move delay. |
-| Patches | One drag per rectangle, with at least 150 ms between rectangles so the game accepts consecutive drags. |
-| Wend | A drag per word, including 8 ms per interpolation step; polls acceptance every 50 ms, then waits at least 80 ms between words. |
-| Sumbreak | Two taps per merge (at least 40 ms apart); polls the board every 50 ms until the merge shows, then waits at least 60 ms. |
+A move only takes longer than the interval when the game itself needs more time:
+
+| Game | Move | Waits inside the move |
+| --- | --- | --- |
+| Queens | One queen | Two clicks, separated by the click delay. |
+| Tango | One cell | One or two clicks; each is confirmed before the next. |
+| Mini Sudoku | One cell | Select, at least 80 ms for the game to take keyboard input, type, confirm. |
+| Zip | One arrow step | A single start click with at least 80 ms activation time precedes the first step. |
+| Patches | One rectangle | Drag, then up to 150 ms for the board to settle (the game drops drags that start too soon). |
+| Wend | One word | The drag itself (8 ms per interpolation step), then the game locking the word. |
+| Sumbreak | One merge | Two taps separated by the click delay, then the merged tile appearing. |
 
 Mini Sudoku captures its outer board frame plus an 8 CSS-pixel margin. The inner grid remains the reference for locating cells when applying numbers.
 

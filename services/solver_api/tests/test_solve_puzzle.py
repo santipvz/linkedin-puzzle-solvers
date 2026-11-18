@@ -219,3 +219,12 @@ def test_sumbreak_page_board_reaches_the_real_worker(mode):
     assert result["solved"]
     assert result["details"]["final_value"] == 128
     assert len(result["moves"]) == 8
+
+
+def test_http_reports_server_solve_time():
+    use_case, _, _ = service()
+    client = TestClient(create_http_app(use_case, ["wend"]))
+    response = client.post("/solve/wend", files={"image": ("board.png", b"image", "image/png")})
+    assert response.status_code == 200
+    name, duration = response.headers["server-timing"].split(";dur=")
+    assert name == "solve" and float(duration) >= 0

@@ -222,10 +222,10 @@ class WendParserTests(unittest.TestCase):
             second = Path(tmp) / "second.ttf"
             first.write_bytes(b"font-one")
             second.write_bytes(b"font-two")
-            original = _LetterOcr._template_cache_path([str(first)])
-            self.assertNotEqual(original, _LetterOcr._template_cache_path([str(first), str(second)]))
+            original = _LetterOcr._template_cache_paths([str(first)])[0]
+            self.assertNotEqual(original, _LetterOcr._template_cache_paths([str(first), str(second)])[0])
             first.write_bytes(b"font-one-updated")
-            self.assertNotEqual(original, _LetterOcr._template_cache_path([str(first)]))
+            self.assertNotEqual(original, _LetterOcr._template_cache_paths([str(first)])[0])
 
     def test_parses_synthetic_example_capture(self) -> None:
         board = [
