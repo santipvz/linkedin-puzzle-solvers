@@ -4,11 +4,13 @@ const STORAGE_CUSTOM_API_KEY = "solver_custom_api_url";
 const STORAGE_PUZZLE_KEY = "solver_puzzle_type";
 const STORAGE_AUTO_CLOSE_KEY = "solver_auto_close_after_apply";
 const STORAGE_INTER_CLICK_DELAY_KEY = "solver_inter_click_delay_ms";
-const STORAGE_INTER_MOVE_DELAY_KEY = "solver_inter_move_delay_ms";
+// The old "between moves" key stored a trailing delay (default 40 ms); the
+// move interval replaces it under a new key so stored values are not reinterpreted.
+const STORAGE_MOVE_INTERVAL_KEY = "solver_move_interval_ms";
 
 const DEFAULT_AUTO_CLOSE_AFTER_APPLY = true;
 const DEFAULT_INTER_CLICK_DELAY_MS = 45;
-const DEFAULT_INTER_MOVE_DELAY_MS = 40;
+const DEFAULT_MOVE_INTERVAL_MS = 100;
 const puzzleTypeSelect = document.getElementById("puzzleType");
 const apiUrlInput = document.getElementById("apiUrl");
 const apiModeSelect = document.getElementById("apiMode");
@@ -35,7 +37,7 @@ const applyButton = document.getElementById("applyMoves");
 const clearOverlayButton = document.getElementById("clearOverlay");
 const autoCloseAfterApplyCheckbox = document.getElementById("autoCloseAfterApply");
 const interClickDelayInput = document.getElementById("interClickDelayMs");
-const interMoveDelayInput = document.getElementById("interMoveDelayMs");
+const moveIntervalInput = document.getElementById("moveIntervalMs");
 const resultBox = document.getElementById("result");
 const statusBox = document.getElementById("status");
 
@@ -305,7 +307,7 @@ function getApplySettingsFromUi() {
   return {
     autoCloseAfterApply: Boolean(autoCloseAfterApplyCheckbox.checked),
     interClickDelayMs: normalizeDelay(interClickDelayInput.value, DEFAULT_INTER_CLICK_DELAY_MS),
-    interMoveDelayMs: normalizeDelay(interMoveDelayInput.value, DEFAULT_INTER_MOVE_DELAY_MS),
+    moveIntervalMs: normalizeDelay(moveIntervalInput.value, DEFAULT_MOVE_INTERVAL_MS),
   };
 }
 
@@ -318,7 +320,7 @@ async function savePreferences() {
     [STORAGE_PUZZLE_KEY]: puzzleTypeSelect.value,
     [STORAGE_AUTO_CLOSE_KEY]: applySettings.autoCloseAfterApply,
     [STORAGE_INTER_CLICK_DELAY_KEY]: applySettings.interClickDelayMs,
-    [STORAGE_INTER_MOVE_DELAY_KEY]: applySettings.interMoveDelayMs,
+    [STORAGE_MOVE_INTERVAL_KEY]: applySettings.moveIntervalMs,
   });
 }
 
@@ -329,7 +331,7 @@ async function loadPreferences() {
     STORAGE_PUZZLE_KEY,
     STORAGE_AUTO_CLOSE_KEY,
     STORAGE_INTER_CLICK_DELAY_KEY,
-    STORAGE_INTER_MOVE_DELAY_KEY,
+    STORAGE_MOVE_INTERVAL_KEY,
   ]);
 
   apiUrlInput.value = stored[STORAGE_API_KEY] || DEFAULT_API_URL;
@@ -345,8 +347,8 @@ async function loadPreferences() {
   interClickDelayInput.value = String(
     normalizeDelay(stored[STORAGE_INTER_CLICK_DELAY_KEY], DEFAULT_INTER_CLICK_DELAY_MS)
   );
-  interMoveDelayInput.value = String(
-    normalizeDelay(stored[STORAGE_INTER_MOVE_DELAY_KEY], DEFAULT_INTER_MOVE_DELAY_MS)
+  moveIntervalInput.value = String(
+    normalizeDelay(stored[STORAGE_MOVE_INTERVAL_KEY], DEFAULT_MOVE_INTERVAL_MS)
   );
 }
 
@@ -386,7 +388,7 @@ function setBusy(isBusy) {
   clearOverlayButton.disabled = isBusy;
   autoCloseAfterApplyCheckbox.disabled = isBusy;
   interClickDelayInput.disabled = isBusy;
-  interMoveDelayInput.disabled = isBusy;
+  moveIntervalInput.disabled = isBusy;
 }
 
 async function handleSelectBoard() {
@@ -481,7 +483,7 @@ async function applyCachedPayloadForTab(tab, payload) {
     selection: payload.selection,
     settings: {
       interClickDelayMs: applySettings.interClickDelayMs,
-      interMoveDelayMs: applySettings.interMoveDelayMs,
+      moveIntervalMs: applySettings.moveIntervalMs,
     },
   });
 
@@ -636,7 +638,7 @@ puzzleTypeSelect.addEventListener("change", () => {
   setStatus("");
   savePreferences().catch((error) => setStatus(error.message, true));
 });
-for (const control of [autoCloseAfterApplyCheckbox, interClickDelayInput, interMoveDelayInput]) {
+for (const control of [autoCloseAfterApplyCheckbox, interClickDelayInput, moveIntervalInput]) {
   control.addEventListener("change", () => {
     savePreferences().catch((error) => setStatus(error.message, true));
   });

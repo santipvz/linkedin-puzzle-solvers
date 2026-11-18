@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
@@ -45,8 +46,8 @@ def create_http_app(
     app = FastAPI(
         lifespan=lifespan,
         title="LinkedIn Puzzle Solver API",
-        version="0.3.2",
-        description="Local API wrapper for Queens, Tango, Mini Sudoku, Zip, Patches, and Wend image solvers.",
+        version="0.4.0",
+        description="Local API wrapper for Queens, Tango, Mini Sudoku, Zip, Patches, Wend, and Sumbreak solvers.",
     )
     app.add_middleware(
         CORSMiddleware,
@@ -54,6 +55,7 @@ def create_http_app(
         allow_origin_regex=None if cors_origins == ("*",) else cors_origin_regex,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["Server-Timing"],
     )
 
     @app.get("/health")
@@ -82,6 +84,7 @@ def create_http_app(
 
     def handler_for(puzzle: str):
         async def solve(
+            http_response: Response,
             image: UploadFile = File(...),
             board_capture: str | None = Header(default=None, alias="X-Board-Capture"),
             parsed_board: str | None = Form(default=None, max_length=4096),
@@ -102,11 +105,15 @@ def create_http_app(
                 capture=bool(board_capture and board_capture.strip().lower() == "start"),
                 parsed_board=page_board,
             )
+            started = time.perf_counter()
             try:
-                return await asyncio.to_thread(service.execute, request)
+                result = await asyncio.to_thread(service.execute, request)
             except SolverError as exc:
                 headers = {"Retry-After": "2"} if isinstance(exc, SolverBusy) else None
                 raise HTTPException(status_code=ERROR_STATUS.get(type(exc), 500), detail=str(exc), headers=headers) from exc
+            # Time spent parsing and solving on the server, excluding upload and network.
+            http_response.headers["Server-Timing"] = f"solve;dur={(time.perf_counter() - started) * 1000:.1f}"
+            return result
 
         solve.__name__ = f"solve_{puzzle}"
         return solve

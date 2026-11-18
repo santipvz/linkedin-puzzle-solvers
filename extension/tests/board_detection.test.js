@@ -22,6 +22,119 @@ test("detects Queens from its section landmark with opaque CSS classes and role 
     { x: 528, y: 97, width: 416, height: 416, devicePixelRatio: 1.25 });
 });
 
+test("widget refresh tolerates an invalidated extension context after reload", () => {
+  const context = vm.createContext({
+    document: { querySelector: () => null, querySelectorAll: () => [] },
+    window: { self: {}, top: {}, location: { href: "https://www.linkedin.com/games/zip/" } },
+    chrome: { runtime: {
+      onMessage: { addListener() {} },
+      getURL() { throw new Error("Extension context invalidated."); },
+    } },
+  });
+  scripts(context, ["puzzle_registry.js", "content.js"]);
+  vm.runInContext("quickSolveButton = { style: {}, setAttribute() {} }", context);
+
+  assert.doesNotThrow(() => context.updateQuickSolveButtonText());
+  assert.equal(vm.runInContext("quickSolveButton.style.backgroundImage", context), "none");
+});
+
+function activeWidget() {
+  let tick;
+  let timerCleared = false;
+  let assetCalls = 0;
+  let reloads = 0;
+  const context = vm.createContext({
+    document: { querySelector: () => null },
+    window: { self: {}, top: {}, location: {
+      href: "https://www.linkedin.com/games/zip/", reload() { reloads++; },
+    } },
+    chrome: { runtime: {
+      id: "test-extension",
+      onMessage: { addListener() {} },
+      getURL(path) { assetCalls++; return `chrome-extension://test-extension/${path}`; },
+    } },
+    setInterval(callback) { tick = callback; return 7; },
+    clearInterval(id) { assert.equal(id, 7); timerCleared = true; },
+  });
+  scripts(context, ["puzzle_registry.js", "content.js"]);
+  // The widget already exists when Chrome invalidates an open tab's runtime.
+  vm.runInContext(`
+    quickSolveWidgetRoot = {};
+    quickSolveButton = { style: {}, setAttribute() {} };
+    quickSolveStatus = { classList: { toggle() {} } };
+  `, context);
+  context.window.top = context.window.self;
+  context.initializeQuickSolveWidget();
+  return {
+    context,
+    tick: () => tick(),
+    timerCleared: () => timerCleared,
+    assetCalls: () => assetCalls,
+    reloads: () => reloads,
+    button: () => vm.runInContext("quickSolveButton", context),
+    status: () => vm.runInContext("quickSolveStatus.textContent", context),
+  };
+}
+
+test("extension reload stops widget polling and blocks stale solve requests", async () => {
+  const widget = activeWidget();
+  assert.match(widget.button().style.backgroundImage, /zip\.svg/);
+  const initialAssetCalls = widget.assetCalls();
+  widget.context.chrome.runtime.id = undefined;
+
+  assert.doesNotThrow(widget.tick);
+  assert.equal(widget.timerCleared(), true);
+  assert.equal(widget.button().textContent, "Reload page");
+  assert.equal(widget.button().disabled, false);
+  assert.match(widget.status(), /Reload this page/);
+  assert.doesNotThrow(widget.tick);
+  assert.equal(widget.assetCalls(), initialAssetCalls);
+  await widget.context.onQuickSolveClick();
+  assert.equal(widget.reloads(), 1);
+  await assert.rejects(widget.context.sendRuntimeMessage({ type: "quickSolveFromPage" }), /Reload this page/);
+});
+
+for (const trigger of ["send throws", "callback error", "invalidated while pending"]) {
+  test(`solve handles extension invalidation when ${trigger}`, async () => {
+    const widget = activeWidget();
+    const runtime = widget.context.chrome.runtime;
+    let pending;
+    runtime.sendMessage = (_, callback) => {
+      if (trigger === "send throws") throw new Error("Extension context invalidated.");
+      if (trigger === "callback error") {
+        runtime.lastError = { message: "Extension context invalidated." };
+        callback();
+        return;
+      }
+      pending = callback;
+    };
+
+    const click = widget.context.onQuickSolveClick();
+    if (pending) {
+      runtime.id = undefined;
+      pending({ ok: true, solved: true, applied: true, appliedCount: 49 });
+    }
+    await click;
+
+    assert.equal(widget.timerCleared(), true);
+    assert.equal(widget.button().textContent, "Reload page");
+    assert.equal(widget.button().disabled, false);
+    assert.match(widget.status(), /Reload this page/);
+    assert.doesNotMatch(widget.status(), /Solution applied/);
+  });
+}
+
+test("ordinary solve failures keep the widget available for retry", async () => {
+  const widget = activeWidget();
+  widget.context.chrome.runtime.sendMessage = (_, callback) => {
+    callback({ ok: false, error: "Solver is busy. Try again." });
+  };
+  await widget.context.onQuickSolveClick();
+  assert.equal(widget.timerCleared(), false);
+  assert.equal(widget.button().disabled, false);
+  assert.equal(widget.status(), "Solver is busy. Try again.");
+});
+
 test("explicit board detection bypasses a cached viewport selection", async () => {
   const context = vm.createContext({ chrome: { runtime: { onMessage: { addListener() {} } } } });
   scripts(context, ["puzzle_registry.js", "api_config.js", "background.js"]);

@@ -1,6 +1,6 @@
 # Solver API
 
-FastAPI service that exposes solvers for Queens, Tango, Mini Sudoku, Zip, Patches, and Wend.
+FastAPI service that exposes solvers for Queens, Tango, Mini Sudoku, Zip, Patches, Wend, and Sumbreak.
 
 ## Run Modes
 
@@ -53,10 +53,13 @@ See `deploy/local/README.md` for full operational commands.
 - `POST /solve/zip`
 - `POST /solve/patches`
 - `POST /solve/wend`
+- `POST /solve/sumbreak`
 
 All solve endpoints accept multipart form data with field name `image`.
 
 Wend also accepts an optional `parsed_board` form field containing JSON with `board` (a 5–8 square matrix of uppercase ASCII letters and null holes) and `lengths` (answer-slot lengths). The extension sends this only after a complete page read. The API validates it, includes it in the cache key, and forwards it to the isolated worker through stdin. Image-only clients keep the OCR pipeline. Both paths require a unique solution.
+
+Sumbreak requires the `parsed_board` field: JSON with only `board`, a 2–8 by 2–8 rectangle of positive integers with null for empty cells. Tile values are read from the page, so there is no OCR path; an image-only request returns `solved: false`. The response lists `moves` in order, each merging the tile at `row`/`col` into the equal neighbour at `to_row`/`to_col`, which then holds `value`.
 
 Example request:
 

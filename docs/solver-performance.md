@@ -71,3 +71,28 @@ Four sequential pairs per game used the currently published API. Each pair uploa
 Health request medians were approximately 90–102 ms. The difference between uncached processing and immediately repeating the same upload dominates these observations. This supports server-side processing as the main cost for these sample requests, rather than transfer size or browser input. It does not isolate OCR, Python startup, CPU scheduling, platform cold starts or individual worker phases in production. The difference of medians is an approximate comparison, not a measured internal phase duration. First uncached observations included 2606 ms for Sudoku and 4830 ms for Wend; there is insufficient instrumentation to label those events as Vercel cold starts specifically.
 
 The local profiles place pure search at about 0.3 ms for Sudoku, 4 ms for Zip and 125 ms for Wend; most local worker time is outside search. Together with source inspection, this points to Python/import/OCR preparation and image processing as the optimization target. It remains an inference about the deployed breakdown until internal spans are measured. Reusable workers only amortize setup while a same-game child survives in the same API instance; first daily requests, instance replacement and game switches may see little improvement. A production before/after test with internal phase timings is required before asserting an end-to-end speedup or a percentage for online users.
+
+
+## Warm workers per game, packaged OCR caches and uniform move pacing (18 November 2026)
+
+The deployed API took 0.7–2.3 s per uncached solve (Wend image input up to 4.4 s) while `/health` answered in about 93 ms, so network transfer was not the bottleneck. Two server costs repeated on almost every real request:
+
+1. The hosted worker kept a single child process and replaced it whenever the game changed, so a user moving between games paid process start-up and OCR preparation each time.
+2. Each new instance started with an empty `/tmp` and rendered thousands of glyphs to rebuild OCR templates: about 1.4 s for Wend, 0.28 s for Patches and 0.23 s for Sudoku on this machine.
+
+Hosted mode now keeps one warm child per game, and the template banks for the bundled fonts ship in `core/assets/ocr_cache/`, keyed by font name and content. The local benchmark below runs one persistent `WorkerSolver` with an empty `/tmp`, solving all seven tracked samples in registry order three times (Wend with its page board, Sumbreak with its fixture). Times are in milliseconds. These are local measurements; the hosted CPU is slower, so absolute savings online should be larger, but they have not been measured there yet.
+
+| Game | Before, round 1 | Before, rounds 2–3 | After, round 1 | After, rounds 2–3 |
+| --- | ---: | ---: | ---: | ---: |
+| Queens | 139 | 137–140 | 130 | 36–40 |
+| Tango | 154 | 154 | 141 | 48 |
+| Sudoku | 454 | 259–266 | 252 | 136–137 |
+| Zip | 299 | 297–301 | 279 | 38–41 |
+| Patches | 529 | 303–309 | 293 | 162–167 |
+| Wend, page input | 132 | 124–130 | 116 | 1 |
+| Sumbreak | 35 | 36–39 | 29 | 0 |
+| **Total** | **1743** | **1320–1328** | **1241** | **427–430** |
+
+Cold first solves with an empty `/tmp` dropped from 404 to 235 ms for Sudoku, 481 to 267 ms for Patches and 1587 to 419 ms for Wend image input. Each solve response now includes a `Server-Timing` header so the hosted share can be measured after deployment.
+
+Applying a known solution previously used different waits per game: roughly 40 ms per Zip step and 85 ms per queen, but 135–230 ms per Tango cell, about 170 ms per Sudoku cell and 330 ms per Wend word, because fixed floors and 50 ms polling were added after each move. All games now share one move interval (default 100 ms, measured from the start of each move), confirmation checks poll every 10 ms, and Patches waits for its board to settle (at most 150 ms) instead of always waiting 150 ms. Paths drawn in one stroke, the Zip path and each Wend word, advance one cell every 32 ms: a 6x6 Zip path takes about 1.1 s instead of 1.4 s with the old 40 ms per step.

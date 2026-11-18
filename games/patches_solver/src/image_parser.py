@@ -5,7 +5,6 @@ from functools import lru_cache
 import itertools
 from math import isqrt
 from pathlib import Path
-import tempfile
 from typing import Any
 
 import cv2
@@ -14,7 +13,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from core.commons import BoardBBox, GridBounds, crop_board, external_contour_bbox_candidates, uniform_grid_bounds
 from core.vision import DistanceWeightedKnn, build_parsed_board_payload, extract_line_groups
-from core.ocr_fonts import font_fingerprint, ocr_font_paths
+from core.ocr_fonts import ocr_cache_paths, ocr_font_paths
 
 
 DEFAULT_BOARD_SIZE = 6
@@ -22,6 +21,7 @@ OUTER_CONTOUR_THRESHOLD = 242
 CLUE_SATURATION_THRESHOLD = 34
 
 DIGIT_CANVAS_SIZE = 28
+PATCHES_OCR_CACHE_PREFIX = "linkedin_puzzle_solvers_patches_ocr_v3"
 OCR_MIN_SCORE = 0.18
 
 FONT_CANDIDATES = (
@@ -275,32 +275,31 @@ class _PatchesClueOcr:
         self._save_cached_classifier_data(feature_array, label_array)
         return DistanceWeightedKnn(feature_array, label_array, n_neighbors=3)
 
-    def _classifier_cache_path(self) -> Path:
+    def _classifier_cache_paths(self) -> tuple[Path, Path | None]:
         paths = ocr_font_paths(FONT_CANDIDATES, ("DejaVuSans-Bold.ttf", "DejaVuSans.ttf", "LiberationSans*.ttf"))
-        return Path(tempfile.gettempdir()) / f"linkedin_puzzle_solvers_patches_ocr_v3_{font_fingerprint(paths)}.npz"
+        return ocr_cache_paths(PATCHES_OCR_CACHE_PREFIX, paths)
 
     def _load_cached_classifier(self) -> DistanceWeightedKnn | None:
-        cache_path = self._classifier_cache_path()
-        if not cache_path.exists():
-            return None
-
-        try:
-            cached = np.load(cache_path)
-            features = cached["features"].astype(np.float32)
-            labels = cached["labels"].astype(np.int32)
-        except (OSError, ValueError, KeyError, EOFError):
-            cache_path.unlink(missing_ok=True)
-            return None
-
-        if features.ndim != 2 or labels.ndim != 1 or len(features) != len(labels) or len(labels) == 0:
-            cache_path.unlink(missing_ok=True)
-            return None
-
-        return DistanceWeightedKnn(features, labels, n_neighbors=3)
+        cache_path, packaged_path = self._classifier_cache_paths()
+        for candidate in (cache_path, packaged_path):
+            if candidate is None or not candidate.exists():
+                continue
+            try:
+                with np.load(candidate) as cached:
+                    features = cached["features"].astype(np.float32)
+                    labels = cached["labels"].astype(np.int32)
+            except (OSError, ValueError, KeyError, EOFError):
+                features = labels = None
+            if features is None or features.ndim != 2 or labels.ndim != 1 or len(features) != len(labels) or len(labels) == 0:
+                if candidate == cache_path:
+                    cache_path.unlink(missing_ok=True)
+                continue
+            return DistanceWeightedKnn(features, labels, n_neighbors=3)
+        return None
 
     def _save_cached_classifier_data(self, features: np.ndarray, labels: np.ndarray) -> None:
         try:
-            cache_path = self._classifier_cache_path()
+            cache_path, _ = self._classifier_cache_paths()
             cache_path.parent.mkdir(parents=True, exist_ok=True)
             np.savez_compressed(cache_path, features=features, labels=labels)
         except OSError:

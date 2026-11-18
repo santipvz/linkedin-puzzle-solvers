@@ -116,6 +116,45 @@ class WendSolverTests(unittest.TestCase):
         self.assertFalse(result.solution_count_is_exact)
 
 
+class WendTieBreakTests(unittest.TestCase):
+    FIXTURE = Path(__file__).parent / "fixtures" / "linkedin-2026-11-18.json"
+
+    def test_page_board_with_two_covers_prefers_common_words(self) -> None:
+        board = json.loads(self.FIXTURE.read_text())
+        result = solve_wend_worker("unused.png", parsed_board=board)
+        self.assertTrue(result["solved"], result["error"])
+        self.assertEqual("fewest_rare_words", result["details"]["tie_break"])
+        self.assertFalse(result["details"]["unique_solution"])
+        self.assertEqual({"GAME", "LAUNCH", "NEW", "TODAY"}, {entry["word"] for entry in result["words"]})
+        self.assertEqual([0, 1], sorted(result["details"]["rare_word_counts"]))
+
+    def test_tie_between_equally_common_covers_is_still_refused(self) -> None:
+        from types import SimpleNamespace
+
+        def cover(*words):
+            return SimpleNamespace(words=[SimpleNamespace(word=word) for word in words])
+
+        chosen, counts = wend_worker._break_tie_by_common_words((cover("NEW", "GAME"), cover("WEN", "GAME")), True)
+        self.assertEqual(["NEW", "GAME"], [entry.word for entry in chosen.words])
+        chosen, counts = wend_worker._break_tie_by_common_words((cover("NEW", "GAME"), cover("MAGE", "NEW")), True)
+        self.assertIsNone(chosen)
+        self.assertEqual([0, 0], counts)
+        # A capped enumeration may hide an even more common cover.
+        chosen, _ = wend_worker._break_tie_by_common_words((cover("NEW"), cover("WEN")), False)
+        self.assertIsNone(chosen)
+
+    def test_proper_nouns_and_rare_words_stay_searchable(self) -> None:
+        from games.wend_solver.src.dictionary import load_wend_deprioritized_words
+
+        rare = load_wend_deprioritized_words()
+        dictionary = set(load_wend_dictionary())
+        self.assertIn("WEN", rare)
+        self.assertIn("AARON", rare)
+        self.assertNotIn("NEW", rare)
+        self.assertNotIn("TODAY", rare)
+        self.assertLessEqual(rare, dictionary)
+
+
 class WendParserTests(unittest.TestCase):
     def test_page_board_solves_october_29_without_ocr(self) -> None:
         payload = json.loads((Path(__file__).parent / "fixtures/linkedin-2026-10-29.json").read_text())
@@ -222,10 +261,10 @@ class WendParserTests(unittest.TestCase):
             second = Path(tmp) / "second.ttf"
             first.write_bytes(b"font-one")
             second.write_bytes(b"font-two")
-            original = _LetterOcr._template_cache_path([str(first)])
-            self.assertNotEqual(original, _LetterOcr._template_cache_path([str(first), str(second)]))
+            original = _LetterOcr._template_cache_paths([str(first)])[0]
+            self.assertNotEqual(original, _LetterOcr._template_cache_paths([str(first), str(second)])[0])
             first.write_bytes(b"font-one-updated")
-            self.assertNotEqual(original, _LetterOcr._template_cache_path([str(first)]))
+            self.assertNotEqual(original, _LetterOcr._template_cache_paths([str(first)])[0])
 
     def test_parses_synthetic_example_capture(self) -> None:
         board = [

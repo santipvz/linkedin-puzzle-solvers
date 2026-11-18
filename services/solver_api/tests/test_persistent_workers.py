@@ -31,27 +31,44 @@ def solve(image_path, *, parsed_board=None):
     print("solver diagnostics must not break transport")
     return {"count": count, "pid": os.getpid(), "board": parsed_board, "image": data.decode()}
 '''
-    for filename in ("one.py", "two.py"):
+    for filename in ("one.py", "two.py", "three.py"):
         (tmp_path / filename).write_text(source)
-    solver = WorkerSolver({"one": "one.py", "two": "two.py"}, tmp_path, mode="persistent", timeout=1)
+    solver = WorkerSolver({"one": "one.py", "two": "two.py", "three": "three.py"}, tmp_path, mode="persistent", timeout=1,
+                          max_warm_workers=2)
     try:
         yield solver
     finally:
         solver.close()
 
 
-def test_reuses_child_for_distinct_images_and_replaces_it_when_switching_games(worker):
+def child(worker, name):
+    entry = worker._persistent.children.get(worker.workers_directory / f"{name}.py")
+    return None if entry is None else entry
+
+
+def process(worker, name):
+    entry = child(worker, name)
+    return None if entry is None else entry.process
+
+
+def test_keeps_one_warm_child_per_game_and_evicts_the_least_recent(worker):
     first = worker.solve("one", b"first", None)
     board = {"letters": ["A"]}
     second = worker.solve("one", b"second", None, parsed_board=board)
     assert second == {"count": 2, "pid": first["pid"], "board": board, "image": "second"}
-    old_process = worker._persistent.process
-    third = worker.solve("two", b"third", None)
-    assert old_process.poll() is not None
-    assert third["count"] == 1
-    assert third["pid"] != first["pid"]
+    one = process(worker, "one")
+    other = worker.solve("two", b"other", None)
+    assert other["count"] == 1 and other["pid"] != first["pid"]
+    # Switching back reuses the warm child instead of starting a new one.
+    assert worker.solve("one", b"again", None) == {"count": 3, "pid": first["pid"], "board": None, "image": "again"}
+    two = process(worker, "two")
+    worker.solve("three", b"third", None)
+    assert two.poll() is not None
+    assert one.poll() is None
+    assert child(worker, "two") is None
     worker.close()
-    assert worker._persistent.process is None
+    assert one.poll() is not None
+    assert worker._persistent.children == {}
 
 
 @pytest.mark.parametrize("payload,error", [(b"timeout", SolverTimeout), (b"crash", WorkerFailure), (b"error", WorkerFailure)])
@@ -67,17 +84,28 @@ def test_failures_kill_child_remove_upload_and_allow_next_request(worker, payloa
     worker._write_temp_image = track
     with pytest.raises(error):
         worker.solve("one", payload, None)
-    assert worker._persistent.process is None
+    assert process(worker, "one") is None
     assert not paths[-1].exists()
     assert worker.solve("one", b"recovered", None)["count"] == 1
     assert not paths[-1].exists()
 
 
 def test_overlapping_requests_do_not_mix_transport_messages(worker):
-    with worker._persistent.lock:
+    worker.solve("one", b"warm", None)
+    with child(worker, "one").lock:
         with pytest.raises(SolverBusy):
             worker.solve("one", b"image", None)
-    assert worker.solve("one", b"image", None)["count"] == 1
+    assert worker.solve("one", b"image", None)["count"] == 2
+
+
+def test_busy_children_are_not_evicted(worker):
+    worker.solve("one", b"warm", None)
+    worker.solve("two", b"warm", None)
+    one = process(worker, "one")
+    with child(worker, "one").lock:
+        worker.solve("three", b"third", None)
+    assert one.poll() is None
+    assert child(worker, "two") is None
 
 
 def test_http_shutdown_reaps_the_persistent_child(worker):
@@ -85,10 +113,10 @@ def test_http_shutdown_reaps_the_persistent_child(worker):
     with TestClient(create_http_app(service, ("one",))) as client:
         response = client.post("/solve/one", files={"image": ("board.png", b"image", "image/png")})
         assert response.status_code == 200
-        process = worker._persistent.process
-        assert process.poll() is None
-    assert process.poll() is not None
-    assert worker._persistent.process is None
+        running = process(worker, "one")
+        assert running.poll() is None
+    assert running.poll() is not None
+    assert worker._persistent.children == {}
 
 
 @pytest.mark.parametrize("puzzle", PUZZLE_DEFINITIONS, ids=lambda p: p.key)
@@ -101,8 +129,9 @@ def test_repeated_real_solves_match_isolated_workers(puzzle, monkeypatch):
     worker = WorkerSolver(files, directory, mode="persistent")
     isolated = WorkerSolver(files, directory)
     image = (REPO_ROOT / puzzle.sample_image).read_bytes()
+    board = json.loads((REPO_ROOT / puzzle.page_board_fixture).read_text()) if puzzle.page_board_fixture else None
     try:
-        expected = isolated.solve(puzzle.key, image, "board.png")
+        expected = isolated.solve(puzzle.key, image, "board.png", parsed_board=board)
         assert expected["solved"]
         def stable(value):
             if isinstance(value, dict):
@@ -112,7 +141,7 @@ def test_repeated_real_solves_match_isolated_workers(puzzle, monkeypatch):
             return value
 
         for _ in range(2):
-            result = worker.solve(puzzle.key, image, "board.png")
+            result = worker.solve(puzzle.key, image, "board.png", parsed_board=board)
             assert stable(result) == stable(expected)
     finally:
         worker.close()

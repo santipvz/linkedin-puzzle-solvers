@@ -6,9 +6,16 @@ from collections.abc import Mapping
 
 from ..domain.errors import EmptyImage, ImageTooLarge, InvalidBoard, UnknownPuzzle, UnsupportedImage
 from ..domain.models import JsonDict, SolveRequest
+from ..domain.sumbreak_board import validate_sumbreak_board
 from ..domain.wend_board import validate_wend_board
 from .cache_policy import should_recompute
 from .ports import CaptureStore, SolutionCache, Solver
+
+
+PAGE_BOARD_VALIDATORS = {
+    "sumbreak": validate_sumbreak_board,
+    "wend": validate_wend_board,
+}
 
 
 def cache_key(puzzle: str, revision: int, image: bytes) -> str:
@@ -42,9 +49,10 @@ class SolvePuzzle:
 
         parsed_board = None
         if request.parsed_board is not None:
-            if request.puzzle != "wend":
-                raise InvalidBoard("Page board data is only supported for Wend.")
-            parsed_board = validate_wend_board(request.parsed_board)
+            validate = PAGE_BOARD_VALIDATORS.get(request.puzzle)
+            if validate is None:
+                raise InvalidBoard("Page board data is only supported for Sumbreak and Wend.")
+            parsed_board = validate(request.parsed_board)
 
         key = cache_key(request.puzzle, self.cache_revisions[request.puzzle], request.image)
         if parsed_board is not None:

@@ -13,11 +13,11 @@
 
 Short description:
 
-> Preview and apply solutions for six LinkedIn games using the online solver or your own local API.
+> Preview and apply solutions for seven LinkedIn games using the online solver or your own local API.
 
 Detailed description:
 
-> Get help with Queens, Tango, Mini Sudoku, Zip, Patches and Wend on LinkedIn Games.
+> Get help with Queens, Tango, Mini Sudoku, Zip, Patches, Wend and Sumbreak on LinkedIn Games.
 >
 > Open a game and click its in-page Solve button, or open Puzzle Solver in Chrome's toolbar and choose Preview solution or Solve & apply. Automatic board detection locates the puzzle; manual selection is available when needed.
 >
@@ -33,7 +33,7 @@ Detailed description:
 
 Single purpose:
 
-> Help users preview and apply solutions to the six supported LinkedIn Games, using a hosted or user-selected local solver.
+> Help users preview and apply solutions to the seven supported LinkedIn Games, using a hosted or user-selected local solver.
 
 Permission justifications:
 

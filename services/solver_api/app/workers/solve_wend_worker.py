@@ -16,7 +16,7 @@ except ImportError:
 REPO_ROOT = repo_root_for_worker(__file__)
 ensure_sys_path(REPO_ROOT)
 
-from games.wend_solver.src.dictionary import load_wend_dictionary
+from games.wend_solver.src.dictionary import load_wend_deprioritized_words, load_wend_dictionary
 from games.wend_solver.src.wend_solver import WendSolver
 from services.solver_api.app.domain.wend_board import validate_wend_board
 
@@ -24,12 +24,33 @@ from services.solver_api.app.domain.wend_board import validate_wend_board
 OCR_ALTERNATE_SCORE_DELTA = 0.14
 MIN_OCR_CELL_CONFIDENCE = 0.35
 MIN_OCR_AVG_CONFIDENCE = 0.72
-PIPELINE_REVISION = 5
+PIPELINE_REVISION = 6
 
 
 @lru_cache(maxsize=1)
 def _get_solver() -> WendSolver:
     return WendSolver(load_wend_dictionary())
+
+
+@lru_cache(maxsize=1)
+def _deprioritized_words() -> frozenset[str]:
+    return load_wend_deprioritized_words()
+
+
+def _break_tie_by_common_words(solutions: tuple, exhaustive: bool) -> tuple[object | None, list[int]]:
+    """Pick the only cover with the fewest proper nouns and reviewed rare words.
+
+    Applies only when every cover was enumerated, so the choice is among all of
+    them; returns (None, counts) when the fewest count is shared.
+    """
+    rare = _deprioritized_words()
+    counts = [sum(candidate.word in rare for candidate in solution.words) for solution in solutions]
+    if not exhaustive or len(solutions) < 2:
+        return None, counts
+    fewest = min(counts)
+    if counts.count(fewest) != 1:
+        return None, counts
+    return solutions[counts.index(fewest)], counts
 
 
 def _ocr_letter_options(parsed: JsonDict) -> dict[tuple[int, int], list[tuple[str, float]]]:
@@ -160,10 +181,19 @@ def solve(image_path: str | Path, *, parsed_board: JsonDict | None = None) -> Js
             ))
         )
         unique_solution = solve_result.solution_count_is_exact and len(solutions) == 1
-        solved = bool(parse_reliable and unique_solution)
+        chosen = solutions[0] if unique_solution else None
+        tie_break = None
+        rare_word_counts: list[int] = []
+        if chosen is None and parsed_board is not None:
+            # Page letters are exact, so remaining ambiguity is only about the
+            # vocabulary. Image input keeps requiring a unique cover.
+            chosen, rare_word_counts = _break_tie_by_common_words(solutions, solve_result.solution_count_is_exact)
+            if chosen is not None:
+                tie_break = "fewest_rare_words"
+        solved = bool(parse_reliable and chosen is not None)
         words_payload = []
         if solved:
-            for candidate in solutions[0].words:
+            for candidate in chosen.words:
                 for letter, (row, col) in zip(candidate.word, candidate.path):
                     original = solved_board[row][col]
                     if original != letter:
@@ -206,6 +236,8 @@ def solve(image_path: str | Path, *, parsed_board: JsonDict | None = None) -> Js
                 "solution_count_is_exact": solve_result.solution_count_is_exact,
                 "solution_limit": solve_result.solution_limit,
                 "unique_solution": unique_solution,
+                "tie_break": tie_break,
+                "rare_word_counts": rare_word_counts,
                 "pipeline_revision": PIPELINE_REVISION,
                 "input_source": "page" if parsed_board is not None else "image",
                 # Diagnostic alternatives are never exposed as applicable words.

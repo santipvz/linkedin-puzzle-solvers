@@ -12,7 +12,7 @@ from typing import Any
 
 from ..domain.errors import SolverBusy, SolverError, SolverTimeout, WorkerFailure
 from ..domain.models import JsonDict
-from .persistent import PersistentWorker
+from .persistent import PersistentWorkerPool
 
 
 ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
@@ -21,14 +21,14 @@ _IMPORT_LOCK = threading.Lock()
 
 class WorkerSolver:
     def __init__(self, worker_filenames: dict[str, str], workers_directory: Path, mode: str = "subprocess", timeout: int = 60,
-                 max_concurrent_workers: int = 0) -> None:
+                 max_concurrent_workers: int = 0, max_warm_workers: int = 8) -> None:
         self.worker_filenames = dict(worker_filenames)
         self.workers_directory = workers_directory
         self.mode = mode
         self.timeout = timeout
         self._solve_functions: dict[str, Any] = {}
         self._slots = threading.BoundedSemaphore(max_concurrent_workers) if max_concurrent_workers else None
-        self._persistent = PersistentWorker(timeout) if mode == "persistent" else None
+        self._persistent = PersistentWorkerPool(timeout, max_warm_workers) if mode == "persistent" else None
 
     def close(self) -> None:
         if self._persistent is not None:

@@ -13,6 +13,7 @@ PURE_SOLVERS = (
     "games/sudoku_solver/src/mini_sudoku_solver.py",
     "games/zip_solver/src/zip_solver.py",
     "games/wend_solver/src/wend_solver.py",
+    "games/sumbreak_solver/src/sumbreak_solver.py",
     "games/tango_solver/src/tango_solver.py",
     "games/tango_solver/src/ports.py",
     "games/queen_solver/src/core/models.py",

@@ -121,7 +121,7 @@ function createGame(options = {}) {
   const result = { solved: true, board_size: 6, initial_grid: Array.from({ length: 6 }, () => Array(6).fill(0)),
     moves: [{ row: 0, col: 0, value: 1 }, { row: 0, col: 1, value: 2 }, { row: 1, col: 2, value: 3 }] };
   return { context, values, writes, result, selection,
-    apply: () => context.applySudokuSolution(result, selection, { interClickDelayMs: 0, interMoveDelayMs: 0 }) };
+    apply: () => context.applySudokuSolution(result, selection, { interClickDelayMs: 0, moveIntervalMs: 0 }) };
 }
 
 test("applies numbers to fresh cell elements after a click rerenders the board", async () => {

@@ -23,6 +23,9 @@ def build(output: Path, browser: str = 'chrome', source: Path = ROOT / 'extensio
         manifest['background'].pop('scripts', None)
     elif browser == 'firefox':
         manifest['background'].pop('service_worker', None)
+        manifest['background']['scripts'] = [
+            'puzzle_registry.js', 'api_config.js', 'background.js',
+        ]
     else:
         raise ValueError('Choose chrome or firefox.')
     if 'tabs' in manifest.get('permissions', ()):

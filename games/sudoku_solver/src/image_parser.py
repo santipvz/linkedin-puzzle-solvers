@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import random
-import tempfile
 from functools import lru_cache
 from pathlib import Path
 from typing import TypedDict
@@ -13,12 +12,13 @@ from PIL import Image, ImageDraw, ImageFont
 
 from core.commons import BoardBBox, crop_board, external_contour_bbox_candidates, morphological_line_projections
 from core.vision import DistanceWeightedKnn, extract_line_groups, select_regular_line_subset
-from core.ocr_fonts import font_fingerprint, ocr_font_paths
+from core.ocr_fonts import ocr_cache_paths, ocr_font_paths
 
 
 BOARD_SIZE = 6
 GRID_LINE_COUNT = BOARD_SIZE + 1
 OCR_INPUT_SIZE = 28
+SUDOKU_OCR_CACHE_PREFIX = "linkedin_puzzle_solvers_sudoku_ocr_v4"
 OCR_MIN_CONFIDENCE = 0.52
 OCR_STRONG_CONFIDENCE = 0.78
 
@@ -87,16 +87,19 @@ class _MiniSudokuOcr:
         return DistanceWeightedKnn(np.asarray(features), np.asarray(labels), n_neighbors=3)
 
     def _load_or_build_training_dataset(self) -> tuple[list[np.ndarray], list[int]]:
-        cache_path = self._dataset_cache_path()
-        if cache_path.exists():
+        cache_path, packaged_path = self._dataset_cache_paths()
+        for candidate in (cache_path, packaged_path):
+            if candidate is None or not candidate.exists():
+                continue
             try:
-                cached = np.load(cache_path)
-                cached_features = cached["features"].astype(np.float32)
-                cached_labels = cached["labels"].astype(np.int32)
+                with np.load(candidate) as cached:
+                    cached_features = cached["features"].astype(np.float32)
+                    cached_labels = cached["labels"].astype(np.int32)
                 if cached_features.ndim == 2 and len(cached_features) == len(cached_labels) and len(cached_labels) > 0:
                     return [row for row in cached_features], [int(value) for value in cached_labels.tolist()]
             except (OSError, ValueError, KeyError, EOFError):
-                cache_path.unlink(missing_ok=True)
+                if candidate == cache_path:
+                    cache_path.unlink(missing_ok=True)
 
         rng = random.Random(1337)
         np_rng = np.random.default_rng(1337)
@@ -143,9 +146,8 @@ class _MiniSudokuOcr:
 
         return features, labels
 
-    def _dataset_cache_path(self) -> Path:
-        fingerprint = font_fingerprint(self._candidate_font_paths())
-        return Path(tempfile.gettempdir()) / f"linkedin_puzzle_solvers_sudoku_ocr_v4_{fingerprint}.npz"
+    def _dataset_cache_paths(self) -> tuple[Path, Path | None]:
+        return ocr_cache_paths(SUDOKU_OCR_CACHE_PREFIX, self._candidate_font_paths())
 
     def _candidate_font_paths(self) -> list[str]:
         patterns = [

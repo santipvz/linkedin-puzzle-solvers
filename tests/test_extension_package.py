@@ -60,6 +60,13 @@ def test_chrome_package_excludes_development_files_and_firefox_config(tmp_path: 
         assert 'ASSET_NOTICES.md' in archive.namelist()
 
 
+def test_unpacked_source_manifest_is_chrome_mv3_compatible() -> None:
+    manifest = json.loads(Path('extension/manifest.json').read_text())
+    assert manifest['manifest_version'] == 3
+    assert manifest['background'] == {'service_worker': 'background.js'}
+    assert 'optional_host_permissions' not in manifest
+
+
 def test_firefox_package_preserves_background_scripts(tmp_path: Path) -> None:
     package = build(tmp_path / 'firefox.zip', browser='firefox', source=sources(tmp_path))
     with zipfile.ZipFile(package) as archive:

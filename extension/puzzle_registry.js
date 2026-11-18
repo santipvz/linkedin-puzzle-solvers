@@ -36,6 +36,12 @@
       frameSlug: "wend",
       urlNeedles: ["/games/wend", "/games/view/wend"],
     },
+    {
+      key: "sumbreak",
+      label: "Sumbreak",
+      frameSlug: "sumbreak",
+      urlNeedles: ["/games/sumbreak", "/games/view/sumbreak"],
+    },
   ];
 
   const byKey = {};
