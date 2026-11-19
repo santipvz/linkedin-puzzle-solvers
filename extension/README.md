@@ -110,7 +110,7 @@ A move only takes longer than the interval when the game itself needs more time:
 | Zip | The whole path | A start click with at least 80 ms activation time, then one arrow key every 32 ms. |
 | Patches | One rectangle | Drag, then up to 150 ms for the board to settle (the game drops drags that start too soon). |
 | Wend | One word | The drag itself (8 ms per interpolation step), then the game locking the word. |
-| Sumbreak | One merge | Two taps separated by the click delay, then the merged tile appearing. |
+| Sumbreak | One merge | Waits for the previous merge animation to finish (the game ignores taps during it, about 0.2–0.9 s), taps the source, waits until the game shows it selected, taps the target and waits for the merged tile. |
 
 Mini Sudoku captures its outer board frame plus an 8 CSS-pixel margin. The inner grid remains the reference for locating cells when applying numbers.
 
