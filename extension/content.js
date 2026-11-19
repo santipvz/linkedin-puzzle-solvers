@@ -2423,6 +2423,15 @@ function sumbreakTileButton(root, row, col, columns) {
   return root?.querySelector(`[data-numo-index="${row * columns + col}"] button[data-numo-kind="number"]`) || null;
 }
 
+// Sumbreak animates each merge (about 0.3–0.7 s) by giving the two tiles the
+// "source"/"destination" paint roles, and ignores taps until every tile is back
+// to "resting". A tap during the animation is lost, so the next tap would only
+// select the target tile instead of merging.
+function sumbreakBoardIdle(root) {
+  return Boolean(root) && Array.from(root.querySelectorAll("[data-numo-paint-role]"))
+    .every(node => node.getAttribute("data-numo-paint-role") === "resting");
+}
+
 function sumbreakFinished() {
   return /\/games\/(view\/)?sumbreak\/results\//.test(window.location.pathname);
 }
@@ -2447,6 +2456,10 @@ async function applySumbreakSolution(result, selection, settings) {
   for (const move of plan.moves) {
     if (sumbreakFinished()) break;
     await nextMove();
+    if (!await waitFor(() => sumbreakFinished() || sumbreakBoardIdle(nativeGameBoard("sumbreak")), 3000)) {
+      return fail("Sumbreak kept animating. Stopped applying.");
+    }
+    if (sumbreakFinished()) break;
     const root = nativeGameBoard("sumbreak");
     const source = sumbreakTileButton(root, move.row, move.col, plan.columns);
     const target = sumbreakTileButton(root, move.toRow, move.toCol, plan.columns);
@@ -2463,9 +2476,14 @@ async function applySumbreakSolution(result, selection, settings) {
     if (source.getAttribute("aria-pressed") !== "true") {
       source.click();
       clickCount += 1;
-      await sleep(applySettings.interClickDelayMs);
     }
-    target.click();
+    // Only tap the target once the game shows the source as selected.
+    const selected = await waitFor(() => sumbreakTileButton(nativeGameBoard("sumbreak"), move.row, move.col, plan.columns)
+      ?.getAttribute("aria-pressed") === "true", 1000);
+    if (!selected) return fail(`Sumbreak did not select the tile for merge ${appliedCount + 1}. Stopped applying.`);
+    const liveTarget = sumbreakTileButton(nativeGameBoard("sumbreak"), move.toRow, move.toCol, plan.columns);
+    if (!liveTarget) return fail("Could not find the Sumbreak target tile. Stopped applying.");
+    liveTarget.click();
     clickCount += 1;
 
     const merged = await waitFor(() => {
