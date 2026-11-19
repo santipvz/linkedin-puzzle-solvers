@@ -28,7 +28,7 @@ Random solvable boards packed with tiles solve in well under a second up to 8x8.
 
 ## Output
 
-`moves` lists merges in order. Each one moves the tile at `row`/`col` onto the equal neighbour at `to_row`/`to_col`, which then holds `value`. The extension taps the source, then the target, and checks that the board shows the merge before the next one.
+`moves` lists merges in order. Each one moves the tile at `row`/`col` onto the equal neighbour at `to_row`/`to_col`, which then holds `value`. The extension taps the source, waits until the game marks it selected, taps the target and checks that the board shows the merge. Each merge then animates for about 0.2–0.9 s (the two tiles carry the `source`/`destination` paint roles) and the game ignores taps until every tile is `resting` again, so the extension waits for that before the next merge.
 
 ## Command line
 

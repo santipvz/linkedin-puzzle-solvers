@@ -5,11 +5,13 @@ const vm = require('node:vm');
 const { test } = require('node:test');
 
 // A small model of LinkedIn's Sumbreak board: tap a tile to select it, then tap
-// an equal orthogonal neighbour to merge into it. The source cell empties.
-function sumbreakGame(initial, { acceptMerges = true, svgLabels = true } = {}) {
+// an equal orthogonal neighbour to merge into it. The source cell empties. Like
+// the real game, a merge then animates for a while (animationReads polls of the
+// paint roles) and taps during the animation are ignored.
+function sumbreakGame(initial, { acceptMerges = true, svgLabels = true, animationReads = 0 } = {}) {
   const rows = initial.length, columns = initial[0].length;
   const values = initial.flat();
-  let selected = null, clicks = 0;
+  let selected = null, clicks = 0, ignoredClicks = 0, animating = 0, animated = [];
   const buttons = values.map((_, index) => ({
     index,
     getAttribute: name => {
@@ -19,6 +21,7 @@ function sumbreakGame(initial, { acceptMerges = true, svgLabels = true } = {}) {
     },
     click() {
       clicks += 1;
+      if (animating > 0) { ignoredClicks += 1; return; }
       if (values[index] === null) return;
       if (selected === null) { selected = index; return; }
       if (selected === index) { selected = null; return; }
@@ -28,6 +31,8 @@ function sumbreakGame(initial, { acceptMerges = true, svgLabels = true } = {}) {
       if (acceptMerges && adjacent && values[a] === values[b]) {
         values[b] *= 2;
         values[a] = null;
+        animating = animationReads;
+        animated = [a, b];
       }
     },
   }));
@@ -50,7 +55,15 @@ function sumbreakGame(initial, { acceptMerges = true, svgLabels = true } = {}) {
       }
       return null;
     },
-    querySelectorAll: selector => (selector === 'button[aria-pressed="true"]' && selected !== null ? [buttons[selected]] : []),
+    querySelectorAll: selector => {
+      if (selector === 'button[aria-pressed="true"]') return selected !== null ? [buttons[selected]] : [];
+      if (selector === '[data-numo-paint-role]') {
+        const busy = animating > 0;
+        if (busy) animating -= 1;
+        return values.map((_, index) => ({ getAttribute: () => (busy && animated.includes(index) ? 'source' : 'resting') }));
+      }
+      return [];
+    },
   };
   const context = vm.createContext({
     document: { querySelector: () => root },
@@ -65,6 +78,7 @@ function sumbreakGame(initial, { acceptMerges = true, svgLabels = true } = {}) {
     context,
     values,
     get clicks() { return clicks; },
+    get ignoredClicks() { return ignoredClicks; },
     select(index) { selected = index; },
   };
 }
@@ -103,6 +117,25 @@ test('Sumbreak applies every merge by tapping source then target and verifies ea
   assert.equal(response.appliedCount, 8);
   assert.equal(game.clicks, 16);
   assert.deepEqual(game.values, [null, null, 128, null, null, null, null, null, null]);
+});
+
+test('Sumbreak waits for each merge animation before the next tap', async () => {
+  // The real game animates a merge for 0.3–0.7 s and drops taps meanwhile;
+  // 0.4.0 tapped again after ~45 ms and only the first merge landed.
+  const game = sumbreakGame(TODAY, { animationReads: 30 });
+  const response = await game.context.applySumbreakSolution(todayResult(), null, {});
+  assert.equal(response.ok, true, response.error);
+  assert.equal(response.appliedCount, 8);
+  assert.equal(game.ignoredClicks, 0);
+  assert.deepEqual(game.values, [null, null, 128, null, null, null, null, null, null]);
+});
+
+test('Sumbreak stops if the board never stops animating', async () => {
+  const game = sumbreakGame(TODAY, { animationReads: 100000 });
+  const first = await game.context.applySumbreakSolution(todayResult(), null, {});
+  assert.equal(first.ok, false);
+  assert.equal(first.appliedCount, 1);
+  assert.match(first.error, /kept animating/);
 });
 
 test('Sumbreak clears a stale manual selection before the first tap', async () => {
