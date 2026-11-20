@@ -61,6 +61,8 @@ Wend also accepts an optional `parsed_board` form field containing JSON with `bo
 
 Zip also accepts `parsed_board`: JSON with only `size` (3–10), `sequence` (the numbered cells in order, as `row * size + col` indexes) and `walls` (`[cell, "up" | "down" | "left" | "right"]` pairs). The extension reads it from the game's own puzzle data, and then the worker skips the image entirely. Image-only clients keep the OCR pipeline.
 
+Mini Sudoku also accepts `parsed_board`: JSON with only `board`, a 6x6 grid of preset digits with 0 for blanks. The worker then skips OCR and its conflict recovery, and still requires a unique solution.
+
 Patches also accepts `parsed_board`: JSON with only `size` (4–10) and `clues`, a list of `[cell, "any" | "square" | "wide" | "tall", area or null]`. The worker then skips the board-size search, OCR and its recovery.
 
 Queens also accepts `parsed_board`: JSON with only `size` (4–12) and `regions`, a size×size grid of colour region ids with exactly `size` distinct ids. The worker then skips board detection and colour clustering.

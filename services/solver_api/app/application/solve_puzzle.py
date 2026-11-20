@@ -8,6 +8,7 @@ from ..domain.errors import EmptyImage, ImageTooLarge, InvalidBoard, UnknownPuzz
 from ..domain.models import JsonDict, SolveRequest
 from ..domain.patches_board import validate_patches_board
 from ..domain.queens_board import validate_queens_board
+from ..domain.sudoku_board import validate_sudoku_board
 from ..domain.sumbreak_board import validate_sumbreak_board
 from ..domain.tango_board import validate_tango_board
 from ..domain.wend_board import validate_wend_board
@@ -19,6 +20,7 @@ from .ports import CaptureStore, SolutionCache, Solver
 PAGE_BOARD_VALIDATORS = {
     "patches": validate_patches_board,
     "queens": validate_queens_board,
+    "sudoku": validate_sudoku_board,
     "sumbreak": validate_sumbreak_board,
     "tango": validate_tango_board,
     "wend": validate_wend_board,

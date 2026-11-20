@@ -54,6 +54,7 @@ PUZZLE_DEFINITIONS: tuple[PuzzleDefinition, ...] = (
         sample_image="games/sudoku_solver/examples/sample1.png",
         expected_board_size=6,
         sample_required=False,
+        page_board_fixture="games/sudoku_solver/tests/fixtures/linkedin-2026-11-20.json",
     ),
     PuzzleDefinition(
         key="zip",
