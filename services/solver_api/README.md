@@ -61,6 +61,8 @@ Wend also accepts an optional `parsed_board` form field containing JSON with `bo
 
 Zip also accepts `parsed_board`: JSON with only `size` (3–10), `sequence` (the numbered cells in order, as `row * size + col` indexes) and `walls` (`[cell, "up" | "down" | "left" | "right"]` pairs). The extension reads it from the game's own puzzle data, and then the worker skips the image entirely. Image-only clients keep the OCR pipeline.
 
+Queens also accepts `parsed_board`: JSON with only `size` (4–12) and `regions`, a size×size grid of colour region ids with exactly `size` distinct ids. The worker then skips board detection and colour clustering.
+
 Tango also accepts `parsed_board`: JSON with only `size` (6), `suns` and `moons` (preset cells as `row * 6 + col`), and `equal` / `opposite` (`[cell, cell]` pairs of adjacent cells). With it, the extension sends one request instead of trying several crops of the screenshot.
 
 Sumbreak requires the `parsed_board` field: JSON with only `board`, a 2–8 by 2–8 rectangle of positive integers, operator tiles written as `"x2"` or `"+3"`, and null for empty cells. Tile values are read from the page, so there is no OCR path; an image-only request returns `solved: false`. The response lists `moves` in order, each merging the tile at `row`/`col` into the neighbour at `to_row`/`to_col` (equal numbers, or a number and an operator), which then holds `value`.

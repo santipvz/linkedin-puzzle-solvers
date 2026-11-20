@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import importlib
 import io
+import json
 import sys
 import tempfile
 from pathlib import Path
@@ -458,7 +459,51 @@ def _finalize_queens_attempt(
     return best_attempt
 
 
-def solve(image_path: Path) -> JsonDict:
+def _solve_page_board(parsed_board: JsonDict) -> JsonDict:
+    """Solve a Queens puzzle read from the page: no image or computer vision involved."""
+    from services.solver_api.app.domain.queens_board import queens_region_cells, validate_queens_board
+
+    solver_module = importlib.import_module("src.solver.queens_solver")
+    models_module = importlib.import_module("src.core.models")
+    try:
+        board = validate_queens_board(parsed_board)
+    except Exception as exc:
+        return {
+            "puzzle": "queens",
+            "solved": False,
+            "board_size": 0,
+            "moves": [],
+            "solution_grid": None,
+            "error": f"Invalid Queens page board: {exc}",
+            "details": {"parse_reliable": False, "input_source": "page"},
+        }
+
+    size = board["size"]
+    regions = {
+        region_id: models_module.Region(id=region_id, positions=cells, color=np.zeros(3), size=len(cells))
+        for region_id, cells in queens_region_cells(board).items()
+    }
+    result = solver_module.BacktrackingQueensSolver().solve(size, regions)
+    solved = bool(result.success and result.validation_passed)
+    grid = _serialize_solution_grid(result.solution) if solved else None
+    return {
+        "puzzle": "queens",
+        "solved": solved,
+        "board_size": size,
+        "moves": [{"row": row, "col": col} for row, values in enumerate(grid or []) for col, value in enumerate(values) if value == 1],
+        "solution_grid": grid,
+        "error": None if solved else (result.error_message or "No valid solution found."),
+        "details": {
+            "iterations": int(result.iterations),
+            "regions_detected": len(regions),
+            "validation_passed": bool(result.validation_passed),
+            "parse_reliable": True,
+            "input_source": "page",
+        },
+    }
+
+
+def solve(image_path: Path, *, parsed_board: JsonDict | None = None) -> JsonDict:
     game_root = game_root_for_worker(__file__, "queen_solver")
     if not game_root.exists():
         return {
@@ -468,6 +513,9 @@ def solve(image_path: Path) -> JsonDict:
         }
 
     activate_game_import_context(game_root)
+
+    if parsed_board is not None:
+        return _solve_page_board(parsed_board)
 
     queens_module = importlib.import_module(".".join(["src", "queens_solver"]))
     queens_solver_class = getattr(queens_module, "QueensSolver")
@@ -534,6 +582,9 @@ def solve(image_path: Path) -> JsonDict:
 
 
 def main() -> int:
+    if len(sys.argv) == 3 and sys.argv[2] == "--parsed-board":
+        page_board = json.load(sys.stdin)
+        return run_worker_cli(sys.argv[:2], lambda path: solve(path, parsed_board=page_board), "solve_queens_worker.py", "Queens")
     return run_worker_cli(
         argv=sys.argv,
         solve_fn=solve,

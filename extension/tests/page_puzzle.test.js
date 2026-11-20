@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const { test } = require('node:test');
 
 require('../page_puzzle.js');
-const { readLinkedInPuzzle, zipBoardFromPuzzle, tangoBoardFromPuzzle } = globalThis.PagePuzzle;
+const { readLinkedInPuzzle, zipBoardFromPuzzle, tangoBoardFromPuzzle, queensBoardFromPuzzle } = globalThis.PagePuzzle;
 
 // Zip 2026-11-20 as LinkedIn's game holds it (shortened $type names).
 const ZIP_PUZZLE = {
@@ -151,6 +151,16 @@ test('Zip falls back to the image when the page puzzle is unavailable', async ()
   await context.solveBoardCore({ tabId: 1, puzzleType: 'zip', apiBaseUrl: 'http://localhost',
     selection: { x: 0, y: 0, width: 400, height: 400, devicePixelRatio: 1 } });
   assert.equal(options.parsedBoard, null);
+});
+
+test('builds the Queens page board from the colour grid', () => {
+  const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, '../../games/queen_solver/tests/fixtures/linkedin-2026-11-20.json'), 'utf8'));
+  const puzzle = { $case: 'queensGamePuzzle', queensGamePuzzle: { gridSize: 9, solution: [{ row: 0, col: 7 }],
+    colorGrid: fixture.regions.map(colors => ({ $type: 'QueensGameColorRow', colors })) } };
+  const page = runInPage(pageWith(puzzle));
+  assert.equal('solution' in page.puzzle, false);
+  assert.deepEqual(queensBoardFromPuzzle(page), fixture);
+  assert.equal(queensBoardFromPuzzle({ kind: 'queensGamePuzzle', puzzle: { gridSize: 2, colorGrid: [{ colors: [0, 'x'] }] } }), null);
 });
 
 test('the API upload carries the Zip page board', async () => {
