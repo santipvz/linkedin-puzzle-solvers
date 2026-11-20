@@ -5,7 +5,8 @@ const vm = require('node:vm');
 const { test } = require('node:test');
 
 // A small model of LinkedIn's Sumbreak board: tap a tile to select it, then tap
-// an equal orthogonal neighbour to merge into it. The source cell empties. Like
+// an equal orthogonal neighbour (or a number next to an operator tile such as
+// "x2") to merge into it. The source cell empties. Like
 // the real game, a merge then animates for a while (animationReads polls of the
 // paint roles) and taps during the animation are ignored.
 function sumbreakGame(initial, { acceptMerges = true, svgLabels = true, animationReads = 0 } = {}) {
@@ -16,6 +17,7 @@ function sumbreakGame(initial, { acceptMerges = true, svgLabels = true, animatio
     index,
     getAttribute: name => {
       if (name === 'aria-pressed') return String(selected === index);
+      if (name === 'data-numo-kind') return typeof values[index] === 'string' ? 'wildcard' : 'number';
       if (name === 'aria-label') return `Número ${values[index]}, fila ${Math.floor(index / columns) + 1}, columna ${index % columns + 1}`;
       return null;
     },
@@ -28,8 +30,14 @@ function sumbreakGame(initial, { acceptMerges = true, svgLabels = true, animatio
       const a = selected, b = index;
       const adjacent = Math.abs(Math.floor(a / columns) - Math.floor(b / columns)) + Math.abs(a % columns - b % columns) === 1;
       selected = null;
-      if (acceptMerges && adjacent && values[a] === values[b]) {
-        values[b] *= 2;
+      const op = value => (typeof value === 'string' ? value.match(/^([x+])(\d+)$/) : null);
+      const wa = op(values[a]), wb = op(values[b]);
+      let result = null;
+      if (wa && !wb) result = wa[1] === 'x' ? values[b] * Number(wa[2]) : values[b] + Number(wa[2]);
+      else if (wb && !wa) result = wb[1] === 'x' ? values[a] * Number(wb[2]) : values[a] + Number(wb[2]);
+      else if (!wa && !wb && values[a] === values[b]) result = values[a] * 2;
+      if (acceptMerges && adjacent && result !== null) {
+        values[b] = result;
         values[a] = null;
         animating = animationReads;
         animated = [a, b];
@@ -41,7 +49,7 @@ function sumbreakGame(initial, { acceptMerges = true, svgLabels = true, animatio
     getBoundingClientRect: () => ({ left: 20, top: 40, width: columns * 100, height: rows * 100,
       right: 20 + columns * 100, bottom: 40 + rows * 100 }),
     querySelector(selector) {
-      let match = selector.match(/^\[data-numo-index="(\d+)"\]( button\[data-numo-kind="number"\])?$/);
+      let match = selector.match(/^\[data-numo-index="(\d+)"\]( button\[data-numo-kind\])?$/);
       if (match) {
         const index = Number(match[1]);
         if (index >= values.length) return null;
@@ -51,7 +59,8 @@ function sumbreakGame(initial, { acceptMerges = true, svgLabels = true, animatio
       match = selector.match(/^\[data-numo-svg-cell="(\d+)"\] \[data-numo-label\]$/);
       if (match) {
         const value = values[Number(match[1])];
-        return svgLabels && value !== null ? { textContent: String(value) } : null;
+        if (!svgLabels || value === null) return null;
+        return { textContent: typeof value === 'string' ? value.replace('x', '×') : String(value) };
       }
       return null;
     },
@@ -98,6 +107,25 @@ test('Sumbreak reads tile values and empty cells from the page board', () => {
   const read = JSON.parse(JSON.stringify(game.context.readSumbreakPageBoard()));
   assert.deepEqual(read.board, [[2, null], [1, 1]]);
   assert.equal(read.selection.width, 200);
+});
+
+const OPERATOR_BOARD = [[null, 2, 1], [null, 4, 1], [16, 'x2', 4]];
+const OPERATOR_MOVES = [
+  [1, 2, 0, 2, 2], [0, 2, 0, 1, 4], [0, 1, 1, 1, 8], [2, 2, 2, 1, 8], [1, 1, 2, 1, 16], [2, 1, 2, 0, 32],
+].map(([row, col, to_row, to_col, value]) => ({ row, col, to_row, to_col, value }));
+
+test('Sumbreak reads operator tiles as x2 / +3', () => {
+  const game = sumbreakGame([[1, '+3'], [4, 'x2']]);
+  assert.deepEqual(JSON.parse(JSON.stringify(game.context.readSumbreakPageBoard().board)), [[1, '+3'], [4, 'x2']]);
+});
+
+test('Sumbreak applies merges into and out of operator tiles', async () => {
+  const game = sumbreakGame(OPERATOR_BOARD);
+  const result = { solved: true, board_size: 3, moves: OPERATOR_MOVES, details: { rows: 3, columns: 3, board: OPERATOR_BOARD } };
+  const response = await game.context.applySumbreakSolution(result, null, {});
+  assert.equal(response.ok, true, response.error);
+  assert.equal(response.appliedCount, 6);
+  assert.deepEqual(game.values, [null, null, null, null, null, null, 32, null, null]);
 });
 
 test('Sumbreak falls back to the localized aria-label when the SVG label is missing', () => {
