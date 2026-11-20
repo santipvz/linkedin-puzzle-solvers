@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const { test } = require('node:test');
 
 require('../page_puzzle.js');
-const { readLinkedInPuzzle, zipBoardFromPuzzle, tangoBoardFromPuzzle, queensBoardFromPuzzle } = globalThis.PagePuzzle;
+const { readLinkedInPuzzle, zipBoardFromPuzzle, tangoBoardFromPuzzle, queensBoardFromPuzzle, patchesBoardFromPuzzle } = globalThis.PagePuzzle;
 
 // Zip 2026-11-20 as LinkedIn's game holds it (shortened $type names).
 const ZIP_PUZZLE = {
@@ -161,4 +161,18 @@ test('builds the Queens page board from the colour grid', () => {
   assert.equal('solution' in page.puzzle, false);
   assert.deepEqual(queensBoardFromPuzzle(page), fixture);
   assert.equal(queensBoardFromPuzzle({ kind: 'queensGamePuzzle', puzzle: { gridSize: 2, colorGrid: [{ colors: [0, 'x'] }] } }), null);
+});
+
+test('builds the Patches page board from clue cells', () => {
+  const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, '../../games/patches_solver/tests/fixtures/linkedin-2026-11-20.json'), 'utf8'));
+  const linkedInShape = { any: 'UNKNOWN', square: 'SQUARE', wide: 'HORIZONTAL_RECT', tall: 'VERTICAL_RECT' };
+  const clueCells = fixture.clues.map(([cellIdx, shape, area]) => ({ $type: 'PatchesClueCell', cellIdx,
+    shapeConstraint: `PatchesShapeConstraint_${linkedInShape[shape]}`, numberConstraint: area || 0 }));
+  const puzzle = { $case: 'patchesGamePuzzle', patchesGamePuzzle: { gridRows: 7, gridCols: 7, clueCells, solution: [{ cellIdxes: [0] }] } };
+  const page = runInPage(pageWith(puzzle, { selector: '[data-testid="interactive-grid"]' }));
+  assert.equal('solution' in page.puzzle, false);
+  assert.deepEqual(patchesBoardFromPuzzle(page), fixture);
+  assert.equal(patchesBoardFromPuzzle({ kind: 'patchesGamePuzzle', puzzle: { gridRows: 6, gridCols: 7, clueCells } }), null);
+  const unknownShape = [{ cellIdx: 0, shapeConstraint: 'PatchesShapeConstraint_TRIANGLE', numberConstraint: 0 }];
+  assert.equal(patchesBoardFromPuzzle({ kind: 'patchesGamePuzzle', puzzle: { gridRows: 7, gridCols: 7, clueCells: unknownShape } }), null);
 });

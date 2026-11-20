@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -133,6 +134,58 @@ class PatchesParserIntegrationTests(unittest.TestCase):
                 self.assertEqual(6, int(payload.get("board_size") or 0))
                 self.assertGreater(len(payload.get("regions") or []), 0)
 
+
+
+PAGE_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "linkedin-2026-11-20.json"
+# LinkedIn's own answer for the 2026-11-20 puzzle, as the cells of each region.
+OFFICIAL_2026_11_20 = [
+    [0, 7, 14, 21, 28], [1, 2, 8, 9], [3, 4, 5], [6, 13], [10, 11], [12, 19, 26], [15, 16, 17, 18], [20, 27],
+    [22, 23, 29, 30], [24, 25, 31, 32], [33, 34], [35, 36], [37, 38, 39, 40, 41], [42, 43, 44, 45, 46], [47, 48],
+]
+
+
+class PatchesPageBoardTests(unittest.TestCase):
+    def test_worker_solves_a_page_board_without_the_image(self) -> None:
+        board = json.loads(PAGE_FIXTURE.read_text())
+        response = solve_patches_worker(Path("unused.png"), parsed_board=board)
+
+        self.assertTrue(response["solved"], response["error"])
+        self.assertEqual(response["details"]["input_source"], "page")
+        self.assertTrue(response["details"]["unique_solution"])
+        regions = sorted(
+            sorted(row * 7 + col for row in range(r["top"], r["top"] + r["height"]) for col in range(r["left"], r["left"] + r["width"]))
+            for r in response["regions"]
+        )
+        self.assertEqual(regions, sorted(OFFICIAL_2026_11_20))
+
+    def test_page_shapes_are_not_relaxed(self) -> None:
+        # Rows 1-3 belong to the 12-cell clue, so the square clue would need the 1x4 top row.
+        # The OCR path relaxes square clues for misread shapes; page shapes are exact.
+        board = {"size": 4, "clues": [[0, "square", None], [4, "any", 12]]}
+        response = solve_patches_worker(Path("unused.png"), parsed_board=board)
+        self.assertFalse(response["solved"])
+        relaxed = {"size": 4, "clues": [[0, "any", None], [4, "any", 12]]}
+        self.assertTrue(solve_patches_worker(Path("unused.png"), parsed_board=relaxed)["solved"])
+
+    def test_invalid_page_boards_are_rejected(self) -> None:
+        from services.solver_api.app.domain.errors import InvalidBoard
+        from services.solver_api.app.domain.patches_board import validate_patches_board
+
+        for payload in (
+            None, {}, {"size": 6},
+            {"size": 3, "clues": [[0, "any", None]]},
+            {"size": 6, "clues": []},
+            {"size": 6, "clues": [[36, "any", None]]},
+            {"size": 6, "clues": [[0, "round", None]]},
+            {"size": 6, "clues": [[0, "any", 0]]},
+            {"size": 6, "clues": [[0, "any", None], [0, "square", 4]]},
+            {"size": 6, "clues": [[0, "any", None]], "solution": []},
+        ):
+            with self.subTest(payload=payload):
+                with self.assertRaises(InvalidBoard):
+                    validate_patches_board(payload)
+                if isinstance(payload, dict):
+                    self.assertFalse(solve_patches_worker(Path("unused.png"), parsed_board=payload)["solved"])
 
 if __name__ == "__main__":
     unittest.main()

@@ -85,8 +85,38 @@
     return { size: puzzle.gridSize, regions };
   }
 
-  // Page board builders by puzzle type; types without one keep using the image.
-  const PAGE_BOARD_BUILDERS = { zip: zipBoardFromPuzzle, tango: tangoBoardFromPuzzle, queens: queensBoardFromPuzzle };
+  // Patches: each clue's cell, the rectangle shape it asks for and its area (0 = no number).
+  const PATCHES_SHAPES = {
+    PatchesShapeConstraint_UNKNOWN: "any",
+    PatchesShapeConstraint_SQUARE: "square",
+    PatchesShapeConstraint_HORIZONTAL_RECT: "wide",
+    PatchesShapeConstraint_VERTICAL_RECT: "tall",
+  };
+  function patchesBoardFromPuzzle(page) {
+    const puzzle = page?.kind === "patchesGamePuzzle" ? page.puzzle : null;
+    // The solver handles square boards only; anything else keeps using the image.
+    if (!puzzle || !Number.isInteger(puzzle.gridRows) || puzzle.gridRows !== puzzle.gridCols || !Array.isArray(puzzle.clueCells)) {
+      return null;
+    }
+    const clues = [];
+    for (const clue of puzzle.clueCells) {
+      const shape = PATCHES_SHAPES[clue?.shapeConstraint];
+      if (!Number.isInteger(clue?.cellIdx) || !shape || !Number.isInteger(clue.numberConstraint || 0)) return null;
+      clues.push([clue.cellIdx, shape, clue.numberConstraint || null]);
+    }
+    return { size: puzzle.gridRows, clues };
+  }
 
-  root.PagePuzzle = { readLinkedInPuzzle, zipBoardFromPuzzle, tangoBoardFromPuzzle, queensBoardFromPuzzle, PAGE_BOARD_BUILDERS };
+  // Page board builders by puzzle type; types without one keep using the image.
+  const PAGE_BOARD_BUILDERS = {
+    zip: zipBoardFromPuzzle,
+    tango: tangoBoardFromPuzzle,
+    queens: queensBoardFromPuzzle,
+    patches: patchesBoardFromPuzzle,
+  };
+
+  root.PagePuzzle = {
+    readLinkedInPuzzle, zipBoardFromPuzzle, tangoBoardFromPuzzle, queensBoardFromPuzzle, patchesBoardFromPuzzle,
+    PAGE_BOARD_BUILDERS,
+  };
 })(globalThis);
