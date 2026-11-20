@@ -56,6 +56,7 @@ PUZZLE_DEFINITIONS: tuple[PuzzleDefinition, ...] = (
         sample_image="games/zip_solver/examples/sample1.png",
         expected_board_size=7,
         sample_required=False,
+        page_board_fixture="games/zip_solver/tests/fixtures/linkedin-2026-11-20.json",
     ),
     PuzzleDefinition(
         key="patches",

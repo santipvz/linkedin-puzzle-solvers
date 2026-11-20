@@ -18,6 +18,7 @@ COMMANDS: tuple[tuple[str, ...], ...] = (
     ("node", "--check", "extension/puzzle_registry.js"),
     ("node", "--check", "extension/api_config.js"),
     ("node", "--check", "extension/wend_paths.js"),
+    ("node", "--check", "extension/page_puzzle.js"),
     (
         "node",
         "--test",
@@ -30,6 +31,7 @@ COMMANDS: tuple[tuple[str, ...], ...] = (
         "extension/tests/tango_apply.test.js",
         "extension/tests/wend_apply.test.js",
         "extension/tests/sumbreak_apply.test.js",
+        "extension/tests/page_puzzle.test.js",
         "extension/tests/move_pacing.test.js",
         "scripts/tests/gitflow.test.js",
     ),

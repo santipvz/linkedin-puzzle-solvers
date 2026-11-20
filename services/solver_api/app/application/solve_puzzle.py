@@ -8,6 +8,7 @@ from ..domain.errors import EmptyImage, ImageTooLarge, InvalidBoard, UnknownPuzz
 from ..domain.models import JsonDict, SolveRequest
 from ..domain.sumbreak_board import validate_sumbreak_board
 from ..domain.wend_board import validate_wend_board
+from ..domain.zip_board import validate_zip_board
 from .cache_policy import should_recompute
 from .ports import CaptureStore, SolutionCache, Solver
 
@@ -15,6 +16,7 @@ from .ports import CaptureStore, SolutionCache, Solver
 PAGE_BOARD_VALIDATORS = {
     "sumbreak": validate_sumbreak_board,
     "wend": validate_wend_board,
+    "zip": validate_zip_board,
 }
 
 
