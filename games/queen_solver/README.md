@@ -3,6 +3,16 @@
 A sophisticated computer vision system for automatically solving colored queens puzzles from images. Combines intelligent image processing with optimized constraint satisfaction algorithms to detect puzzle boards and find valid queen placements.
 
 
+## Input from the page
+
+The extension reads the puzzle that LinkedIn's game already holds in memory (see `extension/page_puzzle.js`), so normal solves need no image. It sends this as `parsed_board`:
+
+```json
+{"size": 9, "regions": [[2, 2, 2, 2, 2, 2, 2, 2, 8], [2, 2, 2, 5, 5, 5, 5, 8, 8]]}
+```
+
+`regions[row][col]` is the colour region id of each cell, and a board of size N has exactly N regions. The worker hands the regions straight to `BacktrackingQueensSolver`. The board detection, colour clustering and inpainting below are only used when the page puzzle can't be read. `tests/fixtures/linkedin-2026-11-20.json` records a real page board, and our answer for it matches LinkedIn's.
+
 ## What is a Queens Puzzle?
 
 The Queens puzzle is a constraint satisfaction problem popularized as a daily logic game on LinkedIn. The objective is to place queens on a colored grid so that:

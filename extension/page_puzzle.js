@@ -76,8 +76,17 @@
     return board;
   }
 
-  // Page board builders by puzzle type; types without one keep using the image.
-  const PAGE_BOARD_BUILDERS = { zip: zipBoardFromPuzzle, tango: tangoBoardFromPuzzle };
+  // Queens: the colour region id of every cell.
+  function queensBoardFromPuzzle(page) {
+    const puzzle = page?.kind === "queensGamePuzzle" ? page.puzzle : null;
+    if (!puzzle || !Number.isInteger(puzzle.gridSize) || !Array.isArray(puzzle.colorGrid)) return null;
+    const regions = puzzle.colorGrid.map(row => (Array.isArray(row?.colors) ? row.colors.slice() : null));
+    if (regions.some(row => !row || !row.every(Number.isInteger))) return null;
+    return { size: puzzle.gridSize, regions };
+  }
 
-  root.PagePuzzle = { readLinkedInPuzzle, zipBoardFromPuzzle, tangoBoardFromPuzzle, PAGE_BOARD_BUILDERS };
+  // Page board builders by puzzle type; types without one keep using the image.
+  const PAGE_BOARD_BUILDERS = { zip: zipBoardFromPuzzle, tango: tangoBoardFromPuzzle, queens: queensBoardFromPuzzle };
+
+  root.PagePuzzle = { readLinkedInPuzzle, zipBoardFromPuzzle, tangoBoardFromPuzzle, queensBoardFromPuzzle, PAGE_BOARD_BUILDERS };
 })(globalThis);

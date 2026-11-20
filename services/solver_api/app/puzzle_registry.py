@@ -34,6 +34,7 @@ PUZZLE_DEFINITIONS: tuple[PuzzleDefinition, ...] = (
         sample_image="games/queen_solver/examples/sample1.png",
         expected_board_size=9,
         sample_required=True,
+        page_board_fixture="games/queen_solver/tests/fixtures/linkedin-2026-11-20.json",
     ),
     PuzzleDefinition(
         key="tango",
