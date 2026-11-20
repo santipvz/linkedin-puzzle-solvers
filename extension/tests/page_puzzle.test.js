@@ -104,3 +104,18 @@ test('Zip falls back to the image when the page puzzle is unavailable', async ()
     selection: { x: 0, y: 0, width: 400, height: 400, devicePixelRatio: 1 } });
   assert.equal(options.parsedBoard, null);
 });
+
+test('the API upload carries the Zip page board', async () => {
+  // Checks the real request, not a mocked callSolverApi.
+  let request;
+  const context = vm.createContext({ Blob, FormData, chrome: { runtime: { onMessage: { addListener() {} } } },
+    fetch: async (url, options) => { request = { url, ...options }; return { ok: true, text: async () => '{"solved":true}', headers: { get: () => null } }; } });
+  for (const file of ['puzzle_registry.js', 'api_config.js', 'page_puzzle.js', 'background.js']) {
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context);
+  }
+  await context.callSolverApi('http://127.0.0.1:18000', 'zip', new Blob(['image'], { type: 'image/png' }), { parsedBoard: ZIP_FIXTURE });
+  assert.equal(request.url, 'http://127.0.0.1:18000/solve/zip');
+  assert.deepEqual(JSON.parse(request.body.get('parsed_board')), ZIP_FIXTURE);
+  await context.callSolverApi('http://127.0.0.1:18000', 'zip', new Blob(['image'], { type: 'image/png' }), {});
+  assert.equal(request.body.get('parsed_board'), null);
+});

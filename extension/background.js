@@ -740,7 +740,7 @@ async function callSolverApi(apiBaseUrl, puzzleType, imageBlob, options = {}) {
   const formData = new FormData();
   const extension = imageBlob.type === "image/jpeg" ? "jpg" : "png";
   formData.append("image", imageBlob, `${safePuzzleType}_board.${extension}`);
-  if ((safePuzzleType === "wend" || safePuzzleType === "sumbreak") && options.parsedBoard) {
+  if (options.parsedBoard) {
     formData.append("parsed_board", JSON.stringify(options.parsedBoard));
   }
 
