@@ -265,6 +265,13 @@ function summarizeResult(puzzleType, result) {
   const lines = [];
   lines.push(`Puzzle: ${puzzleType}`);
   lines.push(`Solved: ${Boolean(result.solved)}`);
+  const source = result.details?.input_source;
+  if (source) {
+    lines.push(`Board read from: ${source === "page" ? "the game's puzzle data" : "the screenshot"}`);
+  }
+  if (result.details?.page_fallback_reason) {
+    lines.push(`Why not the page: ${result.details.page_fallback_reason}`);
+  }
 
   if (result.board_size) {
     lines.push(`Board size: ${result.board_size}`);
@@ -280,6 +287,9 @@ function summarizeResult(puzzleType, result) {
 
   if (result.details && typeof result.details === "object") {
     for (const [key, value] of Object.entries(result.details)) {
+      if (key === "input_source" || key === "page_fallback_reason") {
+        continue;
+      }
       if (value && typeof value === "object") {
         lines.push(`${key}: ${JSON.stringify(value)}`);
       } else {
