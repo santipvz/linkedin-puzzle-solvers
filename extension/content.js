@@ -613,16 +613,45 @@ function sumbreakBoardDimensions(root) {
     : null;
 }
 
+// Operator ("wildcard") tiles show "×2" or "+3"; the solver API takes "x2" / "+3".
+function sumbreakWildcardValue(text) {
+  const match = String(text || "").replace(/\s+/g, "").match(/^([×x*+])(-?\d+)$/i);
+  return match ? `${match[1] === "+" ? "+" : "x"}${Number(match[2])}` : undefined;
+}
+
 function sumbreakCellValue(root, index) {
   const cell = root.querySelector(`[data-numo-index="${index}"]`);
   if (!cell) return undefined;
-  const tile = cell.querySelector('button[data-numo-kind="number"]');
+  const tile = cell.querySelector("button[data-numo-kind]");
   if (!tile) return null;
+  const kind = tile.getAttribute("data-numo-kind");
   // The SVG label holds the digits; the aria-label is localized but also carries them.
   const label = root.querySelector(`[data-numo-svg-cell="${index}"] [data-numo-label]`)?.textContent?.trim();
+  if (kind === "wildcard") {
+    // The localized aria-label does not reliably name the operation, so only trust the label.
+    return sumbreakWildcardValue(label);
+  }
+  if (kind !== "number") return undefined;
   const text = /^\d+$/.test(label || "") ? label : (tile.getAttribute("aria-label") || "").match(/\d+/)?.[0];
   const value = Number(text);
   return Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+// Value left on the target after a merge, or null when the game would refuse it.
+function sumbreakMergeValue(source, target) {
+  const op = value => (typeof value === "string" ? value.match(/^([x+])(-?\d+)$/) : null);
+  const a = op(source), b = op(target);
+  let result;
+  if (source === null || target === null || (a && b)) return null;
+  if (a || b) {
+    const [wild, number] = a ? [a, target] : [b, source];
+    if (!Number.isInteger(number)) return null;
+    result = wild[1] === "x" ? number * Number(wild[2]) : number + Number(wild[2]);
+  } else {
+    if (source !== target) return null;
+    result = source + target;
+  }
+  return Number.isSafeInteger(result) && result >= 1 ? result : null;
 }
 
 function readSumbreakBoardValues(root) {
@@ -644,7 +673,7 @@ function readSumbreakBoardValues(root) {
 function readSumbreakPageBoard() {
   const root = nativeGameBoard("sumbreak");
   const board = root && readSumbreakBoardValues(root);
-  if (!board || !board.flat().some(value => value !== null)) return null;
+  if (!board || !board.flat().some(value => typeof value === "number")) return null;
   const selection = nativeBoardSelection("sumbreak");
   return selection ? { board, selection } : null;
 }
@@ -2420,7 +2449,7 @@ async function applyWendSolution(result, selection, settings) {
 }
 
 function sumbreakTileButton(root, row, col, columns) {
-  return root?.querySelector(`[data-numo-index="${row * columns + col}"] button[data-numo-kind="number"]`) || null;
+  return root?.querySelector(`[data-numo-index="${row * columns + col}"] button[data-numo-kind]`) || null;
 }
 
 // Sumbreak animates each merge (about 0.3–0.7 s) by giving the two tiles the
@@ -2452,6 +2481,15 @@ async function applySumbreakSolution(result, selection, settings) {
     return fail("Sumbreak board no longer matches the solved puzzle. Solve again before applying.");
   }
 
+  // Replay the plan on a copy so every merge, including operator tiles, is checked first.
+  const expected = startBoard.map(row => row.slice());
+  for (const move of plan.moves) {
+    const value = sumbreakMergeValue(expected[move.row][move.col], expected[move.toRow][move.toCol]);
+    if (value === null || value !== move.value) return fail("Sumbreak moves do not fit the board. Stopped before applying.");
+    expected[move.row][move.col] = null;
+    expected[move.toRow][move.toCol] = value;
+  }
+
   const nextMove = createMovePacer(applySettings.moveIntervalMs);
   for (const move of plan.moves) {
     if (sumbreakFinished()) break;
@@ -2465,8 +2503,7 @@ async function applySumbreakSolution(result, selection, settings) {
     const target = sumbreakTileButton(root, move.toRow, move.toCol, plan.columns);
     const before = root && readSumbreakBoardValues(root);
     if (!source || !target || !before) return fail("Could not find the Sumbreak tiles for the next move. Stopped applying.");
-    const half = move.value / 2;
-    if (before[move.row][move.col] !== half || before[move.toRow][move.toCol] !== half) {
+    if (sumbreakMergeValue(before[move.row][move.col], before[move.toRow][move.toCol]) !== move.value) {
       return fail("Sumbreak tiles do not match the planned move. Stopped applying.");
     }
     // A selected tile from a previous manual tap would turn our first tap into a merge attempt.

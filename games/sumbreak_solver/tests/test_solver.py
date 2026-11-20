@@ -18,10 +18,42 @@ from services.solver_api.app.workers.solve_sumbreak_worker import solve as solve
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "linkedin-2026-11-18.json"
+OPERATOR_FIXTURE = Path(__file__).parent / "fixtures" / "linkedin-2026-11-20.json"
 
 
-def remaining_tiles(board: list[list[int | None]]) -> list[int]:
+def remaining_tiles(board: list[list[int | str | None]]) -> list[int | str]:
     return [value for row in board for value in row if value is not None]
+
+
+def add_operators(board: list[list[int | None]], count: int, rng: random.Random) -> list[list[int | str | None]]:
+    """Run operator merges backwards: split a number into a smaller number and an operator."""
+    board = [list(row) for row in board]
+    rows, columns = len(board), len(board[0])
+    for _ in range(count):
+        cells = [(r, c) for r in range(rows) for c in range(columns) if isinstance(board[r][c], int) and board[r][c] > 2]
+        rng.shuffle(cells)
+        for row, col in cells:
+            empty = [
+                (row + dr, col + dc)
+                for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1))
+                if 0 <= row + dr < rows and 0 <= col + dc < columns and board[row + dr][col + dc] is None
+            ]
+            if not empty:
+                continue
+            value = board[row][col]
+            other = rng.choice(empty)
+            if value % 2 == 0 and rng.random() < 0.6:
+                board[row][col], operator = value // 2, "x2"
+            else:
+                operand = rng.randrange(1, value)
+                board[row][col], operator = value - operand, f"+{operand}"
+            # Either cell may hold the operator: the merge works in both directions.
+            if rng.random() < 0.5:
+                board[other[0]][other[1]] = operator
+            else:
+                board[other[0]][other[1]], board[row][col] = board[row][col], operator
+            break
+    return board
 
 
 def generate_solvable_board(rows: int, columns: int, rng: random.Random) -> list[list[int | None]]:
@@ -63,6 +95,49 @@ class SumbreakSolverTests(unittest.TestCase):
         self.assertEqual(result.final_value, 128)
         self.assertEqual(remaining_tiles(apply_moves(board, result.moves)), [128])
 
+    def test_linkedin_first_operator_puzzle(self) -> None:
+        board = json.loads(OPERATOR_FIXTURE.read_text())["board"]
+        result = SumbreakSolver().solve(board)
+        self.assertTrue(result.solved, result.error)
+        self.assertEqual(len(result.moves), 6)
+        self.assertEqual(result.final_value, 32)
+        self.assertEqual(remaining_tiles(apply_moves(board, result.moves)), [32])
+
+    def test_operator_rules(self) -> None:
+        # The operator can be dragged onto the number or the number onto it.
+        self.assert_operator_solves([["x3", 5]], 15)
+        self.assert_operator_solves([[5, "+2", 7]], 14)
+        # Non-power-of-two results still merge with equal numbers.
+        self.assert_operator_solves([[3, "x2", 6], [None, None, None]], 12)
+        # Two operators never merge, and the last tile must be a number.
+        self.assertFalse(SumbreakSolver().solve([["x2", "x2"]]).solved)
+        self.assertFalse(SumbreakSolver().solve([[1, "x2", 4]]).solved)
+        self.assert_operator_solves([[2, "x2", "x2"], [None, None, 8]], 16)
+
+    def test_operators_that_do_not_grow_numbers(self) -> None:
+        self.assert_operator_solves([[2, "x1", 2]], 4)
+        self.assert_operator_solves([[3, "+-1", 2]], 4)
+        self.assertFalse(SumbreakSolver().solve([[1, "+-1"]]).solved)
+
+    def test_random_boards_with_operators(self) -> None:
+        rng = random.Random(1120)
+        for rows, columns, operators in ((3, 3, 1), (4, 4, 2), (4, 5, 3), (5, 5, 3), (6, 6, 4)):
+            for _ in range(5):
+                board = add_operators(generate_solvable_board(rows, columns, rng), operators, rng)
+                with self.subTest(board=board):
+                    started = time.monotonic()
+                    result = SumbreakSolver().solve(board)
+                    self.assertTrue(result.solved, result.error)
+                    final = remaining_tiles(apply_moves(board, result.moves))
+                    self.assertEqual(len(final), 1)
+                    self.assertIsInstance(final[0], int)
+                    self.assertLess(time.monotonic() - started, 5)
+
+    def assert_operator_solves(self, board: list[list[int | str | None]], final: int) -> None:
+        result = SumbreakSolver().solve(board)
+        self.assertTrue(result.solved, result.error)
+        self.assertEqual(remaining_tiles(apply_moves(board, result.moves)), [final])
+
     def test_single_tile_is_already_solved(self) -> None:
         result = SumbreakSolver().solve([[None, 8], [None, None]])
         self.assertTrue(result.solved)
@@ -98,7 +173,7 @@ class SumbreakSolverTests(unittest.TestCase):
                 self.assertTrue(result.error)
 
     def test_rejects_invalid_values(self) -> None:
-        for board in ([[0, 1]], [[True, 1]], [[1.0, 1]], [[1], [1, 1]], [[None, None]], []):
+        for board in ([[0, 1]], [[True, 1]], [[1.0, 1]], [[1, "2"]], [[1, "/2"]], [[1], [1, 1]], [[None, None]], []):
             with self.subTest(board=board):
                 self.assertFalse(SumbreakSolver().solve(board).solved)
 
@@ -127,6 +202,14 @@ class SumbreakSolverTests(unittest.TestCase):
         ):
             with self.subTest(move=move), self.assertRaises(ValueError):
                 apply_moves(board, [move])
+        board = [["x2", "+1"], [3, None]]
+        self.assertEqual(apply_moves(board, [SumbreakMove(source=(0, 0), target=(1, 0), value=6)])[1][0], 6)
+        for move in (
+            SumbreakMove(source=(0, 0), target=(0, 1), value=2),
+            SumbreakMove(source=(1, 0), target=(0, 0), value=5),
+        ):
+            with self.subTest(move=move), self.assertRaises(ValueError):
+                apply_moves(board, [move])
 
 
 class SumbreakPageBoardTests(unittest.TestCase):
@@ -136,12 +219,19 @@ class SumbreakPageBoardTests(unittest.TestCase):
         self.assertEqual(validated, payload)
         self.assertIsNot(validated["board"][0], payload["board"][0])
 
+    def test_operator_cells_are_accepted(self) -> None:
+        payload = {"board": [[None, 2, 1], [None, 4, 1], [16, "x2", 4]]}
+        self.assertEqual(validate_sumbreak_board(payload), payload)
+        self.assertEqual(validate_sumbreak_board({"board": [[1, "+3"], [None, "+-2"]]})["board"][1][1], "+-2")
+
     def test_invalid_boards(self) -> None:
         for payload in (
             None, [], {}, {"board": [[1, 1]], "lengths": []}, {"board": [[1, 1]]},
             {"board": [[1, 1], [1]]}, {"board": [[1, 0], [1, 1]]}, {"board": [[1, True], [1, 1]]},
             {"board": [[1, "2"], [1, 1]]}, {"board": [[None, None], [None, None]]},
             {"board": [[1] * 9] * 2}, {"board": [[1, 1 << 30], [1, 1]]},
+            {"board": [[1, "×2"], [1, 1]]}, {"board": [[1, "x"], [1, 1]]}, {"board": [[1, "x999999999"], [1, 1]]},
+            {"board": [["x2", None], [None, "+1"]]},
         ):
             with self.subTest(payload=payload), self.assertRaises(InvalidBoard):
                 validate_sumbreak_board(payload)
@@ -161,6 +251,13 @@ class SumbreakWorkerTests(unittest.TestCase):
             for m in response["moves"]
         ]
         self.assertEqual(remaining_tiles(apply_moves(board["board"], moves)), [128])
+
+    def test_worker_solves_operator_boards(self) -> None:
+        board = json.loads(OPERATOR_FIXTURE.read_text())
+        response = solve_sumbreak_worker("unused.png", parsed_board=board)
+        self.assertTrue(response["solved"], response["error"])
+        self.assertEqual(response["details"]["final_value"], 32)
+        self.assertEqual(response["details"]["board"], board["board"])
 
     def test_worker_requires_page_data(self) -> None:
         response = solve_sumbreak_worker("unused.png")

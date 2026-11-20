@@ -13,8 +13,8 @@ from games.sumbreak_solver.src.sumbreak_solver import SumbreakSolver
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Solve a LinkedIn Sumbreak board given as JSON (null for empty cells).")
-    parser.add_argument("board", help='JSON rows, for example "[[1, 1, 64], [4, 2, 32], [4, 4, 16]]"')
+    parser = argparse.ArgumentParser(description="Solve a LinkedIn Sumbreak board given as JSON (null for empty cells, x2 or +3 for operator tiles).")
+    parser.add_argument("board", help='JSON rows, for example \'[[null, 2, 1], [null, 4, 1], [16, "x2", 4]]\'')
     args = parser.parse_args()
 
     try:
