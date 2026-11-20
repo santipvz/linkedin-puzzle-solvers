@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import itertools
+import json
 import sys
 from pathlib import Path
 from typing import Protocol, TypedDict
@@ -230,7 +231,59 @@ def _recover_from_conflicting_clues(
     return baseline_result, initial_board, []
 
 
-def solve(image_path: Path) -> JsonDict:
+def _solve_page_board(parsed_board: JsonDict, solver: _SudokuSolverLike) -> JsonDict:
+    """Solve a Mini Sudoku read from the page: no image or OCR involved."""
+    from services.solver_api.app.domain.sudoku_board import validate_sudoku_board
+
+    try:
+        board = validate_sudoku_board(parsed_board)["board"]
+    except Exception as exc:
+        return {
+            "puzzle": "sudoku",
+            "solved": False,
+            "board_size": 0,
+            "moves": [],
+            "solution_grid": None,
+            "error": f"Invalid Mini Sudoku page board: {exc}",
+            "details": {"parse_reliable": False, "input_source": "page"},
+        }
+
+    result = solver.solve(board, max_solutions=2)
+    solution_count = int(getattr(result, "solution_count", 1 if result.solved else 0) or 0)
+    solved = bool(result.solved and solution_count == 1 and result.board is not None)
+    moves = [
+        {"row": row, "col": col, "value": int(result.board[row][col])}
+        for row, values in enumerate(board)
+        for col, value in enumerate(values)
+        if solved and value == 0
+    ]
+    error = None
+    if not solved:
+        error = "Mini Sudoku has more than one solution." if result.solved else (result.error or "No valid solution found.")
+    return {
+        "puzzle": "sudoku",
+        "solved": solved,
+        "board_size": len(board),
+        "moves": moves,
+        "solution_grid": _normalize_board(result.board) if solved else None,
+        "fixed_cells": [
+            {"row": row, "col": col, "value": value}
+            for row, values in enumerate(board)
+            for col, value in enumerate(values)
+            if value
+        ],
+        "error": error,
+        "details": {
+            "iterations": int(getattr(result, "iterations", 0) or 0),
+            "solution_count": solution_count,
+            "unique_solution": solved,
+            "parse_reliable": True,
+            "input_source": "page",
+        },
+    }
+
+
+def solve(image_path: Path, *, parsed_board: JsonDict | None = None) -> JsonDict:
     game_root = game_root_for_worker(__file__, "sudoku_solver")
     if not game_root.exists():
         return {
@@ -241,8 +294,12 @@ def solve(image_path: Path) -> JsonDict:
 
     activate_game_import_context(game_root)
 
-    from src.image_parser import MiniSudokuImageParser
     from src.mini_sudoku_solver import MiniSudokuSolver
+
+    if parsed_board is not None:
+        return _solve_page_board(parsed_board, MiniSudokuSolver())
+
+    from src.image_parser import MiniSudokuImageParser
 
     parser = MiniSudokuImageParser()
     solver = MiniSudokuSolver()
@@ -372,6 +429,9 @@ def solve(image_path: Path) -> JsonDict:
 
 
 def main() -> int:
+    if len(sys.argv) == 3 and sys.argv[2] == "--parsed-board":
+        page_board = json.load(sys.stdin)
+        return run_worker_cli(sys.argv[:2], lambda path: solve(path, parsed_board=page_board), "solve_sudoku_worker.py", "Mini Sudoku")
     return run_worker_cli(
         argv=sys.argv,
         solve_fn=solve,

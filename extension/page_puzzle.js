@@ -16,6 +16,25 @@
       }
       return null;
     };
+    // Mini Sudoku is a separate (non-React) app whose cells carry readable classes.
+    const sudokuCells = Array.from(document.querySelectorAll(".sudoku-cell[data-cell-idx]"));
+    if (sudokuCells.length) {
+      const rects = sudokuCells.map(cell => cell.getBoundingClientRect());
+      const left = Math.min(...rects.map(rect => rect.left)), top = Math.min(...rects.map(rect => rect.top));
+      return {
+        kind: "miniSudokuCells",
+        puzzle: {
+          cells: sudokuCells.map(cell => ({
+            index: Number(cell.getAttribute("data-cell-idx")),
+            prefilled: cell.classList.contains("sudoku-cell-prefilled"),
+            text: (cell.querySelector(".sudoku-cell-content")?.textContent || "").trim(),
+          })),
+        },
+        cellMarks: {},
+        selection: { x: left, y: top, width: Math.max(...rects.map(rect => rect.right)) - left,
+          height: Math.max(...rects.map(rect => rect.bottom)) - top, devicePixelRatio: window.devicePixelRatio || 1 },
+      };
+    }
     for (const selector of rootSelectors) {
       for (const element of document.querySelectorAll(selector)) {
         const puzzle = findPuzzle(element);
@@ -107,16 +126,32 @@
     return { size: puzzle.gridRows, clues };
   }
 
+  // Mini Sudoku: only the preset digits count; values the player typed are not clues.
+  function sudokuBoardFromPuzzle(page) {
+    const cells = page?.kind === "miniSudokuCells" ? page.puzzle?.cells : null;
+    const size = Math.round(Math.sqrt(cells?.length || 0));
+    if (!Array.isArray(cells) || size < 2 || size * size !== cells.length) return null;
+    const board = Array.from({ length: size }, () => new Array(size).fill(0));
+    for (const cell of cells) {
+      if (!Number.isInteger(cell.index) || cell.index < 0 || cell.index >= cells.length) return null;
+      if (!cell.prefilled) continue;
+      if (!/^[1-9]$/.test(cell.text)) return null;
+      board[Math.floor(cell.index / size)][cell.index % size] = Number(cell.text);
+    }
+    return { board };
+  }
+
   // Page board builders by puzzle type; types without one keep using the image.
   const PAGE_BOARD_BUILDERS = {
     zip: zipBoardFromPuzzle,
     tango: tangoBoardFromPuzzle,
     queens: queensBoardFromPuzzle,
     patches: patchesBoardFromPuzzle,
+    sudoku: sudokuBoardFromPuzzle,
   };
 
   root.PagePuzzle = {
     readLinkedInPuzzle, zipBoardFromPuzzle, tangoBoardFromPuzzle, queensBoardFromPuzzle, patchesBoardFromPuzzle,
-    PAGE_BOARD_BUILDERS,
+    sudokuBoardFromPuzzle, PAGE_BOARD_BUILDERS,
   };
 })(globalThis);

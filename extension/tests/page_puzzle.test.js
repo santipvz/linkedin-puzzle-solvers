@@ -5,7 +5,9 @@ const vm = require('node:vm');
 const { test } = require('node:test');
 
 require('../page_puzzle.js');
-const { readLinkedInPuzzle, zipBoardFromPuzzle, tangoBoardFromPuzzle, queensBoardFromPuzzle, patchesBoardFromPuzzle } = globalThis.PagePuzzle;
+const {
+  readLinkedInPuzzle, zipBoardFromPuzzle, tangoBoardFromPuzzle, queensBoardFromPuzzle, patchesBoardFromPuzzle, sudokuBoardFromPuzzle,
+} = globalThis.PagePuzzle;
 
 // Zip 2026-11-20 as LinkedIn's game holds it (shortened $type names).
 const ZIP_PUZZLE = {
@@ -175,6 +177,29 @@ test('builds the Patches page board from clue cells', () => {
   assert.equal(patchesBoardFromPuzzle({ kind: 'patchesGamePuzzle', puzzle: { gridRows: 6, gridCols: 7, clueCells } }), null);
   const unknownShape = [{ cellIdx: 0, shapeConstraint: 'PatchesShapeConstraint_TRIANGLE', numberConstraint: 0 }];
   assert.equal(patchesBoardFromPuzzle({ kind: 'patchesGamePuzzle', puzzle: { gridRows: 7, gridCols: 7, clueCells: unknownShape } }), null);
+});
+
+test('reads Mini Sudoku presets from its cells and ignores typed digits', () => {
+  const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, '../../games/sudoku_solver/tests/fixtures/linkedin-2026-11-20.json'), 'utf8'));
+  const cells = fixture.board.flat().map((value, index) => ({
+    index, value, prefilled: value !== 0,
+    // Cell 0 holds a digit the player typed: visible, but not a clue.
+    text: value ? String(value) : index === 0 ? '6' : '',
+  })).map(cell => ({
+    getAttribute: name => (name === 'data-cell-idx' ? String(cell.index) : null),
+    classList: { contains: name => name === 'sudoku-cell-prefilled' && cell.prefilled },
+    querySelector: () => ({ textContent: ` ${cell.text} ` }),
+    getBoundingClientRect: () => {
+      const left = 300 + (cell.index % 6) * 60, top = 100 + Math.floor(cell.index / 6) * 60;
+      return { left, top, right: left + 60, bottom: top + 60, width: 60, height: 60 };
+    },
+  }));
+  const document = { querySelectorAll: wanted => (wanted === '.sudoku-cell[data-cell-idx]' ? cells : []), querySelector: () => null };
+  const page = runInPage({ document, window: { devicePixelRatio: 1 } });
+  assert.equal(page.kind, 'miniSudokuCells');
+  assert.deepEqual(page.selection, { x: 300, y: 100, width: 360, height: 360, devicePixelRatio: 1 });
+  assert.deepEqual(sudokuBoardFromPuzzle(page), fixture);
+  assert.equal(sudokuBoardFromPuzzle({ kind: 'miniSudokuCells', puzzle: { cells: page.puzzle.cells.slice(1) } }), null);
 });
 
 test('the API upload carries the Zip page board', async () => {

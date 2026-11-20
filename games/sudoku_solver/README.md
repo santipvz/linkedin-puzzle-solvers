@@ -2,6 +2,12 @@
 
 Computer vision and backtracking solver for LinkedIn Mini Sudoku.
 
+## Input from the page
+
+Mini Sudoku is a separate, non-React app inside the `/games/view/mini-sudoku/desktop` iframe. Its cells carry readable classes, so the extension reads the preset digits straight from them: `.sudoku-cell-prefilled` and `.sudoku-cell-content`. Digits the player typed are not clues and are left out. The extension sends `{"board": [[0, 1, 0, 0, 0, 0], ...]}` as `parsed_board`, with 0 for blank cells. The worker only applies a solution when it is unique.
+
+The OCR pipeline below is only used when the page can't be read. `tests/fixtures/linkedin-2026-11-20.json` records a real page board.
+
 ## Puzzle Rules
 
 - Grid size is `6x6`.
