@@ -21,7 +21,7 @@ def run_worker(
     worker_path: Path,
     image_path: Path,
     puzzle_name: str,
-    expected_board_size: int,
+    expected_board_size: int | None,
     sample_label: str | None = None,
     page_board_path: Path | None = None,
 ) -> None:
@@ -56,7 +56,7 @@ def run_worker(
             f"{payload.get('puzzle')} (expected {puzzle_name})"
         )
 
-    if int(payload.get("board_size") or 0) != expected_board_size:
+    if expected_board_size is not None and int(payload.get("board_size") or 0) != expected_board_size:
         raise RuntimeError(
             f"Unexpected board size from {worker_path.name}: "
             f"{payload.get('board_size')} (expected {expected_board_size})"
@@ -78,7 +78,8 @@ def run_worker(
 def main() -> int:
     for definition in PUZZLE_DEFINITIONS:
         worker_path = WORKERS_DIR / definition.worker_filename
-        for sample_image in definition.all_smoke_samples:
+        samples = definition.all_smoke_samples if definition.image_input else ()
+        for sample_image in samples:
             sample_path = REPO_ROOT / sample_image
 
             if not sample_path.exists():
@@ -96,7 +97,17 @@ def main() -> int:
                 puzzle_name=definition.key,
                 expected_board_size=int(definition.expected_board_size),
                 sample_label=sample_path.name,
-                page_board_path=(REPO_ROOT / definition.page_board_fixture) if definition.page_board_fixture else None,
+            )
+
+        if definition.page_board_fixture:
+            # Page boards skip the image; the worker only needs a path argument.
+            run_worker(
+                worker_path=worker_path,
+                image_path=REPO_ROOT / definition.sample_image,
+                puzzle_name=definition.key,
+                expected_board_size=None,
+                sample_label=Path(definition.page_board_fixture).name,
+                page_board_path=REPO_ROOT / definition.page_board_fixture,
             )
 
     return 0
