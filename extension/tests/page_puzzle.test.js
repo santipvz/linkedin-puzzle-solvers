@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const { test } = require('node:test');
 
 require('../page_puzzle.js');
-const { readLinkedInPuzzle, zipBoardFromPuzzle } = globalThis.PagePuzzle;
+const { readLinkedInPuzzle, zipBoardFromPuzzle, tangoBoardFromPuzzle } = globalThis.PagePuzzle;
 
 // Zip 2026-11-20 as LinkedIn's game holds it (shortened $type names).
 const ZIP_PUZZLE = {
@@ -22,17 +22,35 @@ const ZIP_PUZZLE = {
 };
 const ZIP_FIXTURE = JSON.parse(fs.readFileSync(path.join(__dirname, '../../games/zip_solver/tests/fixtures/linkedin-2026-11-20.json'), 'utf8'));
 
+// Tango 2026-11-20: preset cells and = / x clues. cell-zero is a sun, cell-one a moon.
+const TANGO_PUZZLE = {
+  $case: 'lotkaGamePuzzle',
+  lotkaGamePuzzle: {
+    gridSize: 6,
+    presetCellIdxes: [1, 4, 6, 11, 24, 29, 31, 34],
+    edges: [[2, 3, true], [14, 15, true], [20, 21, false], [32, 33, true], [12, 18, true], [14, 20, true], [15, 21, false], [17, 23, false]]
+      .map(([startIdx, endIdx, isEqual]) => ({ $type: 'LotkaEdge', startIdx, endIdx, isEqual })),
+    solution: ['LotkaCellValue_ZERO'],
+  },
+};
+const TANGO_MARKS = { 1: 'cell-one', 4: 'cell-one', 6: 'cell-zero', 11: 'cell-zero', 24: 'cell-zero', 29: 'cell-one', 31: 'cell-zero', 34: 'cell-zero' };
+const TANGO_FIXTURE = JSON.parse(fs.readFileSync(path.join(__dirname, '../../games/tango_solver/tests/fixtures/linkedin-2026-11-20.json'), 'utf8'));
+
 // A document whose board element sits a few React fibers below the component holding `game`.
-function pageWith(puzzle, { selector = '[data-testid="interactive-grid"]', depth = 5 } = {}) {
+function pageWith(puzzle, { selector = '[data-testid="interactive-grid"]', depth = 5, marks = {} } = {}) {
   let fiber = { memoizedProps: { game: { $type: 'Game', puzzle } }, return: null };
   for (let i = 0; i < depth; i += 1) fiber = { memoizedProps: { className: 'cell' }, return: fiber };
   const board = {
     '__reactFiber$abc123': fiber,
     getBoundingClientRect: () => ({ left: 10, top: 20, width: 350, height: 350 }),
   };
+  const cells = Object.entries(marks).map(([index, mark]) => ({
+    getAttribute: name => (name === 'data-cell-idx' ? index : null),
+    querySelectorAll: () => [{ getAttribute: () => mark }],
+  }));
   return {
     document: {
-      querySelectorAll: wanted => (wanted === selector ? [board] : []),
+      querySelectorAll: wanted => (wanted === selector ? [board] : wanted === '[data-cell-idx]' ? cells : []),
       querySelector: wanted => (wanted === selector ? board : null),
     },
     window: { devicePixelRatio: 2 },
@@ -69,6 +87,36 @@ test('builds the Zip page board the API expects', () => {
   assert.equal(zipBoardFromPuzzle({ kind: 'lotkaGamePuzzle', puzzle: {} }), null);
   const badWall = { kind: 'trailGamePuzzle', puzzle: { gridSize: 3, orderedSequence: [0, 8], walls: [{ cellIdx: 1, direction: 'WallDirection_SIDEWAYS' }] } };
   assert.equal(zipBoardFromPuzzle(badWall), null);
+});
+
+test('builds the Tango page board from presets as the cells show them', () => {
+  const page = runInPage(pageWith(TANGO_PUZZLE, { marks: TANGO_MARKS }));
+  assert.deepEqual(page.cellMarks[6], ['cell-zero']);
+  assert.deepEqual(tangoBoardFromPuzzle(page), TANGO_FIXTURE);
+  // A preset cell that shows no piece means the page is not what we expect.
+  const missing = runInPage(pageWith(TANGO_PUZZLE, { marks: { ...TANGO_MARKS, 6: 'cell-empty' } }));
+  assert.equal(tangoBoardFromPuzzle(missing), null);
+});
+
+test('Tango with a page board makes one API call instead of searching crops', async () => {
+  const context = vm.createContext({ chrome: { runtime: { onMessage: { addListener() {} } } } });
+  for (const file of ['puzzle_registry.js', 'api_config.js', 'page_puzzle.js', 'background.js']) {
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context);
+  }
+  const pageSelection = { x: 25, y: 30, width: 350, height: 350, devicePixelRatio: 1 };
+  context.tabsGet = async () => ({ windowId: 1 });
+  context.captureVisibleTab = async () => '';
+  context.cropCapturedImage = async () => ({});
+  context.readPagePuzzle = async () => ({ kind: 'lotkaGamePuzzle', puzzle: TANGO_PUZZLE.lotkaGamePuzzle,
+    cellMarks: Object.fromEntries(Object.entries(TANGO_MARKS).map(([cell, mark]) => [cell, [mark]])), selection: pageSelection });
+  const calls = [];
+  context.callSolverApi = async (_base, puzzle, _image, value) => { calls.push({ puzzle, value }); return { solved: true, details: {} }; };
+  context.solveTangoWithCandidateSearch = async () => { throw new Error('crop search should not run'); };
+  const solved = await context.solveBoardCore({ tabId: 1, puzzleType: 'tango', apiBaseUrl: 'http://localhost',
+    selection: { x: 0, y: 0, width: 400, height: 400, devicePixelRatio: 1 } });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[0].value.parsedBoard)), TANGO_FIXTURE);
+  assert.deepEqual(JSON.parse(JSON.stringify(solved.selection)), pageSelection);
 });
 
 test('Zip solves send the page board and use its exact position', async () => {
