@@ -786,7 +786,17 @@ async function solveBoardCore({ tabId, puzzleType, apiBaseUrl, selection }) {
   let result;
   let refinedSelection;
 
-  if (puzzleType === "tango") {
+  let parsedBoard = null;
+  let pageSelection = null;
+  const buildPageBoard = globalThis.PagePuzzle?.PAGE_BOARD_BUILDERS?.[puzzleType];
+  if (buildPageBoard) {
+    const page = await readPagePuzzle(tabId, puzzleType);
+    parsedBoard = page ? buildPageBoard(page) : null;
+    pageSelection = parsedBoard ? page.selection : null;
+  }
+
+  // Without page data, Tango tries several crops of the image and keeps the best parse.
+  if (puzzleType === "tango" && !parsedBoard) {
     const tangoSolved = await solveTangoWithCandidateSearch({
       normalizedSelection,
       screenshotDataUrl,
@@ -796,14 +806,6 @@ async function solveBoardCore({ tabId, puzzleType, apiBaseUrl, selection }) {
     const tangoSelection = normalizeSelection(tangoSolved.selection) || normalizedSelection;
     refinedSelection = refineSelectionWithBoardBbox(tangoSelection, result) || tangoSelection;
   } else {
-    let parsedBoard = null;
-    let pageSelection = null;
-    const buildPageBoard = globalThis.PagePuzzle?.PAGE_BOARD_BUILDERS?.[puzzleType];
-    if (buildPageBoard) {
-      const page = await readPagePuzzle(tabId, puzzleType);
-      parsedBoard = page ? buildPageBoard(page) : null;
-      pageSelection = parsedBoard ? page.selection : null;
-    }
     if (puzzleType === "wend" || puzzleType === "sumbreak") {
       const frameContext = await getGameFrameContext(tabId, puzzleType);
       const frameId = Number.isInteger(frameContext?.gameFrameId) ? frameContext.gameFrameId : 0;

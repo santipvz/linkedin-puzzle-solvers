@@ -2,6 +2,21 @@
 
 Computer vision system for automatically solving Tango puzzles from images using OpenCV and constraint satisfaction algorithms.
 
+## Input from the page
+
+The extension reads the puzzle that LinkedIn's game already holds in memory (see `extension/page_puzzle.js`), so normal solves need no image. It sends this as `parsed_board`:
+
+```json
+{"size": 6, "suns": [6, 11], "moons": [1, 4], "equal": [[2, 3]], "opposite": [[20, 21]]}
+```
+
+- Cells are numbered `row * 6 + col`.
+- `suns` and `moons` are the preset pieces. LinkedIn only stores their values next to its answer, which the extension never reads, so it takes them from what the preset cells show (`cell-zero` is a sun, `cell-one` a moon).
+- `equal` and `opposite` are the `=` and `x` clues between adjacent cells.
+- The solver itself still uses 0 = moon and 1 = sun.
+
+The computer-vision pipeline below is only used when the page puzzle can't be read. `tests/fixtures/linkedin-2026-11-20.json` records a real page board, and our answer for it matches LinkedIn's.
+
 ## 🎯 What is Tango?
 
 Tango is a LinkedIn logic puzzle where you fill a 6x6 grid with moon (🌙) and sun (🟠) pieces following constraints:

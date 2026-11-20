@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import sys
 from pathlib import Path
 from typing import TypedDict
@@ -115,7 +116,56 @@ def _compose_board_bbox(raw_board_bbox: object, grid_coords: object) -> BoardBBo
     }
 
 
-def solve(image_path: Path) -> JsonDict:
+def _solve_page_board(parsed_board: JsonDict, solver: object) -> JsonDict:
+    """Solve a Tango puzzle read from the page: no image or OCR involved."""
+    from services.solver_api.app.domain.tango_board import tango_solver_input, validate_tango_board
+
+    try:
+        board = validate_tango_board(parsed_board)
+    except Exception as exc:
+        return {
+            "puzzle": "tango",
+            "solved": False,
+            "board_size": 0,
+            "moves": [],
+            "solution_grid": None,
+            "error": f"Invalid Tango page board: {exc}",
+            "details": {"parse_reliable": False, "input_source": "page"},
+        }
+
+    fixed, constraints = tango_solver_input(board)
+    for row, col, piece in fixed:
+        solver.add_fixed_piece(row, col, piece)
+    for constraint in constraints:
+        solver.add_constraint(*constraint)
+    solved = bool(solver.solve())
+    fixed_cells = {(row, col) for row, col, _ in fixed}
+    moves = [
+        {"row": row, "col": col, "value": int(value)}
+        for row, values in enumerate(solver.board)
+        for col, value in enumerate(values)
+        if solved and (row, col) not in fixed_cells and value is not None
+    ]
+    return {
+        "puzzle": "tango",
+        "solved": solved,
+        "board_size": int(solver.size),
+        "moves": moves,
+        "solution_grid": _normalize_board(solver.board) if solved else None,
+        "fixed_pieces": [{"row": row, "col": col, "piece_type": piece} for row, col, piece in fixed],
+        "constraints": [{"type": kind, "pos1": list(pos1), "pos2": list(pos2)} for kind, pos1, pos2 in constraints],
+        "error": None if solved else "No valid solution found.",
+        "details": {
+            "steps": int(solver.get_steps()),
+            "fixed_count": len(fixed),
+            "constraint_count": len(constraints),
+            "parse_reliable": True,
+            "input_source": "page",
+        },
+    }
+
+
+def solve(image_path: Path, *, parsed_board: JsonDict | None = None) -> JsonDict:
     game_root = game_root_for_worker(__file__, "tango_solver")
     if not game_root.exists():
         return {
@@ -126,8 +176,12 @@ def solve(image_path: Path) -> JsonDict:
 
     activate_game_import_context(game_root)
 
-    from src.image_parser import TangoImageParser
     from src.tango_solver import TangoSolver
+
+    if parsed_board is not None:
+        return _solve_page_board(parsed_board, TangoSolver())
+
+    from src.image_parser import TangoImageParser
 
     parser = TangoImageParser()
     solver = TangoSolver()
@@ -229,6 +283,9 @@ def solve(image_path: Path) -> JsonDict:
 
 
 def main() -> int:
+    if len(sys.argv) == 3 and sys.argv[2] == "--parsed-board":
+        page_board = json.load(sys.stdin)
+        return run_worker_cli(sys.argv[:2], lambda path: solve(path, parsed_board=page_board), "solve_tango_worker.py", "Tango")
     return run_worker_cli(
         argv=sys.argv,
         solve_fn=solve,
