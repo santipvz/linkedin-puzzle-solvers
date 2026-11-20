@@ -48,31 +48,33 @@ def main() -> int:
             print(f"[skip] {puzzle}: missing sample {sample_path}")
             continue
 
-        start = time.perf_counter()
-        with absolute_path.open("rb") as image_file:
-            response = client.post(
-                f"/solve/{puzzle}",
-                files={"image": (absolute_path.name, image_file, "image/png")},
-                data=(
-                    {"parsed_board": (REPO_ROOT / definition.page_board_fixture).read_text(encoding="utf-8")}
-                    if definition.page_board_fixture
-                    else None
-                ),
-            )
+        # Solve from the image alone and, when a page board is recorded, from that too.
+        inputs = [("image", None)] if definition.image_input else []
+        if definition.page_board_fixture:
+            inputs.append(("page", (REPO_ROOT / definition.page_board_fixture).read_text(encoding="utf-8")))
+        for source, page_board in inputs:
+            start = time.perf_counter()
+            with absolute_path.open("rb") as image_file:
+                response = client.post(
+                    f"/solve/{puzzle}",
+                    files={"image": (absolute_path.name, image_file, "image/png")},
+                    data={"parsed_board": page_board} if page_board is not None else None,
+                )
 
-        if response.status_code != 200:
-            print(f"[error] {puzzle}: HTTP {response.status_code}: {response.text[:500]}")
-            return 1
+            if response.status_code != 200:
+                print(f"[error] {puzzle} ({source}): HTTP {response.status_code}: {response.text[:500]}")
+                return 1
 
-        payload = response.json()
-        if payload.get("puzzle") != puzzle:
-            print(f"[error] {puzzle}: unexpected payload puzzle={payload.get('puzzle')!r}")
-            return 1
-        if not payload.get("solved"):
-            print(f"[error] {puzzle}: sample was not solved: {payload.get('error')}")
-            return 1
+            payload = response.json()
+            if payload.get("puzzle") != puzzle:
+                print(f"[error] {puzzle} ({source}): unexpected payload puzzle={payload.get('puzzle')!r}")
+                return 1
+            if not payload.get("solved"):
+                print(f"[error] {puzzle} ({source}): sample was not solved: {payload.get('error')}")
+                return 1
 
-        print(f"[ok] {puzzle}: solved={payload.get('solved')} elapsed={time.perf_counter() - start:.2f}s", flush=True)
+            elapsed = time.perf_counter() - start
+            print(f"[ok] {puzzle} ({source}): solved={payload.get('solved')} elapsed={elapsed:.2f}s", flush=True)
 
     return 0
 
