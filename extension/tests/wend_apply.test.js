@@ -80,7 +80,7 @@ test('Wend only sends page data when its live geometry matches the captured boar
   assert.equal(options.parsedBoard,null);
 });
 
-test('the API upload includes page data only for Wend and preserves the image capture',async()=>{
+test('the API upload includes page data only when given and preserves the image capture',async()=>{
   let request;
   const context=vm.createContext({Blob,FormData,chrome:{runtime:{onMessage:{addListener(){}}}},
     fetch:async(url,options)=>{request={url,...options};return {ok:true,text:async()=>'{"solved":true}'};}});
@@ -91,6 +91,6 @@ test('the API upload includes page data only for Wend and preserves the image ca
   assert.deepEqual(JSON.parse(request.body.get('parsed_board')),board);
   assert.equal(await request.body.get('image').text(),'image');
   assert.equal(request.headers['X-Board-Capture'],'start');
-  await context.callSolverApi('http://127.0.0.1:18000','zip',image,{parsedBoard:board});
+  await context.callSolverApi('http://127.0.0.1:18000','wend',image,{});
   assert.equal(request.body.has('parsed_board'),false);
 });
