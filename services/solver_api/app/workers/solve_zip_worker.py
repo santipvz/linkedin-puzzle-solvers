@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import itertools
+import json
 import sys
 from pathlib import Path
 from typing import TypedDict
@@ -307,7 +308,51 @@ def _recover_duplicate_clues(
     return best_payload[1], best_payload[2]
 
 
-def solve(image_path: Path) -> JsonDict:
+def _solve_page_board(parsed_board: JsonDict, solver: object) -> JsonDict:
+    """Solve a Zip puzzle read from the page: no image or OCR involved."""
+    from services.solver_api.app.domain.zip_board import validate_zip_board, zip_solver_input
+
+    try:
+        board = validate_zip_board(parsed_board)
+    except Exception as exc:
+        return {
+            "puzzle": "zip",
+            "solved": False,
+            "board_size": 0,
+            "path": [],
+            "directions": [],
+            "moves": [],
+            "start_cell": None,
+            "error": f"Invalid Zip page board: {exc}",
+            "details": {"parse_reliable": False, "input_source": "page"},
+        }
+
+    size = board["size"]
+    blocked_h, blocked_v, clues = zip_solver_input(board)
+    result = solver.solve(size=size, blocked_h=blocked_h, blocked_v=blocked_v, clues=clues)
+    path = [{"row": int(row), "col": int(col)} for row, col in (result.path or [])]
+    directions = [str(direction) for direction in (result.directions or [])]
+    return {
+        "puzzle": "zip",
+        "solved": bool(result.solved),
+        "board_size": size,
+        "path": path,
+        "directions": directions,
+        "moves": [{"direction": direction} for direction in directions],
+        "start_cell": path[0] if path else None,
+        "clues": [{"row": row, "col": col, "value": value} for (row, col), value in sorted(clues.items(), key=lambda item: item[1])],
+        "error": None if result.solved else result.error,
+        "details": {
+            "iterations": int(result.iterations),
+            "clue_count": len(clues),
+            "wall_count": len(board["walls"]),
+            "parse_reliable": True,
+            "input_source": "page",
+        },
+    }
+
+
+def solve(image_path: Path, *, parsed_board: JsonDict | None = None) -> JsonDict:
     game_root = game_root_for_worker(__file__, "zip_solver")
     if not game_root.exists():
         return {
@@ -318,8 +363,12 @@ def solve(image_path: Path) -> JsonDict:
 
     activate_game_import_context(game_root)
 
-    from src.image_parser import ZipImageParser
     from src.zip_solver import ZipSolver
+
+    if parsed_board is not None:
+        return _solve_page_board(parsed_board, ZipSolver())
+
+    from src.image_parser import ZipImageParser
 
     parser = ZipImageParser()
     solver = ZipSolver()
@@ -401,6 +450,9 @@ def solve(image_path: Path) -> JsonDict:
 
 
 def main() -> int:
+    if len(sys.argv) == 3 and sys.argv[2] == "--parsed-board":
+        page_board = json.load(sys.stdin)
+        return run_worker_cli(sys.argv[:2], lambda path: solve(path, parsed_board=page_board), "solve_zip_worker.py", "Zip")
     return run_worker_cli(
         argv=sys.argv,
         solve_fn=solve,

@@ -1,5 +1,5 @@
 if (typeof importScripts === "function") {
-  importScripts("puzzle_registry.js", "api_config.js");
+  importScripts("puzzle_registry.js", "api_config.js", "page_puzzle.js");
 }
 
 const DEFAULT_API_BASE = globalThis.SolverApiConfig.defaultUrl;
@@ -533,6 +533,39 @@ function executeContentScript(tabId, frameId = 0) {
   });
 }
 
+// Runs a self-contained function in the page's own JavaScript world and returns its result.
+function executeInPage(tabId, frameId, func) {
+  return new Promise((resolve, reject) => {
+    if (!chrome.scripting || typeof chrome.scripting.executeScript !== "function") {
+      reject(new Error("Page scripts are not supported in this browser."));
+      return;
+    }
+    chrome.scripting.executeScript({ target: { tabId, frameIds: [frameId] }, world: "MAIN", func }, (results) => {
+      const error = chrome.runtime.lastError;
+      if (error) {
+        reject(new Error(error.message));
+        return;
+      }
+      resolve(Array.isArray(results) && results[0] ? results[0].result : null);
+    });
+  });
+}
+
+// The puzzle the game holds in memory, with its board position in tab coordinates.
+async function readPagePuzzle(tabId, puzzleType) {
+  const frameContext = await getGameFrameContext(tabId, puzzleType);
+  const gameFrameId = Number.isInteger(frameContext?.gameFrameId) ? frameContext.gameFrameId : 0;
+  for (const frameId of new Set([gameFrameId, 0])) {
+    const page = await executeInPage(tabId, frameId, globalThis.PagePuzzle.readLinkedInPuzzle).catch(() => null);
+    if (!page || !page.puzzle) continue;
+    const selection = frameId === 0
+      ? normalizeSelection(page.selection)
+      : translateFrameSelectionToTab(page.selection, frameContext.iframeRect, frameContext.frameViewport);
+    return { ...page, selection };
+  }
+  return null;
+}
+
 function isNoReceiverError(error) {
   const message = error && error.message ? error.message : "";
   return message.includes("Receiving end does not exist");
@@ -707,7 +740,7 @@ async function callSolverApi(apiBaseUrl, puzzleType, imageBlob, options = {}) {
   const formData = new FormData();
   const extension = imageBlob.type === "image/jpeg" ? "jpg" : "png";
   formData.append("image", imageBlob, `${safePuzzleType}_board.${extension}`);
-  if ((safePuzzleType === "wend" || safePuzzleType === "sumbreak") && options.parsedBoard) {
+  if (options.parsedBoard) {
     formData.append("parsed_board", JSON.stringify(options.parsedBoard));
   }
 
@@ -764,6 +797,13 @@ async function solveBoardCore({ tabId, puzzleType, apiBaseUrl, selection }) {
     refinedSelection = refineSelectionWithBoardBbox(tangoSelection, result) || tangoSelection;
   } else {
     let parsedBoard = null;
+    let pageSelection = null;
+    const buildPageBoard = globalThis.PagePuzzle?.PAGE_BOARD_BUILDERS?.[puzzleType];
+    if (buildPageBoard) {
+      const page = await readPagePuzzle(tabId, puzzleType);
+      parsedBoard = page ? buildPageBoard(page) : null;
+      pageSelection = parsedBoard ? page.selection : null;
+    }
     if (puzzleType === "wend" || puzzleType === "sumbreak") {
       const frameContext = await getGameFrameContext(tabId, puzzleType);
       const frameId = Number.isInteger(frameContext?.gameFrameId) ? frameContext.gameFrameId : 0;
@@ -793,7 +833,8 @@ async function solveBoardCore({ tabId, puzzleType, apiBaseUrl, selection }) {
       captureBoardStart: true,
       parsedBoard,
     });
-    refinedSelection = refineSelectionWithBoardBbox(normalizedSelection, result);
+    // A board read from the page also gives its exact position on screen.
+    refinedSelection = pageSelection || refineSelectionWithBoardBbox(normalizedSelection, result);
   }
 
   return {
