@@ -70,6 +70,7 @@ PUZZLE_DEFINITIONS: tuple[PuzzleDefinition, ...] = (
         expected_board_size=6,
         sample_required=False,
         cache_revision=3,
+        page_board_fixture="games/patches_solver/tests/fixtures/linkedin-2026-11-20.json",
         smoke_samples=(
             "games/patches_solver/examples/sample1.png",
             "games/patches_solver/examples/sample2.png",

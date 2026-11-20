@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import itertools
+import json
 import sys
 from pathlib import Path
 from typing import Protocol, TypedDict
@@ -401,7 +402,57 @@ def _base_attempt_recovery_priority(attempt: _AttemptPayload) -> tuple[int, floa
     )
 
 
-def solve(image_path: Path) -> JsonDict:
+def _solve_page_board(parsed_board: JsonDict, solver: _SolverLike) -> JsonDict:
+    """Solve a Patches puzzle read from the page: no image or OCR involved."""
+    from services.solver_api.app.domain.patches_board import patches_solver_clues, validate_patches_board
+
+    try:
+        board = validate_patches_board(parsed_board)
+    except Exception as exc:
+        return {
+            "puzzle": "patches",
+            "solved": False,
+            "board_size": 0,
+            "regions": [],
+            "moves": [],
+            "solution_grid": None,
+            "error": f"Invalid Patches page board: {exc}",
+            "details": {"parse_reliable": False, "input_source": "page"},
+        }
+
+    size = board["size"]
+    clues = patches_solver_clues(board)
+    result = solver.solve(board_size=size, clues=clues, max_solutions=2)
+    # The square-clue relaxation only exists for misread shapes; page shapes are exact.
+    solved = bool(result.solved and not result.relaxed_square_clues)
+    regions = [
+        {
+            "top": int(region.top), "left": int(region.left), "height": int(region.height), "width": int(region.width),
+            "area": int(region.area), "clue_row": int(region.clue_row), "clue_col": int(region.clue_col),
+        }
+        for region in (result.regions or [])
+    ] if solved else []
+    return {
+        "puzzle": "patches",
+        "solved": solved,
+        "board_size": size,
+        "regions": regions,
+        "moves": regions,
+        "solution_grid": _build_solution_grid(size, regions) if solved else None,
+        "clues": [{"row": clue["row"], "col": clue["col"], "shape": clue["shape"], "value": clue["area"]} for clue in clues],
+        "error": None if solved else (result.error or "No valid solution found."),
+        "details": {
+            "iterations": int(result.iterations),
+            "clue_count": len(clues),
+            "solution_count": int(result.solution_count),
+            "unique_solution": bool(result.solution_count_is_exact and result.solution_count == 1),
+            "parse_reliable": True,
+            "input_source": "page",
+        },
+    }
+
+
+def solve(image_path: Path, *, parsed_board: JsonDict | None = None) -> JsonDict:
     game_root = game_root_for_worker(__file__, "patches_solver")
     if not game_root.exists():
         return {
@@ -412,8 +463,12 @@ def solve(image_path: Path) -> JsonDict:
 
     activate_game_import_context(game_root)
 
-    from src.image_parser import PatchesImageParser
     from src.patches_solver import PatchesSolver
+
+    if parsed_board is not None:
+        return _solve_page_board(parsed_board, PatchesSolver())
+
+    from src.image_parser import PatchesImageParser
 
     captured_logs = io.StringIO()
 
@@ -536,6 +591,9 @@ def solve(image_path: Path) -> JsonDict:
 
 
 def main() -> int:
+    if len(sys.argv) == 3 and sys.argv[2] == "--parsed-board":
+        page_board = json.load(sys.stdin)
+        return run_worker_cli(sys.argv[:2], lambda path: solve(path, parsed_board=page_board), "solve_patches_worker.py", "Patches")
     return run_worker_cli(
         argv=sys.argv,
         solve_fn=solve,
