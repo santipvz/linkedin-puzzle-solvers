@@ -6,6 +6,8 @@ Install from the stable `main` branch or a release tag. `develop` contains work 
 
 ## Features
 
+- Reads the board straight from the game, with no screenshot OCR, for Queens, Tango, Mini Sudoku, Zip, Patches, Wend and Sumbreak. `page_puzzle.js` runs in the page's own JavaScript world to read the puzzle LinkedIn's game holds in memory, and drops the official answer there.
+- Falls back to the screenshot when that puzzle can't be read, has an unexpected format, or doesn't solve. The page widget and the popup then say *Read from the screenshot* and why. That message usually means LinkedIn changed how a game stores its puzzle.
 - Manual board selection on the active tab.
 - Auto board detection (top page + iframe-aware).
 - Solve via API endpoints for Queens, Tango, Mini Sudoku, Zip, Patches, Wend, and Sumbreak.

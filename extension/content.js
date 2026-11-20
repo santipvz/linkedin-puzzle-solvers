@@ -216,14 +216,15 @@ async function onQuickSolveClick() {
       throw new Error((response && response.error) || "Quick solve failed.");
     }
 
+    const fallbackNotice = formatPageFallbackNotice(response.result);
     if (!response.solved) {
-      setQuickSolveStatus(response.error || "No solution found.", true);
+      setQuickSolveStatus(`${response.error || "No solution found."}${fallbackNotice}`, true);
       return;
     }
 
     if (response.previewed) {
       const moves = Array.isArray(response.result?.moves) ? response.result.moves.length : 0;
-      setQuickSolveStatus(`Preview ready \u00b7 ${moves} moves marked.`);
+      setQuickSolveStatus(`Preview ready \u00b7 ${moves} moves marked.${fallbackNotice}`);
       return;
     }
 
@@ -233,7 +234,7 @@ async function onQuickSolveClick() {
     }
 
     const appliedCount = Number(response.appliedCount) || 0;
-    setQuickSolveStatus(`Solution applied \u00b7 ${appliedCount} moves.${formatQuickSolveTimings(response.timings)}`);
+    setQuickSolveStatus(`Solution applied \u00b7 ${appliedCount} moves.${fallbackNotice}${formatQuickSolveTimings(response.timings)}`);
   } catch (error) {
     setQuickSolveStatus(error.message || String(error), true);
   } finally {
@@ -243,6 +244,13 @@ async function onQuickSolveClick() {
     }
     updateQuickSolveButtonText();
   }
+}
+
+// When a game that can be read from the page was solved from the screenshot
+// instead, say why: it usually means LinkedIn changed how the game stores it.
+function formatPageFallbackNotice(result) {
+  const reason = result?.details?.page_fallback_reason;
+  return reason ? `\nRead from the screenshot. ${reason}` : "";
 }
 
 // "board 0.1 s · solve 0.6 s (server 0.2 s) · apply 2.3 s": where a quick solve spent its time.
