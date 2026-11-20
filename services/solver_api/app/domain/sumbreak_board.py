@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from .errors import InvalidBoard
 from .models import JsonDict
 
@@ -7,6 +9,8 @@ from .models import JsonDict
 MIN_SIDE = 2
 MAX_SIDE = 8
 MAX_TILE_VALUE = 1 << 24
+# Operator tiles ("wildcards") arrive as "x2" for multiply or "+3" for add.
+WILDCARD_PATTERN = re.compile(r"^([x+])(-?[0-9]{1,8})$")
 
 
 def validate_sumbreak_board(payload: object) -> JsonDict:
@@ -19,16 +23,21 @@ def validate_sumbreak_board(payload: object) -> JsonDict:
     columns = len(board[0]) if isinstance(board[0], list) else 0
     if not MIN_SIDE <= columns <= MAX_SIDE:
         raise InvalidBoard(f"Sumbreak boards must have {MIN_SIDE} through {MAX_SIDE} columns.")
-    tiles = 0
+    numbers = 0
     for row in board:
         if not isinstance(row, list) or len(row) != columns:
             raise InvalidBoard("Sumbreak page data must have a rectangular board.")
         for value in row:
             if value is None:
                 continue
+            if isinstance(value, str):
+                match = WILDCARD_PATTERN.match(value)
+                if not match or abs(int(match.group(2))) > MAX_TILE_VALUE:
+                    raise InvalidBoard('Sumbreak operator cells must look like "x2" or "+3".')
+                continue
             if type(value) is not int or not 1 <= value <= MAX_TILE_VALUE:
-                raise InvalidBoard("Sumbreak cells must be positive integers or null for empty cells.")
-            tiles += 1
-    if tiles == 0:
-        raise InvalidBoard("Sumbreak page data has no tiles.")
+                raise InvalidBoard('Sumbreak cells must be positive integers, operators like "x2", or null for empty cells.')
+            numbers += 1
+    if numbers == 0:
+        raise InvalidBoard("Sumbreak page data has no number tiles.")
     return {"board": [list(row) for row in board]}
