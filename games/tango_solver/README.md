@@ -2,6 +2,21 @@
 
 Computer vision system for automatically solving Tango puzzles from images using OpenCV and constraint satisfaction algorithms.
 
+## Checking OCR against the page
+
+The board is always solved from the screenshot. When the extension can also read the puzzle the game holds in memory (see `extension/page_puzzle.js`), it sends it as `parsed_board`, and the worker reports in `details.ocr_check` whether OCR read the board correctly: `matches`, `mismatch_count` and up to 12 `mismatches` such as `{"at": "r1c5 clue", "page": 1, "ocr": 7}`. That page board never changes the answer, and an invalid one is ignored with a reason.
+
+Tango's page board:
+
+```json
+{"size": 6, "suns": [6, 11], "moons": [1, 4], "equal": [[2, 3]], "opposite": [[20, 21]]}
+```
+
+- Cells are numbered `row * 6 + col`.
+- `suns` and `moons` are the preset pieces. LinkedIn only stores their values next to its answer, which the extension never reads, so it takes them from what the preset cells show (`cell-zero` is a sun, `cell-one` a moon).
+- `equal` and `opposite` are the `=` and `x` clues between adjacent cells.
+- The check compares preset pieces and clues. Every crop the extension tries carries the same page board, so the chosen attempt reports its own check.
+
 ## 🎯 What is Tango?
 
 Tango is a LinkedIn logic puzzle where you fill a 6x6 grid with moon (🌙) and sun (🟠) pieces following constraints:
@@ -23,7 +38,7 @@ Tango is a LinkedIn logic puzzle where you fill a 6x6 grid with moon (🌙) and 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r games/tango_solver/requirements.txt
+pip install -r requirements.txt
 ```
 
 2. **Solve a puzzle:**

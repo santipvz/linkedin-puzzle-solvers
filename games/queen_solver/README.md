@@ -3,6 +3,12 @@
 A sophisticated computer vision system for automatically solving colored queens puzzles from images. Combines intelligent image processing with optimized constraint satisfaction algorithms to detect puzzle boards and find valid queen placements.
 
 
+## Checking OCR against the page
+
+The board is always solved from the screenshot. When the extension can also read the puzzle the game holds in memory (see `extension/page_puzzle.js`), it sends it as `parsed_board`, and the worker reports in `details.ocr_check` whether OCR read the board correctly: `matches`, `mismatch_count` and up to 12 `mismatches` such as `{"at": "r1c5 clue", "page": 1, "ocr": 7}`. That page board never changes the answer, and an invalid one is ignored with a reason.
+
+Queens' page board is `{"size": 9, "regions": [[2, 2, 2, ...], ...]}`, where `regions[row][col]` is each cell's colour region id. Region ids differ between the page (colour ids) and OCR (numbered as found), so both are renumbered in reading order before comparing: the check says whether OCR split the cells into the same regions. Each OCR attempt also returns its `region_grid` in `details`.
+
 ## What is a Queens Puzzle?
 
 The Queens puzzle is a constraint satisfaction problem popularized as a daily logic game on LinkedIn. The objective is to place queens on a colored grid so that:
@@ -27,7 +33,7 @@ The Queens puzzle is a constraint satisfaction problem popularized as a daily lo
 # From monorepo root
 python3 -m venv .venv
 source .venv/bin/activate  # Linux/Mac
-pip install -r games/queen_solver/requirements.txt
+pip install -r requirements.txt
 ```
 
 ### Basic Usage

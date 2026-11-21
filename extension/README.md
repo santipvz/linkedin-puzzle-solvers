@@ -6,6 +6,8 @@ Install from the stable `main` branch or a release tag. `develop` contains work 
 
 ## Features
 
+- Solves every board from a screenshot (OCR); Wend and Sumbreak read their letters and numbers from the page as before.
+- When it can also read the puzzle the game holds in memory (`page_puzzle.js`, which runs in the page's own JavaScript world and drops LinkedIn's answer there), it sends it along as a reference, and the page widget and popup show the **OCR check**: whether OCR read the board correctly, and the first difference if not.
 - Manual board selection on the active tab.
 - Auto board detection (top page + iframe-aware).
 - Solve via API endpoints for Queens, Tango, Mini Sudoku, Zip, Patches, Wend, and Sumbreak.

@@ -12,8 +12,11 @@ class PuzzleDefinition:
     sample_required: bool = True
     smoke_samples: tuple[str, ...] = ()
     cache_revision: int = 1
-    # Puzzles whose values are read from the page are smoke-tested with this
-    # page board (JSON) alongside the sample image.
+    # Whether the worker can solve from the image alone (OCR). Smoke checks
+    # cover that path with the sample image when it is available.
+    image_input: bool = True
+    # A board read from the page (JSON). Smoke checks also solve it, since the
+    # extension sends it whenever it can read the game's puzzle.
     page_board_fixture: str | None = None
 
     @property
@@ -34,6 +37,7 @@ PUZZLE_DEFINITIONS: tuple[PuzzleDefinition, ...] = (
         sample_image="games/queen_solver/examples/sample1.png",
         expected_board_size=9,
         sample_required=True,
+        page_board_fixture="games/queen_solver/tests/fixtures/linkedin-2026-11-20.json",
     ),
     PuzzleDefinition(
         key="tango",
@@ -42,6 +46,7 @@ PUZZLE_DEFINITIONS: tuple[PuzzleDefinition, ...] = (
         sample_image="games/tango_solver/examples/sample1.png",
         expected_board_size=6,
         sample_required=True,
+        page_board_fixture="games/tango_solver/tests/fixtures/linkedin-2026-11-20.json",
     ),
     PuzzleDefinition(
         key="sudoku",
@@ -49,6 +54,7 @@ PUZZLE_DEFINITIONS: tuple[PuzzleDefinition, ...] = (
         sample_image="games/sudoku_solver/examples/sample1.png",
         expected_board_size=6,
         sample_required=False,
+        page_board_fixture="games/sudoku_solver/tests/fixtures/linkedin-2026-11-20.json",
     ),
     PuzzleDefinition(
         key="zip",
@@ -56,6 +62,7 @@ PUZZLE_DEFINITIONS: tuple[PuzzleDefinition, ...] = (
         sample_image="games/zip_solver/examples/sample1.png",
         expected_board_size=7,
         sample_required=False,
+        page_board_fixture="games/zip_solver/tests/fixtures/linkedin-2026-11-20.json",
     ),
     PuzzleDefinition(
         key="patches",
@@ -64,6 +71,7 @@ PUZZLE_DEFINITIONS: tuple[PuzzleDefinition, ...] = (
         expected_board_size=6,
         sample_required=False,
         cache_revision=3,
+        page_board_fixture="games/patches_solver/tests/fixtures/linkedin-2026-11-20.json",
         smoke_samples=(
             "games/patches_solver/examples/sample1.png",
             "games/patches_solver/examples/sample2.png",
@@ -84,6 +92,7 @@ PUZZLE_DEFINITIONS: tuple[PuzzleDefinition, ...] = (
         sample_image="games/sumbreak_solver/examples/sample1.png",
         expected_board_size=3,
         sample_required=True,
+        image_input=False,
         page_board_fixture="games/sumbreak_solver/tests/fixtures/linkedin-2026-11-18.json",
     ),
 )

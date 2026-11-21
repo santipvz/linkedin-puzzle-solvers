@@ -35,7 +35,7 @@ function game(options = {}) {
     chrome:{runtime:{onMessage:{addListener(){}}}},
     HTMLIFrameElement:class{},MouseEvent:class{constructor(type,data){this.type=type;Object.assign(this,data);}},
   });
-  for(const file of ['puzzle_registry.js','content.js']) vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),context);
+  for(const file of ['puzzle_registry.js','shared.js','content.js']) vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),context);
   context.sleep=async()=>{if(pending){const update=pending;pending=null;update();}};
   const result={solved:true,board_size:6,solution_grid:grid,fixed_pieces:fixed.map(i=>({row:Math.floor(i/6),col:i%6,piece_type:grid.flat()[i]}))};
   return {context,values,writes,result,apply:()=>context.applyTangoSolution(result,{x:0,y:0,width:220,height:220},{interClickDelayMs:0,moveIntervalMs:0})};

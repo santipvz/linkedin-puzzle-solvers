@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import itertools
+import json
 import sys
 from pathlib import Path
 from typing import TypedDict
@@ -307,7 +308,15 @@ def _recover_duplicate_clues(
     return best_payload[1], best_payload[2]
 
 
-def solve(image_path: Path) -> JsonDict:
+def _ocr_check(parsed_board: JsonDict, clues: dict[tuple[int, int], int], parsed: JsonDict) -> JsonDict:
+    """Compare the clues and walls OCR read with the board from the game page."""
+    from services.solver_api.app.domain.ocr_check import check_ocr
+    from services.solver_api.app.domain.zip_board import validate_zip_board, zip_board_facts, zip_page_facts
+
+    return check_ocr(validate_zip_board, parsed_board, zip_page_facts, zip_board_facts(clues, parsed["blocked_h"], parsed["blocked_v"]))
+
+
+def solve(image_path: Path, *, parsed_board: JsonDict | None = None) -> JsonDict:
     game_root = game_root_for_worker(__file__, "zip_solver")
     if not game_root.exists():
         return {
@@ -357,6 +366,8 @@ def solve(image_path: Path) -> JsonDict:
                 "recovered_clues": recovered_clues,
             },
         }
+        if parsed_board is not None:
+            response["details"]["ocr_check"] = _ocr_check(parsed_board, clues, parsed)
         attach_captured_logs(response, captured_logs)
         return response
 
@@ -395,12 +406,17 @@ def solve(image_path: Path) -> JsonDict:
         },
     }
 
+    if parsed_board is not None:
+        response["details"]["ocr_check"] = _ocr_check(parsed_board, clues, parsed)
     attach_captured_logs(response, captured_logs)
 
     return response
 
 
 def main() -> int:
+    if len(sys.argv) == 3 and sys.argv[2] == "--parsed-board":
+        page_board = json.load(sys.stdin)
+        return run_worker_cli(sys.argv[:2], lambda path: solve(path, parsed_board=page_board), "solve_zip_worker.py", "Zip")
     return run_worker_cli(
         argv=sys.argv,
         solve_fn=solve,

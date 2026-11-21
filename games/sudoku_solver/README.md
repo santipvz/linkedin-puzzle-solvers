@@ -2,6 +2,12 @@
 
 Computer vision and backtracking solver for LinkedIn Mini Sudoku.
 
+## Checking OCR against the page
+
+The board is always solved from the screenshot. When the extension can also read the puzzle the game holds in memory (see `extension/page_puzzle.js`), it sends it as `parsed_board`, and the worker reports in `details.ocr_check` whether OCR read the board correctly: `matches`, `mismatch_count` and up to 12 `mismatches` such as `{"at": "r1c5 clue", "page": 1, "ocr": 7}`. That page board never changes the answer, and an invalid one is ignored with a reason.
+
+Mini Sudoku is a separate, non-React app inside the `/games/view/mini-sudoku/desktop` iframe, so the extension reads its preset digits from the cells' classes (`.sudoku-cell-prefilled`, `.sudoku-cell-content`); digits the player typed are not clues. The page board is `{"board": [[0, 1, 0, 0, 0, 0], ...]}` with 0 for blanks. The check compares it with the preset digits the solve actually used, after OCR and its conflict recovery.
+
 ## Puzzle Rules
 
 - Grid size is `6x6`.
@@ -15,7 +21,7 @@ Computer vision and backtracking solver for LinkedIn Mini Sudoku.
 From repo root:
 
 ```bash
-python3 -m pip install -r games/sudoku_solver/requirements.txt
+python3 -m pip install -r requirements.txt
 python3 games/sudoku_solver/main.py games/sudoku_solver/examples/sample1.png
 ```
 

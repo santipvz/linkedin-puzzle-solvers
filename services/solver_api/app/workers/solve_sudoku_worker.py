@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import itertools
+import json
 import sys
 from pathlib import Path
 from typing import Protocol, TypedDict
@@ -230,7 +231,15 @@ def _recover_from_conflicting_clues(
     return baseline_result, initial_board, []
 
 
-def solve(image_path: Path) -> JsonDict:
+def _ocr_check(parsed_board: JsonDict, solved_board: list[list[int]]) -> JsonDict:
+    """Compare the preset digits the solve used (after OCR and its recovery) with the game page."""
+    from services.solver_api.app.domain.ocr_check import check_ocr
+    from services.solver_api.app.domain.sudoku_board import sudoku_board_facts, sudoku_page_facts, validate_sudoku_board
+
+    return check_ocr(validate_sudoku_board, parsed_board, sudoku_page_facts, sudoku_board_facts(solved_board))
+
+
+def solve(image_path: Path, *, parsed_board: JsonDict | None = None) -> JsonDict:
     game_root = game_root_for_worker(__file__, "sudoku_solver")
     if not game_root.exists():
         return {
@@ -366,12 +375,17 @@ def solve(image_path: Path) -> JsonDict:
         },
     }
 
+    if parsed_board is not None:
+        response["details"]["ocr_check"] = _ocr_check(parsed_board, solve_input_board)
     attach_captured_logs(response, captured_logs)
 
     return response
 
 
 def main() -> int:
+    if len(sys.argv) == 3 and sys.argv[2] == "--parsed-board":
+        page_board = json.load(sys.stdin)
+        return run_worker_cli(sys.argv[:2], lambda path: solve(path, parsed_board=page_board), "solve_sudoku_worker.py", "Mini Sudoku")
     return run_worker_cli(
         argv=sys.argv,
         solve_fn=solve,

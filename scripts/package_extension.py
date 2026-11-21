@@ -12,7 +12,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_FILES = (
     'api_config.js', 'background.js', 'content.js', 'popup.css', 'popup.html',
-    'popup.js', 'puzzle_registry.js', 'wend_paths.js',
+    'page_puzzle.js', 'popup.js', 'puzzle_registry.js', 'shared.js', 'wend_paths.js',
 )
 
 
@@ -24,7 +24,7 @@ def build(output: Path, browser: str = 'chrome', source: Path = ROOT / 'extensio
     elif browser == 'firefox':
         manifest['background'].pop('service_worker', None)
         manifest['background']['scripts'] = [
-            'puzzle_registry.js', 'api_config.js', 'background.js',
+            'puzzle_registry.js', 'shared.js', 'api_config.js', 'page_puzzle.js', 'background.js',
         ]
     else:
         raise ValueError('Choose chrome or firefox.')

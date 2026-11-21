@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import sys
 from pathlib import Path
 from typing import TypedDict
@@ -115,7 +116,18 @@ def _compose_board_bbox(raw_board_bbox: object, grid_coords: object) -> BoardBBo
     }
 
 
-def solve(image_path: Path) -> JsonDict:
+def _ocr_check(parsed_board: JsonDict, board_payload: _BoardStatePayload | None) -> JsonDict:
+    """Compare the preset pieces and clues OCR read with the board from the game page."""
+    from services.solver_api.app.domain.ocr_check import check_ocr
+    from services.solver_api.app.domain.tango_board import tango_board_facts, tango_page_facts, validate_tango_board
+
+    payload = board_payload or {}
+    fixed = [(int(piece["row"]), int(piece["col"]), int(piece["piece_type"])) for piece in payload.get("fixed_pieces", [])]
+    constraints = [(str(item["type"]), tuple(item["pos1"]), tuple(item["pos2"])) for item in payload.get("constraints", [])]
+    return check_ocr(validate_tango_board, parsed_board, tango_page_facts, tango_board_facts(fixed, constraints))
+
+
+def solve(image_path: Path, *, parsed_board: JsonDict | None = None) -> JsonDict:
     game_root = game_root_for_worker(__file__, "tango_solver")
     if not game_root.exists():
         return {
@@ -137,14 +149,18 @@ def solve(image_path: Path) -> JsonDict:
         board_state = parser.parse_image(str(image_path))
 
         if not board_state:
-            return {
+            response = {
                 "puzzle": "tango",
                 "solved": False,
                 "board_size": 6,
                 "moves": [],
                 "solution_grid": None,
                 "error": "Failed to parse image into board state.",
+                "details": {},
             }
+            if parsed_board is not None:
+                response["details"]["ocr_check"] = _ocr_check(parsed_board, None)
+            return response
 
         board_payload: _BoardStatePayload = board_state
 
@@ -223,12 +239,17 @@ def solve(image_path: Path) -> JsonDict:
         },
     }
 
+    if parsed_board is not None:
+        response["details"]["ocr_check"] = _ocr_check(parsed_board, board_payload)
     attach_captured_logs(response, captured_logs)
 
     return response
 
 
 def main() -> int:
+    if len(sys.argv) == 3 and sys.argv[2] == "--parsed-board":
+        page_board = json.load(sys.stdin)
+        return run_worker_cli(sys.argv[:2], lambda path: solve(path, parsed_board=page_board), "solve_tango_worker.py", "Tango")
     return run_worker_cli(
         argv=sys.argv,
         solve_fn=solve,

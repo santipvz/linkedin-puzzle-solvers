@@ -7,11 +7,10 @@ import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 
-from src.core.interfaces import ResultVisualizer
 from src.core.models import Region
 
 
-class QueensResultVisualizer(ResultVisualizer):
+class QueensResultVisualizer:
     """Advanced visualizer for Queens puzzle results."""
 
     def __init__(self):

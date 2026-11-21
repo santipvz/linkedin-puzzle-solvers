@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import importlib
 import io
+import json
 import sys
 import tempfile
 from pathlib import Path
@@ -301,6 +302,14 @@ def _run_solver_attempt(queens_solver_class: Any, image_path: Path, attempt_labe
     solution_grid = None
     moves: list[dict[str, int]] = []
 
+    region_grid = None
+    if puzzle_state is not None and puzzle_state.regions:
+        region_grid = [[-1] * board_size for _ in range(board_size)]
+        for region_id, region in puzzle_state.regions.items():
+            for row, col in region.positions:
+                if 0 <= row < board_size and 0 <= col < board_size:
+                    region_grid[row][col] = int(region_id)
+
     if puzzle_state is not None and puzzle_state.solution is not None:
         solution_grid = _serialize_solution_grid(puzzle_state.solution)
         for row_index, row_values in enumerate(solution_grid):
@@ -345,6 +354,7 @@ def _run_solver_attempt(queens_solver_class: Any, image_path: Path, attempt_labe
             },
         }
 
+    response["details"]["region_grid"] = region_grid
     attach_captured_logs(response, captured_logs)
 
     return response
@@ -458,7 +468,7 @@ def _finalize_queens_attempt(
     return best_attempt
 
 
-def solve(image_path: Path) -> JsonDict:
+def _solve_image(image_path: Path) -> JsonDict:
     game_root = game_root_for_worker(__file__, "queen_solver")
     if not game_root.exists():
         return {
@@ -468,6 +478,7 @@ def solve(image_path: Path) -> JsonDict:
         }
 
     activate_game_import_context(game_root)
+
 
     queens_module = importlib.import_module(".".join(["src", "queens_solver"]))
     queens_solver_class = getattr(queens_module, "QueensSolver")
@@ -533,7 +544,23 @@ def solve(image_path: Path) -> JsonDict:
             path.unlink(missing_ok=True)
 
 
+def solve(image_path: Path, *, parsed_board: JsonDict | None = None) -> JsonDict:
+    response = _solve_image(image_path)
+    if parsed_board is not None:
+        from services.solver_api.app.domain.ocr_check import check_ocr
+        from services.solver_api.app.domain.queens_board import queens_board_facts, queens_page_facts, validate_queens_board
+
+        # Compare the colour regions OCR found with the board from the game page.
+        details = response.setdefault("details", {})
+        ocr_facts = queens_board_facts(details.get("region_grid") or [])
+        details["ocr_check"] = check_ocr(validate_queens_board, parsed_board, queens_page_facts, ocr_facts)
+    return response
+
+
 def main() -> int:
+    if len(sys.argv) == 3 and sys.argv[2] == "--parsed-board":
+        page_board = json.load(sys.stdin)
+        return run_worker_cli(sys.argv[:2], lambda path: solve(path, parsed_board=page_board), "solve_queens_worker.py", "Queens")
     return run_worker_cli(
         argv=sys.argv,
         solve_fn=solve,

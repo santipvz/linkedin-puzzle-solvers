@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import itertools
+import json
 import sys
 from pathlib import Path
 from typing import Protocol, TypedDict
@@ -401,7 +402,16 @@ def _base_attempt_recovery_priority(attempt: _AttemptPayload) -> tuple[int, floa
     )
 
 
-def solve(image_path: Path) -> JsonDict:
+def _ocr_check(parsed_board: JsonDict, parsed_clues: list[_ParsedPatchesClue]) -> JsonDict:
+    """Compare the clues OCR read (shape and number) with the board from the game page."""
+    from services.solver_api.app.domain.ocr_check import check_ocr
+    from services.solver_api.app.domain.patches_board import patches_board_facts, patches_page_facts, validate_patches_board
+
+    ocr_clues = [{"row": clue["row"], "col": clue["col"], "shape": clue.get("shape"), "area": clue.get("value")} for clue in parsed_clues]
+    return check_ocr(validate_patches_board, parsed_board, patches_page_facts, patches_board_facts(ocr_clues))
+
+
+def solve(image_path: Path, *, parsed_board: JsonDict | None = None) -> JsonDict:
     game_root = game_root_for_worker(__file__, "patches_solver")
     if not game_root.exists():
         return {
@@ -458,11 +468,15 @@ def solve(image_path: Path) -> JsonDict:
                     break
 
     if not attempts:
-        return {
+        response = {
             "puzzle": "patches",
             "solved": False,
             "error": "Could not parse board clues from screenshot.",
+            "details": {},
         }
+        if parsed_board is not None:
+            response["details"]["ocr_check"] = _ocr_check(parsed_board, [])
+        return response
 
     attempts.sort(key=lambda attempt: attempt["score"], reverse=True)
     best_attempt = attempts[0]
@@ -530,12 +544,17 @@ def solve(image_path: Path) -> JsonDict:
         },
     }
 
+    if parsed_board is not None:
+        response["details"]["ocr_check"] = _ocr_check(parsed_board, parsed["clues"])
     attach_captured_logs(response, captured_logs)
 
     return response
 
 
 def main() -> int:
+    if len(sys.argv) == 3 and sys.argv[2] == "--parsed-board":
+        page_board = json.load(sys.stdin)
+        return run_worker_cli(sys.argv[:2], lambda path: solve(path, parsed_board=page_board), "solve_patches_worker.py", "Patches")
     return run_worker_cli(
         argv=sys.argv,
         solve_fn=solve,

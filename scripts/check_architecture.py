@@ -17,7 +17,6 @@ PURE_SOLVERS = (
     "games/tango_solver/src/tango_solver.py",
     "games/tango_solver/src/ports.py",
     "games/queen_solver/src/core/models.py",
-    "games/queen_solver/src/core/interfaces.py",
     "games/queen_solver/src/solver/queens_solver.py",
     "games/queen_solver/src/solver/validator.py",
 )

@@ -5,10 +5,9 @@ from typing import List, Tuple
 import cv2
 import numpy as np
 
-from src.core.interfaces import BoardDetector
 
 
-class EdgeDetectionBoardDetector(BoardDetector):
+class EdgeDetectionBoardDetector:
     """Board detector using edge detection for reliable grid identification."""
 
     def __init__(self):

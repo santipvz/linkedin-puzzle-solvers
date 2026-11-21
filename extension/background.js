@@ -1,10 +1,8 @@
 if (typeof importScripts === "function") {
-  importScripts("puzzle_registry.js", "api_config.js");
+  importScripts("puzzle_registry.js", "shared.js", "api_config.js", "page_puzzle.js");
 }
 
 const DEFAULT_API_BASE = globalThis.SolverApiConfig.defaultUrl;
-const DEFAULT_INTER_CLICK_DELAY_MS = 45;
-const DEFAULT_MOVE_INTERVAL_MS = 100;
 const DEFAULT_TANGO_APPLY_MODE = "left-cycle";
 
 const STORAGE_API_KEY = "solver_api_url";
@@ -33,28 +31,6 @@ function normalizeApiBase(value) {
   }
 
   return value.trim().replace(/\/+$/, "") || DEFAULT_API_BASE;
-}
-
-function normalizeSelection(selection) {
-  if (!selection || typeof selection !== "object") {
-    return null;
-  }
-
-  const x = Number(selection.x);
-  const y = Number(selection.y);
-  const width = Number(selection.width);
-  const height = Number(selection.height);
-  const dpr = Number(selection.devicePixelRatio) || 1;
-
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height)) {
-    return null;
-  }
-
-  if (width < 10 || height < 10) {
-    return null;
-  }
-
-  return { x, y, width, height, devicePixelRatio: dpr };
 }
 
 function normalizeRect(rect) {
@@ -166,77 +142,6 @@ function translateTabSelectionToFrame(tabSelection, iframeRect, frameViewport) {
     width: Math.min(selection.width / scaleX, maxWidth),
     height: Math.min(selection.height / scaleY, maxHeight),
     devicePixelRatio: selection.devicePixelRatio,
-  });
-}
-
-function getBoardBboxFromResult(result) {
-  const details = result && typeof result === "object" ? result.details : null;
-  const bbox =
-    details && typeof details === "object"
-      ? details.board_bbox || details.crop_bbox || null
-      : null;
-  if (!bbox || typeof bbox !== "object") {
-    return null;
-  }
-
-  const x = Number(bbox.x);
-  const y = Number(bbox.y);
-  const width = Number(bbox.width);
-  const height = Number(bbox.height);
-
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height)) {
-    return null;
-  }
-
-  if (width < 20 || height < 20) {
-    return null;
-  }
-
-  return { x, y, width, height };
-}
-
-function refineSelectionWithBoardBbox(selection, result) {
-  const normalized = normalizeSelection(selection);
-  const boardBbox = getBoardBboxFromResult(result);
-  if (!normalized || !boardBbox) {
-    return normalized;
-  }
-
-  const dpr = normalized.devicePixelRatio || 1;
-  const selectionPixelWidth = normalized.width * dpr;
-  const selectionPixelHeight = normalized.height * dpr;
-
-  if (selectionPixelWidth <= 0 || selectionPixelHeight <= 0) {
-    return normalized;
-  }
-
-  const bboxWidthRatio = boardBbox.width / selectionPixelWidth;
-  const bboxHeightRatio = boardBbox.height / selectionPixelHeight;
-  const bboxAlreadyCoversSelection = bboxWidthRatio >= 0.92 && bboxHeightRatio >= 0.92;
-  if (bboxAlreadyCoversSelection) {
-    return normalized;
-  }
-
-  const offsetX = boardBbox.x / dpr;
-  const offsetY = boardBbox.y / dpr;
-  const refinedWidth = boardBbox.width / dpr;
-  const refinedHeight = boardBbox.height / dpr;
-
-  const maxX = normalized.x + normalized.width - 10;
-  const maxY = normalized.y + normalized.height - 10;
-
-  const refinedX = Math.max(normalized.x, Math.min(maxX, normalized.x + offsetX));
-  const refinedY = Math.max(normalized.y, Math.min(maxY, normalized.y + offsetY));
-
-  const remainingWidth = normalized.x + normalized.width - refinedX;
-  const remainingHeight = normalized.y + normalized.height - refinedY;
-
-  return normalizeSelection({
-    x: refinedX,
-    y: refinedY,
-    width: Math.max(10, Math.min(refinedWidth, remainingWidth)),
-    height: Math.max(10, Math.min(refinedHeight, remainingHeight)),
-    devicePixelRatio: normalized.devicePixelRatio,
   });
 }
 
@@ -368,7 +273,7 @@ function isConfidentTangoAttempt(result, score) {
   return details.parse_reliable === true && fixedCount >= 4 && fixedCount <= 24 && constraintCount >= 2 && movesCount > 0;
 }
 
-async function solveTangoWithCandidateSearch({ normalizedSelection, screenshotDataUrl, apiBaseUrl }) {
+async function solveTangoWithCandidateSearch({ normalizedSelection, screenshotDataUrl, apiBaseUrl, referenceBoard = null }) {
   const candidates = buildTangoSelectionCandidates(normalizedSelection);
   if (!candidates.length) {
     throw new Error("Could not build Tango board candidates.");
@@ -383,6 +288,7 @@ async function solveTangoWithCandidateSearch({ normalizedSelection, screenshotDa
     const boardImage = await cropCapturedImage(screenshotDataUrl, candidate);
     const result = await callSolverApi(apiBaseUrl, "tango", boardImage, {
       captureBoardStart: index === 0,
+      parsedBoard: referenceBoard,
     });
     const refinedSelection = candidate;
     const score = tangoAttemptScore(result, refinedSelection, normalizedSelection);
@@ -439,15 +345,6 @@ async function solveTangoWithCandidateSearch({ normalizedSelection, screenshotDa
   };
 }
 
-function normalizeDelay(value, fallback) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-
-  return Math.max(0, Math.min(500, Math.round(parsed)));
-}
-
 function normalizeTangoApplyMode(value) {
   return value === "right-moon" ? "right-moon" : "left-cycle";
 }
@@ -465,91 +362,37 @@ function tabsGet(tabId) {
   });
 }
 
-function tabsSendMessage(tabId, message, options = {}) {
+// Runs a self-contained function in the page's own JavaScript world and returns its result.
+function executeInPage(tabId, frameId, func) {
   return new Promise((resolve, reject) => {
-    chrome.tabs.sendMessage(tabId, message, options, (response) => {
+    if (!chrome.scripting || typeof chrome.scripting.executeScript !== "function") {
+      reject(new Error("Page scripts are not supported in this browser."));
+      return;
+    }
+    chrome.scripting.executeScript({ target: { tabId, frameIds: [frameId] }, world: "MAIN", func }, (results) => {
       const error = chrome.runtime.lastError;
       if (error) {
         reject(new Error(error.message));
         return;
       }
-      resolve(response);
+      resolve(Array.isArray(results) && results[0] ? results[0].result : null);
     });
   });
 }
 
-function executeContentScript(tabId, frameId = 0) {
-  return new Promise((resolve, reject) => {
-    if (chrome.scripting && typeof chrome.scripting.executeScript === "function") {
-      const target = Number.isInteger(frameId) ? { tabId, frameIds: [frameId] } : { tabId };
-
-      chrome.scripting.executeScript(
-        {
-          target,
-          files: ["puzzle_registry.js", "wend_paths.js", "content.js"],
-        },
-        () => {
-          const error = chrome.runtime.lastError;
-          if (error) {
-            reject(new Error(error.message));
-            return;
-          }
-          resolve();
-        }
-      );
-      return;
-    }
-
-    if (chrome.tabs && typeof chrome.tabs.executeScript === "function") {
-      const sharedDetails = Number.isInteger(frameId) ? { frameId, runAt: "document_idle" } : { runAt: "document_idle" };
-
-      chrome.tabs.executeScript(tabId, { ...sharedDetails, file: "puzzle_registry.js" }, () => {
-        const error = chrome.runtime.lastError;
-        if (error) {
-          reject(new Error(error.message));
-          return;
-        }
-
-        chrome.tabs.executeScript(tabId, { ...sharedDetails, file: "wend_paths.js" }, () => {
-          const secondError = chrome.runtime.lastError;
-          if (secondError) {
-            reject(new Error(secondError.message));
-            return;
-          }
-          chrome.tabs.executeScript(tabId, { ...sharedDetails, file: "content.js" }, () => {
-            const thirdError = chrome.runtime.lastError;
-            if (thirdError) {
-              reject(new Error(thirdError.message));
-              return;
-            }
-            resolve();
-          });
-        });
-      });
-      return;
-    }
-
-    reject(new Error("No supported script injection API available in this browser."));
-  });
-}
-
-function isNoReceiverError(error) {
-  const message = error && error.message ? error.message : "";
-  return message.includes("Receiving end does not exist");
-}
-
-async function sendTabMessageWithInjection(tabId, message, options = {}) {
-  try {
-    return await tabsSendMessage(tabId, message, options);
-  } catch (error) {
-    if (!isNoReceiverError(error)) {
-      throw error;
-    }
-
-    const frameId = Number.isInteger(options.frameId) ? options.frameId : 0;
-    await executeContentScript(tabId, frameId);
-    return tabsSendMessage(tabId, message, options);
+// The puzzle the game holds in memory, with its board position in tab coordinates.
+async function readPagePuzzle(tabId, puzzleType) {
+  const frameContext = await getGameFrameContext(tabId, puzzleType);
+  const gameFrameId = Number.isInteger(frameContext?.gameFrameId) ? frameContext.gameFrameId : 0;
+  for (const frameId of new Set([gameFrameId, 0])) {
+    const page = await executeInPage(tabId, frameId, globalThis.PagePuzzle.readLinkedInPuzzle).catch(() => null);
+    if (!page || !page.puzzle) continue;
+    const selection = frameId === 0
+      ? normalizeSelection(page.selection)
+      : translateFrameSelectionToTab(page.selection, frameContext.iframeRect, frameContext.frameViewport);
+    return { ...page, selection };
   }
+  return null;
 }
 
 async function safeSendTabMessage(tabId, message, options = {}) {
@@ -576,19 +419,6 @@ function webNavigationGetAllFrames(tabId) {
         return;
       }
       resolve(Array.isArray(frames) ? frames : []);
-    });
-  });
-}
-
-function storageGet(keys) {
-  return new Promise((resolve, reject) => {
-    chrome.storage.local.get(keys, (items) => {
-      const error = chrome.runtime.lastError;
-      if (error) {
-        reject(new Error(error.message));
-        return;
-      }
-      resolve(items);
     });
   });
 }
@@ -688,26 +518,13 @@ async function callSolverApi(apiBaseUrl, puzzleType, imageBlob, options = {}) {
       throw new Error("Board image is too large for the online service. Select a smaller area or use a local API.");
     }
   }
-  const safePuzzleType =
-    puzzleType === "tango"
-      ? "tango"
-      : puzzleType === "sudoku"
-      ? "sudoku"
-      : puzzleType === "zip"
-      ? "zip"
-      : puzzleType === "patches"
-      ? "patches"
-      : puzzleType === "wend"
-      ? "wend"
-      : puzzleType === "sumbreak"
-      ? "sumbreak"
-      : "queens";
+  const safePuzzleType = sanitizePuzzleType(puzzleType) || "queens";
   const endpoint = `${normalizeApiBase(apiBaseUrl)}/solve/${safePuzzleType}`;
 
   const formData = new FormData();
   const extension = imageBlob.type === "image/jpeg" ? "jpg" : "png";
   formData.append("image", imageBlob, `${safePuzzleType}_board.${extension}`);
-  if ((safePuzzleType === "wend" || safePuzzleType === "sumbreak") && options.parsedBoard) {
+  if (options.parsedBoard) {
     formData.append("parsed_board", JSON.stringify(options.parsedBoard));
   }
 
@@ -752,18 +569,34 @@ async function solveBoardCore({ tabId, puzzleType, apiBaseUrl, selection }) {
 
   let result;
   let refinedSelection;
+  let parsedBoard = null;
 
+  // The board is always solved from the screenshot (OCR). When the game's own
+  // puzzle can be read, it travels along so the API can say whether OCR read
+  // the board correctly; it never changes the answer.
+  let referenceBoard = null;
+  let referenceNote = null;
+  const buildPageBoard = globalThis.PagePuzzle?.PAGE_BOARD_BUILDERS?.[puzzleType];
+  if (buildPageBoard) {
+    const page = await readPagePuzzle(tabId, puzzleType);
+    referenceBoard = page ? buildPageBoard(page) : null;
+    if (!referenceBoard) {
+      referenceNote = page ? "The game's puzzle data had an unexpected format." : "The game's puzzle data was not found on the page.";
+    }
+  }
+
+  // Tango tries several crops of the image and keeps the best parse.
   if (puzzleType === "tango") {
     const tangoSolved = await solveTangoWithCandidateSearch({
       normalizedSelection,
       screenshotDataUrl,
       apiBaseUrl,
+      referenceBoard,
     });
     result = tangoSolved.result;
     const tangoSelection = normalizeSelection(tangoSolved.selection) || normalizedSelection;
     refinedSelection = refineSelectionWithBoardBbox(tangoSelection, result) || tangoSelection;
   } else {
-    let parsedBoard = null;
     if (puzzleType === "wend" || puzzleType === "sumbreak") {
       const frameContext = await getGameFrameContext(tabId, puzzleType);
       const frameId = Number.isInteger(frameContext?.gameFrameId) ? frameContext.gameFrameId : 0;
@@ -791,28 +624,21 @@ async function solveBoardCore({ tabId, puzzleType, apiBaseUrl, selection }) {
     });
     result = await callSolverApi(apiBaseUrl, puzzleType, boardImage, {
       captureBoardStart: true,
-      parsedBoard,
+      parsedBoard: parsedBoard || referenceBoard,
     });
     refinedSelection = refineSelectionWithBoardBbox(normalizedSelection, result);
+  }
+
+  // Without a page board there is nothing to check OCR against; say why.
+  if (referenceNote && result && typeof result === "object") {
+    const details = result.details && typeof result.details === "object" ? result.details : (result.details = {});
+    if (!details.ocr_check) details.ocr_check = { matches: null, error: referenceNote };
   }
 
   return {
     result,
     selection: refinedSelection,
-    puzzleType:
-    puzzleType === "tango"
-      ? "tango"
-      : puzzleType === "sudoku"
-      ? "sudoku"
-      : puzzleType === "zip"
-      ? "zip"
-      : puzzleType === "patches"
-      ? "patches"
-      : puzzleType === "wend"
-      ? "wend"
-      : puzzleType === "sumbreak"
-      ? "sumbreak"
-      : "queens",
+    puzzleType: sanitizePuzzleType(puzzleType) || "queens",
   };
 }
 
