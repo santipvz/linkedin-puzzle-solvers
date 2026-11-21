@@ -21,7 +21,7 @@ Mini Sudoku is a separate, non-React app inside the `/games/view/mini-sudoku/des
 From repo root:
 
 ```bash
-python3 -m pip install -r games/sudoku_solver/requirements.txt
+python3 -m pip install -r requirements.txt
 python3 games/sudoku_solver/main.py games/sudoku_solver/examples/sample1.png
 ```
 

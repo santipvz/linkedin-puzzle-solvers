@@ -33,7 +33,7 @@ The Queens puzzle is a constraint satisfaction problem popularized as a daily lo
 # From monorepo root
 python3 -m venv .venv
 source .venv/bin/activate  # Linux/Mac
-pip install -r games/queen_solver/requirements.txt
+pip install -r requirements.txt
 ```
 
 ### Basic Usage
