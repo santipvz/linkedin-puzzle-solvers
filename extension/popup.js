@@ -265,12 +265,16 @@ function summarizeResult(puzzleType, result) {
   const lines = [];
   lines.push(`Puzzle: ${puzzleType}`);
   lines.push(`Solved: ${Boolean(result.solved)}`);
-  const source = result.details?.input_source;
-  if (source) {
-    lines.push(`Board read from: ${source === "page" ? "the game's puzzle data" : "the screenshot"}`);
-  }
-  if (result.details?.page_fallback_reason) {
-    lines.push(`Why not the page: ${result.details.page_fallback_reason}`);
+  const check = result.details?.ocr_check;
+  if (check && check.matches === true) {
+    lines.push("OCR check: matches the game's board");
+  } else if (check && check.matches === false) {
+    lines.push(`OCR check: ${check.mismatch_count} difference(s) from the game's board`);
+    for (const mismatch of check.mismatches || []) {
+      lines.push(`  ${mismatch.at}: game ${mismatch.page ?? "none"}, OCR ${mismatch.ocr ?? "none"}`);
+    }
+  } else if (check?.error) {
+    lines.push(`OCR check unavailable: ${check.error}`);
   }
 
   if (result.board_size) {
@@ -287,7 +291,7 @@ function summarizeResult(puzzleType, result) {
 
   if (result.details && typeof result.details === "object") {
     for (const [key, value] of Object.entries(result.details)) {
-      if (key === "input_source" || key === "page_fallback_reason") {
+      if (key === "ocr_check") {
         continue;
       }
       if (value && typeof value === "object") {

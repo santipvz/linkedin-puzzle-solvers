@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .errors import InvalidBoard
+from .ocr_check import cell_name
 from .models import JsonDict
 
 
@@ -51,3 +52,20 @@ def zip_solver_input(board: JsonDict) -> tuple[list[list[bool]], list[list[bool]
             blocked_v[row][col] = True
     clues = {divmod(cell, size): number for number, cell in enumerate(board["sequence"], start=1)}
     return blocked_h, blocked_v, clues
+
+
+def zip_board_facts(
+    clues: dict[tuple[int, int], int], blocked_h: list[list[bool]], blocked_v: list[list[bool]],
+) -> dict[str, object]:
+    """Numbered cells and walls, from either the page board or the OCR parse."""
+    facts: dict[str, object] = {f"{cell_name(row, col)} clue": int(value) for (row, col), value in clues.items()}
+    for row, values in enumerate(blocked_h):
+        facts.update({f"{cell_name(row, col)}|{cell_name(row + 1, col)} wall": True for col, wall in enumerate(values) if wall})
+    for row, values in enumerate(blocked_v):
+        facts.update({f"{cell_name(row, col)}|{cell_name(row, col + 1)} wall": True for col, wall in enumerate(values) if wall})
+    return facts
+
+
+def zip_page_facts(board: JsonDict) -> dict[str, object]:
+    blocked_h, blocked_v, clues = zip_solver_input(board)
+    return zip_board_facts(clues, blocked_h, blocked_v)

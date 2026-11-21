@@ -216,15 +216,15 @@ async function onQuickSolveClick() {
       throw new Error((response && response.error) || "Quick solve failed.");
     }
 
-    const fallbackNotice = formatPageFallbackNotice(response.result);
+    const ocrCheck = formatOcrCheck(response.result);
     if (!response.solved) {
-      setQuickSolveStatus(`${response.error || "No solution found."}${fallbackNotice}`, true);
+      setQuickSolveStatus(`${response.error || "No solution found."}${ocrCheck}`, true);
       return;
     }
 
     if (response.previewed) {
       const moves = Array.isArray(response.result?.moves) ? response.result.moves.length : 0;
-      setQuickSolveStatus(`Preview ready \u00b7 ${moves} moves marked.${fallbackNotice}`);
+      setQuickSolveStatus(`Preview ready \u00b7 ${moves} moves marked.${ocrCheck}`);
       return;
     }
 
@@ -234,7 +234,7 @@ async function onQuickSolveClick() {
     }
 
     const appliedCount = Number(response.appliedCount) || 0;
-    setQuickSolveStatus(`Solution applied \u00b7 ${appliedCount} moves.${fallbackNotice}${formatQuickSolveTimings(response.timings)}`);
+    setQuickSolveStatus(`Solution applied \u00b7 ${appliedCount} moves.${ocrCheck}${formatQuickSolveTimings(response.timings)}`);
   } catch (error) {
     setQuickSolveStatus(error.message || String(error), true);
   } finally {
@@ -246,11 +246,19 @@ async function onQuickSolveClick() {
   }
 }
 
-// When a game that can be read from the page was solved from the screenshot
-// instead, say why: it usually means LinkedIn changed how the game stores it.
-function formatPageFallbackNotice(result) {
-  const reason = result?.details?.page_fallback_reason;
-  return reason ? `\nRead from the screenshot. ${reason}` : "";
+// The board is solved from the screenshot; when the game's own puzzle could be
+// read, the API reports whether OCR read the board correctly.
+function formatOcrCheck(result) {
+  const check = result?.details?.ocr_check;
+  if (!check || typeof check !== "object") return "";
+  if (check.matches === true) return "\nOCR check: read the board correctly.";
+  if (check.matches === false) {
+    const first = Array.isArray(check.mismatches) ? check.mismatches[0] : null;
+    const example = first ? ` (${first.at}: game ${first.page ?? "none"}, OCR ${first.ocr ?? "none"})` : "";
+    const count = Number(check.mismatch_count) || 0;
+    return `\nOCR check: ${count} difference${count === 1 ? "" : "s"} from the game's board${example}.`;
+  }
+  return check.error ? `\nOCR check unavailable: ${check.error}` : "";
 }
 
 // "board 0.1 s · solve 0.6 s (server 0.2 s) · apply 2.3 s": where a quick solve spent its time.

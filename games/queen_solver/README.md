@@ -3,15 +3,11 @@
 A sophisticated computer vision system for automatically solving colored queens puzzles from images. Combines intelligent image processing with optimized constraint satisfaction algorithms to detect puzzle boards and find valid queen placements.
 
 
-## Input from the page
+## Checking OCR against the page
 
-The extension reads the puzzle that LinkedIn's game already holds in memory (see `extension/page_puzzle.js`), so normal solves need no image. It sends this as `parsed_board`:
+The board is always solved from the screenshot. When the extension can also read the puzzle the game holds in memory (see `extension/page_puzzle.js`), it sends it as `parsed_board`, and the worker reports in `details.ocr_check` whether OCR read the board correctly: `matches`, `mismatch_count` and up to 12 `mismatches` such as `{"at": "r1c5 clue", "page": 1, "ocr": 7}`. That page board never changes the answer, and an invalid one is ignored with a reason.
 
-```json
-{"size": 9, "regions": [[2, 2, 2, 2, 2, 2, 2, 2, 8], [2, 2, 2, 5, 5, 5, 5, 8, 8]]}
-```
-
-`regions[row][col]` is the colour region id of each cell, and a board of size N has exactly N regions. The worker hands the regions straight to `BacktrackingQueensSolver`. The board detection, colour clustering and inpainting below are only used when the page puzzle can't be read. `tests/fixtures/linkedin-2026-11-20.json` records a real page board, and our answer for it matches LinkedIn's.
+Queens' page board is `{"size": 9, "regions": [[2, 2, 2, ...], ...]}`, where `regions[row][col]` is each cell's colour region id. Region ids differ between the page (colour ids) and OCR (numbered as found), so both are renumbered in reading order before comparing: the check says whether OCR split the cells into the same regions. Each OCR attempt also returns its `region_grid` in `details`.
 
 ## What is a Queens Puzzle?
 

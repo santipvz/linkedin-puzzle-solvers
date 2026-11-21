@@ -231,56 +231,12 @@ def _recover_from_conflicting_clues(
     return baseline_result, initial_board, []
 
 
-def _solve_page_board(parsed_board: JsonDict, solver: _SudokuSolverLike) -> JsonDict:
-    """Solve a Mini Sudoku read from the page: no image or OCR involved."""
-    from services.solver_api.app.domain.sudoku_board import validate_sudoku_board
+def _ocr_check(parsed_board: JsonDict, solved_board: list[list[int]]) -> JsonDict:
+    """Compare the preset digits the solve used (after OCR and its recovery) with the game page."""
+    from services.solver_api.app.domain.ocr_check import check_ocr
+    from services.solver_api.app.domain.sudoku_board import sudoku_board_facts, sudoku_page_facts, validate_sudoku_board
 
-    try:
-        board = validate_sudoku_board(parsed_board)["board"]
-    except Exception as exc:
-        return {
-            "puzzle": "sudoku",
-            "solved": False,
-            "board_size": 0,
-            "moves": [],
-            "solution_grid": None,
-            "error": f"Invalid Mini Sudoku page board: {exc}",
-            "details": {"parse_reliable": False, "input_source": "page"},
-        }
-
-    result = solver.solve(board, max_solutions=2)
-    solution_count = int(getattr(result, "solution_count", 1 if result.solved else 0) or 0)
-    solved = bool(result.solved and solution_count == 1 and result.board is not None)
-    moves = [
-        {"row": row, "col": col, "value": int(result.board[row][col])}
-        for row, values in enumerate(board)
-        for col, value in enumerate(values)
-        if solved and value == 0
-    ]
-    error = None
-    if not solved:
-        error = "Mini Sudoku has more than one solution." if result.solved else (result.error or "No valid solution found.")
-    return {
-        "puzzle": "sudoku",
-        "solved": solved,
-        "board_size": len(board),
-        "moves": moves,
-        "solution_grid": _normalize_board(result.board) if solved else None,
-        "fixed_cells": [
-            {"row": row, "col": col, "value": value}
-            for row, values in enumerate(board)
-            for col, value in enumerate(values)
-            if value
-        ],
-        "error": error,
-        "details": {
-            "iterations": int(getattr(result, "iterations", 0) or 0),
-            "solution_count": solution_count,
-            "unique_solution": solved,
-            "parse_reliable": True,
-            "input_source": "page",
-        },
-    }
+    return check_ocr(validate_sudoku_board, parsed_board, sudoku_page_facts, sudoku_board_facts(solved_board))
 
 
 def solve(image_path: Path, *, parsed_board: JsonDict | None = None) -> JsonDict:
@@ -294,12 +250,8 @@ def solve(image_path: Path, *, parsed_board: JsonDict | None = None) -> JsonDict
 
     activate_game_import_context(game_root)
 
-    from src.mini_sudoku_solver import MiniSudokuSolver
-
-    if parsed_board is not None:
-        return _solve_page_board(parsed_board, MiniSudokuSolver())
-
     from src.image_parser import MiniSudokuImageParser
+    from src.mini_sudoku_solver import MiniSudokuSolver
 
     parser = MiniSudokuImageParser()
     solver = MiniSudokuSolver()
@@ -423,6 +375,8 @@ def solve(image_path: Path, *, parsed_board: JsonDict | None = None) -> JsonDict
         },
     }
 
+    if parsed_board is not None:
+        response["details"]["ocr_check"] = _ocr_check(parsed_board, solve_input_board)
     attach_captured_logs(response, captured_logs)
 
     return response

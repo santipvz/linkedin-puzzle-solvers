@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .errors import InvalidBoard
+from .ocr_check import cell_name
 from .models import JsonDict
 
 
@@ -43,3 +44,15 @@ def patches_solver_clues(board: JsonDict) -> list[JsonDict]:
         {"row": cell // size, "col": cell % size, "shape": shape, "area": area}
         for cell, shape, area in board["clues"]
     ]
+
+
+def patches_board_facts(clues: list[JsonDict]) -> dict[str, object]:
+    """Each clue's shape and area, from either the page board or the OCR parse."""
+    return {
+        f"{cell_name(int(clue['row']), int(clue['col']))} clue": f"{clue.get('shape') or 'any'} {clue.get('area') or '-'}"
+        for clue in clues
+    }
+
+
+def patches_page_facts(board: JsonDict) -> dict[str, object]:
+    return patches_board_facts(patches_solver_clues(board))
