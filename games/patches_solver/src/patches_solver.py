@@ -392,6 +392,9 @@ class PatchesSolver:
 
     @staticmethod
     def _shape_accepts(shape: str, height: int, width: int) -> bool:
+        # LinkedIn never uses one-cell regions, whatever the clue.
+        if height == 1 and width == 1:
+            return False
         if shape == "square":
             return width == height
         if shape == "wide":

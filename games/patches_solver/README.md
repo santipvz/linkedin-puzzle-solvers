@@ -23,6 +23,7 @@ The check compares each clue's shape and number.
   - `wide`: width > height
   - `tall`: height > width
   - `any`: no aspect restriction
+- No region is a single cell. LinkedIn's own rectangle enumerator skips 1x1, so neither does the solver.
 
 ## Local run
 

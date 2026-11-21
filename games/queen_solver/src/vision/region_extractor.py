@@ -4,11 +4,10 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 
-from src.core.interfaces import RegionExtractor
 from src.core.models import Region
 
 
-class ColorBasedRegionExtractor(RegionExtractor):
+class ColorBasedRegionExtractor:
     """Extract regions based on color similarity with advanced validation."""
 
     def __init__(self, color_tolerance: int = 40):
