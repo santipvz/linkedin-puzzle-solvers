@@ -21,7 +21,7 @@ The OCR pipeline below is only used when the page can't be read. `tests/fixtures
 From repo root:
 
 ```bash
-python3 -m pip install -r games/sudoku_solver/requirements.txt
+python3 -m pip install -r requirements.txt
 python3 games/sudoku_solver/main.py games/sudoku_solver/examples/sample1.png
 ```
 

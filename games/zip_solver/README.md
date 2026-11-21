@@ -30,7 +30,7 @@ When the page puzzle can't be read, the worker falls back to the image parser de
 From repo root:
 
 ```bash
-python3 -m pip install -r games/zip_solver/requirements.txt
+python3 -m pip install -r requirements.txt
 python3 games/zip_solver/main.py games/zip_solver/examples/sample1.png
 ```
 

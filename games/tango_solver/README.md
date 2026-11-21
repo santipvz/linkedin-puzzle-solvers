@@ -38,7 +38,7 @@ Tango is a LinkedIn logic puzzle where you fill a 6x6 grid with moon (🌙) and 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r games/tango_solver/requirements.txt
+pip install -r requirements.txt
 ```
 
 2. **Solve a puzzle:**
