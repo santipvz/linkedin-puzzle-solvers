@@ -402,54 +402,13 @@ def _base_attempt_recovery_priority(attempt: _AttemptPayload) -> tuple[int, floa
     )
 
 
-def _solve_page_board(parsed_board: JsonDict, solver: _SolverLike) -> JsonDict:
-    """Solve a Patches puzzle read from the page: no image or OCR involved."""
-    from services.solver_api.app.domain.patches_board import patches_solver_clues, validate_patches_board
+def _ocr_check(parsed_board: JsonDict, parsed_clues: list[_ParsedPatchesClue]) -> JsonDict:
+    """Compare the clues OCR read (shape and number) with the board from the game page."""
+    from services.solver_api.app.domain.ocr_check import check_ocr
+    from services.solver_api.app.domain.patches_board import patches_board_facts, patches_page_facts, validate_patches_board
 
-    try:
-        board = validate_patches_board(parsed_board)
-    except Exception as exc:
-        return {
-            "puzzle": "patches",
-            "solved": False,
-            "board_size": 0,
-            "regions": [],
-            "moves": [],
-            "solution_grid": None,
-            "error": f"Invalid Patches page board: {exc}",
-            "details": {"parse_reliable": False, "input_source": "page"},
-        }
-
-    size = board["size"]
-    clues = patches_solver_clues(board)
-    result = solver.solve(board_size=size, clues=clues, max_solutions=2)
-    # The square-clue relaxation only exists for misread shapes; page shapes are exact.
-    solved = bool(result.solved and not result.relaxed_square_clues)
-    regions = [
-        {
-            "top": int(region.top), "left": int(region.left), "height": int(region.height), "width": int(region.width),
-            "area": int(region.area), "clue_row": int(region.clue_row), "clue_col": int(region.clue_col),
-        }
-        for region in (result.regions or [])
-    ] if solved else []
-    return {
-        "puzzle": "patches",
-        "solved": solved,
-        "board_size": size,
-        "regions": regions,
-        "moves": regions,
-        "solution_grid": _build_solution_grid(size, regions) if solved else None,
-        "clues": [{"row": clue["row"], "col": clue["col"], "shape": clue["shape"], "value": clue["area"]} for clue in clues],
-        "error": None if solved else (result.error or "No valid solution found."),
-        "details": {
-            "iterations": int(result.iterations),
-            "clue_count": len(clues),
-            "solution_count": int(result.solution_count),
-            "unique_solution": bool(result.solution_count_is_exact and result.solution_count == 1),
-            "parse_reliable": True,
-            "input_source": "page",
-        },
-    }
+    ocr_clues = [{"row": clue["row"], "col": clue["col"], "shape": clue.get("shape"), "area": clue.get("value")} for clue in parsed_clues]
+    return check_ocr(validate_patches_board, parsed_board, patches_page_facts, patches_board_facts(ocr_clues))
 
 
 def solve(image_path: Path, *, parsed_board: JsonDict | None = None) -> JsonDict:
@@ -463,12 +422,8 @@ def solve(image_path: Path, *, parsed_board: JsonDict | None = None) -> JsonDict
 
     activate_game_import_context(game_root)
 
-    from src.patches_solver import PatchesSolver
-
-    if parsed_board is not None:
-        return _solve_page_board(parsed_board, PatchesSolver())
-
     from src.image_parser import PatchesImageParser
+    from src.patches_solver import PatchesSolver
 
     captured_logs = io.StringIO()
 
@@ -513,11 +468,15 @@ def solve(image_path: Path, *, parsed_board: JsonDict | None = None) -> JsonDict
                     break
 
     if not attempts:
-        return {
+        response = {
             "puzzle": "patches",
             "solved": False,
             "error": "Could not parse board clues from screenshot.",
+            "details": {},
         }
+        if parsed_board is not None:
+            response["details"]["ocr_check"] = _ocr_check(parsed_board, [])
+        return response
 
     attempts.sort(key=lambda attempt: attempt["score"], reverse=True)
     best_attempt = attempts[0]
@@ -585,6 +544,8 @@ def solve(image_path: Path, *, parsed_board: JsonDict | None = None) -> JsonDict
         },
     }
 
+    if parsed_board is not None:
+        response["details"]["ocr_check"] = _ocr_check(parsed_board, parsed["clues"])
     attach_captured_logs(response, captured_logs)
 
     return response

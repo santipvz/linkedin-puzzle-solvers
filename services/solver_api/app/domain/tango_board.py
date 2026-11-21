@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .errors import InvalidBoard
+from .ocr_check import cell_name
 from .models import JsonDict
 
 
@@ -58,3 +59,18 @@ def tango_solver_input(board: JsonDict) -> tuple[list[tuple[int, int, int]], lis
         for a, b in board[key]
     ]
     return fixed, constraints
+
+
+def tango_board_facts(
+    fixed: list[tuple[int, int, int]], constraints: list[tuple[str, tuple[int, int], tuple[int, int]]],
+) -> dict[str, object]:
+    """Preset pieces and = / x clues, from either the page board or the OCR parse."""
+    facts: dict[str, object] = {f"{cell_name(row, col)} piece": "sun" if piece == SUN else "moon" for row, col, piece in fixed}
+    for kind, first, second in constraints:
+        a, b = sorted((tuple(first), tuple(second)))
+        facts[f"{cell_name(*a)}|{cell_name(*b)} clue"] = kind
+    return facts
+
+
+def tango_page_facts(board: JsonDict) -> dict[str, object]:
+    return tango_board_facts(*tango_solver_input(board))

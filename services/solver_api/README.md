@@ -59,15 +59,7 @@ All solve endpoints accept multipart form data with field name `image`.
 
 Wend also accepts an optional `parsed_board` form field containing JSON with `board` (a 5–8 square matrix of uppercase ASCII letters and null holes) and `lengths` (answer-slot lengths). The extension sends this only after a complete page read. The API validates it, includes it in the cache key, and forwards it to the isolated worker through stdin. Image-only clients keep the OCR pipeline. Both paths require a unique solution.
 
-Zip also accepts `parsed_board`: JSON with only `size` (3–10), `sequence` (the numbered cells in order, as `row * size + col` indexes) and `walls` (`[cell, "up" | "down" | "left" | "right"]` pairs). The extension reads it from the game's own puzzle data, and then the worker skips the image entirely. Image-only clients keep the OCR pipeline.
-
-Mini Sudoku also accepts `parsed_board`: JSON with only `board`, a 6x6 grid of preset digits with 0 for blanks. The worker then skips OCR and its conflict recovery, and still requires a unique solution.
-
-Patches also accepts `parsed_board`: JSON with only `size` (4–10) and `clues`, a list of `[cell, "any" | "square" | "wide" | "tall", area or null]`. The worker then skips the board-size search, OCR and its recovery.
-
-Queens also accepts `parsed_board`: JSON with only `size` (4–12) and `regions`, a size×size grid of colour region ids with exactly `size` distinct ids. The worker then skips board detection and colour clustering.
-
-Tango also accepts `parsed_board`: JSON with only `size` (6), `suns` and `moons` (preset cells as `row * 6 + col`), and `equal` / `opposite` (`[cell, cell]` pairs of adjacent cells). With it, the extension sends one request instead of trying several crops of the screenshot.
+Zip, Tango, Queens, Patches and Mini Sudoku also accept `parsed_board`, but only as a reference: the board is still solved from the image, and the worker reports in `details.ocr_check` whether OCR read it correctly (`matches`, `checked`, `mismatch_count` and up to 12 `mismatches`). The API passes the reference to the worker without validating it, and the worker ignores an invalid one with a reason instead of failing the solve. Each game's README describes its format.
 
 Sumbreak requires the `parsed_board` field: JSON with only `board`, a 2–8 by 2–8 rectangle of positive integers, operator tiles written as `"x2"` or `"+3"`, and null for empty cells. Tile values are read from the page, so there is no OCR path; an image-only request returns `solved: false`. The response lists `moves` in order, each merging the tile at `row`/`col` into the neighbour at `to_row`/`to_col` (equal numbers, or a number and an operator), which then holds `value`.
 

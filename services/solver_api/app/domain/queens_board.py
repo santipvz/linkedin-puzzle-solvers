@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .errors import InvalidBoard
+from .ocr_check import cell_name
 from .models import JsonDict
 
 
@@ -29,10 +30,20 @@ def validate_queens_board(payload: object) -> JsonDict:
     return {"size": size, "regions": [list(row) for row in regions]}
 
 
-def queens_region_cells(board: JsonDict) -> dict[int, list[tuple[int, int]]]:
-    """Cells of each region, keyed by region id."""
-    cells: dict[int, list[tuple[int, int]]] = {}
-    for row, values in enumerate(board["regions"]):
-        for col, region in enumerate(values):
-            cells.setdefault(region, []).append((row, col))
-    return cells
+def queens_board_facts(regions: list[list[int]]) -> dict[str, object]:
+    """Which region each cell belongs to.
+
+    Region ids are arbitrary (the page uses colour ids, OCR numbers regions as
+    it finds them), so regions are renumbered in reading order: two boards
+    match when they split the cells the same way.
+    """
+    renumbered: dict[int, int] = {}
+    return {
+        f"{cell_name(row, col)} region": renumbered.setdefault(region, len(renumbered))
+        for row, values in enumerate(regions)
+        for col, region in enumerate(values)
+    }
+
+
+def queens_page_facts(board: JsonDict) -> dict[str, object]:
+    return queens_board_facts(board["regions"])

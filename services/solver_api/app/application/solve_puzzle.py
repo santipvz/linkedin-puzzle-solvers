@@ -6,26 +6,20 @@ from collections.abc import Mapping
 
 from ..domain.errors import EmptyImage, ImageTooLarge, InvalidBoard, UnknownPuzzle, UnsupportedImage
 from ..domain.models import JsonDict, SolveRequest
-from ..domain.patches_board import validate_patches_board
-from ..domain.queens_board import validate_queens_board
-from ..domain.sudoku_board import validate_sudoku_board
 from ..domain.sumbreak_board import validate_sumbreak_board
-from ..domain.tango_board import validate_tango_board
 from ..domain.wend_board import validate_wend_board
-from ..domain.zip_board import validate_zip_board
 from .cache_policy import should_recompute
 from .ports import CaptureStore, SolutionCache, Solver
 
 
+# Boards the worker solves from directly (no OCR for Sumbreak; Wend uses its page letters).
 PAGE_BOARD_VALIDATORS = {
-    "patches": validate_patches_board,
-    "queens": validate_queens_board,
-    "sudoku": validate_sudoku_board,
     "sumbreak": validate_sumbreak_board,
-    "tango": validate_tango_board,
     "wend": validate_wend_board,
-    "zip": validate_zip_board,
 }
+# For these games OCR always solves; the page board only checks what OCR read.
+# The worker validates it and reports a bad one, so it can never block a solve.
+PAGE_BOARD_REFERENCES = frozenset({"patches", "queens", "sudoku", "tango", "zip"})
 
 
 def cache_key(puzzle: str, revision: int, image: bytes) -> str:
@@ -60,13 +54,16 @@ class SolvePuzzle:
         parsed_board = None
         if request.parsed_board is not None:
             validate = PAGE_BOARD_VALIDATORS.get(request.puzzle)
-            if validate is None:
-                raise InvalidBoard("Page board data is only supported for Sumbreak and Wend.")
-            parsed_board = validate(request.parsed_board)
+            if validate is not None:
+                parsed_board = validate(request.parsed_board)
+            elif request.puzzle in PAGE_BOARD_REFERENCES:
+                parsed_board = request.parsed_board
+            else:
+                raise InvalidBoard(f"Page board data is not supported for {request.puzzle}.")
 
         key = cache_key(request.puzzle, self.cache_revisions[request.puzzle], request.image)
         if parsed_board is not None:
-            # OCR and page-derived responses must never share a cache entry.
+            # Responses with and without a page board must never share a cache entry.
             encoded = json.dumps(parsed_board, sort_keys=True, separators=(",", ":")).encode()
             key += ":page:" + hashlib.sha256(encoded).hexdigest()
         response = self.cache.get(key)

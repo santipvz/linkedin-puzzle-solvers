@@ -100,61 +100,6 @@ test('builds the Tango page board from presets as the cells show them', () => {
   assert.equal(tangoBoardFromPuzzle(missing), null);
 });
 
-test('Tango with a page board makes one API call instead of searching crops', async () => {
-  const context = vm.createContext({ chrome: { runtime: { onMessage: { addListener() {} } } } });
-  for (const file of ['puzzle_registry.js', 'api_config.js', 'page_puzzle.js', 'background.js']) {
-    vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context);
-  }
-  const pageSelection = { x: 25, y: 30, width: 350, height: 350, devicePixelRatio: 1 };
-  context.tabsGet = async () => ({ windowId: 1 });
-  context.captureVisibleTab = async () => '';
-  context.cropCapturedImage = async () => ({});
-  context.readPagePuzzle = async () => ({ kind: 'lotkaGamePuzzle', puzzle: TANGO_PUZZLE.lotkaGamePuzzle,
-    cellMarks: Object.fromEntries(Object.entries(TANGO_MARKS).map(([cell, mark]) => [cell, [mark]])), selection: pageSelection });
-  const calls = [];
-  context.callSolverApi = async (_base, puzzle, _image, value) => { calls.push({ puzzle, value }); return { solved: true, details: {} }; };
-  context.solveTangoWithCandidateSearch = async () => { throw new Error('crop search should not run'); };
-  const solved = await context.solveBoardCore({ tabId: 1, puzzleType: 'tango', apiBaseUrl: 'http://localhost',
-    selection: { x: 0, y: 0, width: 400, height: 400, devicePixelRatio: 1 } });
-  assert.equal(calls.length, 1);
-  assert.deepEqual(JSON.parse(JSON.stringify(calls[0].value.parsedBoard)), TANGO_FIXTURE);
-  assert.deepEqual(JSON.parse(JSON.stringify(solved.selection)), pageSelection);
-});
-
-test('Zip solves send the page board and use its exact position', async () => {
-  const context = vm.createContext({ chrome: { runtime: { onMessage: { addListener() {} } } } });
-  for (const file of ['puzzle_registry.js', 'api_config.js', 'page_puzzle.js', 'background.js']) {
-    vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context);
-  }
-  const userSelection = { x: 0, y: 0, width: 400, height: 400, devicePixelRatio: 1 };
-  const pageSelection = { x: 25, y: 30, width: 350, height: 350, devicePixelRatio: 1 };
-  context.tabsGet = async () => ({ windowId: 1 });
-  context.captureVisibleTab = async () => '';
-  context.cropCapturedImage = async () => ({});
-  context.readPagePuzzle = async () => ({ kind: 'trailGamePuzzle', puzzle: ZIP_PUZZLE.trailGamePuzzle, selection: pageSelection });
-  let options;
-  context.callSolverApi = async (_base, _puzzle, _image, value) => { options = value; return { solved: true, details: {} }; };
-  const solved = await context.solveBoardCore({ tabId: 1, puzzleType: 'zip', apiBaseUrl: 'http://localhost', selection: userSelection });
-  assert.deepEqual(JSON.parse(JSON.stringify(options.parsedBoard)), ZIP_FIXTURE);
-  assert.deepEqual(JSON.parse(JSON.stringify(solved.selection)), pageSelection);
-});
-
-test('Zip falls back to the image when the page puzzle is unavailable', async () => {
-  const context = vm.createContext({ chrome: { runtime: { onMessage: { addListener() {} } } } });
-  for (const file of ['puzzle_registry.js', 'api_config.js', 'page_puzzle.js', 'background.js']) {
-    vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context);
-  }
-  context.tabsGet = async () => ({ windowId: 1 });
-  context.captureVisibleTab = async () => '';
-  context.cropCapturedImage = async () => ({});
-  context.readPagePuzzle = async () => null;
-  let options;
-  context.callSolverApi = async (_base, _puzzle, _image, value) => { options = value; return { solved: true, details: {} }; };
-  await context.solveBoardCore({ tabId: 1, puzzleType: 'zip', apiBaseUrl: 'http://localhost',
-    selection: { x: 0, y: 0, width: 400, height: 400, devicePixelRatio: 1 } });
-  assert.equal(options.parsedBoard, null);
-});
-
 test('builds the Queens page board from the colour grid', () => {
   const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, '../../games/queen_solver/tests/fixtures/linkedin-2026-11-20.json'), 'utf8'));
   const puzzle = { $case: 'queensGamePuzzle', queensGamePuzzle: { gridSize: 9, solution: [{ row: 0, col: 7 }],
@@ -217,8 +162,8 @@ test('the API upload carries the Zip page board', async () => {
   assert.equal(request.body.get('parsed_board'), null);
 });
 
-// A background context whose page read, API and Tango crop search are all stubbed.
-function backgroundWith({ page, api }) {
+// A background context whose page read, API and Tango crop search are stubbed.
+function backgroundWith({ page, api = () => ({ solved: true, details: {} }) }) {
   const context = vm.createContext({ chrome: { runtime: { onMessage: { addListener() {} } } } });
   for (const file of ['puzzle_registry.js', 'api_config.js', 'page_puzzle.js', 'background.js']) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context);
@@ -226,77 +171,74 @@ function backgroundWith({ page, api }) {
   const calls = [];
   context.tabsGet = async () => ({ windowId: 1 });
   context.captureVisibleTab = async () => '';
-  context.cropCapturedImage = async () => ({});
+  context.cropCapturedImage = async (_url, selection) => ({ selection });
   context.readPagePuzzle = async () => page;
-  context.callSolverApi = async (_base, puzzle, _image, options) => {
-    calls.push({ puzzle, parsedBoard: options.parsedBoard ? JSON.parse(JSON.stringify(options.parsedBoard)) : null });
+  context.callSolverApi = async (_base, puzzle, image, options) => {
+    calls.push({ puzzle, image, parsedBoard: options.parsedBoard ? JSON.parse(JSON.stringify(options.parsedBoard)) : null });
     return api(calls.length, options);
   };
-  context.solveTangoWithCandidateSearch = async () => {
-    calls.push({ puzzle: 'tango', cropSearch: true });
-    return { result: { solved: true, details: {} }, selection: null };
-  };
-  const solve = puzzleType => context.solveBoardCore({ tabId: 1, puzzleType, apiBaseUrl: 'http://localhost',
-    selection: { x: 0, y: 0, width: 400, height: 400, devicePixelRatio: 1 } });
-  return { calls, solve };
+  const userSelection = { x: 0, y: 0, width: 400, height: 400, devicePixelRatio: 1 };
+  const solve = puzzleType => context.solveBoardCore({ tabId: 1, puzzleType, apiBaseUrl: 'http://localhost', selection: userSelection });
+  return { calls, solve, userSelection };
 }
 
 const ZIP_PAGE = { kind: 'trailGamePuzzle', puzzle: ZIP_PUZZLE.trailGamePuzzle, selection: { x: 25, y: 30, width: 350, height: 350, devicePixelRatio: 1 } };
 
-test('a page board that does not solve is retried from the screenshot', async () => {
-  const { calls, solve } = backgroundWith({ page: ZIP_PAGE,
-    api: (n, options) => (options.parsedBoard ? { solved: false, error: 'No valid path.', details: { input_source: 'page' } } : { solved: true, details: {} }) });
-  const { result } = await solve('zip');
-  assert.deepEqual(calls.map(call => call.parsedBoard !== null), [true, false]);
-  assert.equal(result.solved, true);
-  assert.equal(result.details.input_source, 'image');
-  assert.match(result.details.page_fallback_reason, /did not solve: No valid path/);
-});
-
-test('a page board the API rejects is retried from the screenshot', async () => {
-  const { calls, solve } = backgroundWith({ page: ZIP_PAGE, api: (n, options) => {
-    if (options.parsedBoard) throw new Error('Invalid board: Zip walls must be pairs.');
-    return { solved: true, details: {} };
-  } });
-  const { result } = await solve('zip');
-  assert.equal(calls.length, 2);
-  assert.match(result.details.page_fallback_reason, /rejected: Invalid board/);
-});
-
-test('puzzle data in an unexpected format falls back without calling the API twice', async () => {
-  const changed = { kind: 'trailGamePuzzle', puzzle: { gridSize: 7, orderedSequence: [0, 1], walls: [{ cellIdx: 1, direction: 'WallDirection_NORTHEAST' }] }, selection: null };
-  const { calls, solve } = backgroundWith({ page: changed, api: () => ({ solved: true, details: {} }) });
-  const { result } = await solve('zip');
-  assert.deepEqual(calls.map(call => call.parsedBoard), [null]);
-  assert.match(result.details.page_fallback_reason, /unexpected format/);
-});
-
-test('a page board that solves is reported as read from the page', async () => {
-  const { calls, solve } = backgroundWith({ page: ZIP_PAGE, api: () => ({ solved: true, details: {} }) });
+test('Zip is solved from the screenshot with the page board as a reference', async () => {
+  const { calls, solve, userSelection } = backgroundWith({ page: ZIP_PAGE });
   const solved = await solve('zip');
   assert.equal(calls.length, 1);
-  assert.equal(solved.result.details.page_fallback_reason, undefined);
-  assert.deepEqual(JSON.parse(JSON.stringify(solved.selection)), ZIP_PAGE.selection);
+  assert.deepEqual(calls[0].parsedBoard, ZIP_FIXTURE);
+  // The image is the user's capture, and the board position still comes from it.
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[0].image.selection)), userSelection);
+  assert.deepEqual(JSON.parse(JSON.stringify(solved.selection)), userSelection);
 });
 
-test('Tango falls back to its crop search when the page board fails', async () => {
-  const page = { kind: 'lotkaGamePuzzle', puzzle: TANGO_PUZZLE.lotkaGamePuzzle, selection: null,
+test('without the page puzzle the solve is unchanged and the check says why', async () => {
+  const { calls, solve } = backgroundWith({ page: null });
+  const { result } = await solve('zip');
+  assert.equal(calls[0].parsedBoard, null);
+  assert.equal(result.solved, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(result.details.ocr_check)), { matches: null, error: "The game's puzzle data was not found on the page." });
+});
+
+test('page data in an unexpected format is not sent', async () => {
+  const changed = { kind: 'trailGamePuzzle', puzzle: { gridSize: 7, orderedSequence: [0, 1], walls: [{ cellIdx: 1, direction: 'WallDirection_NORTHEAST' }] } };
+  const { calls, solve } = backgroundWith({ page: changed });
+  const { result } = await solve('zip');
+  assert.equal(calls[0].parsedBoard, null);
+  assert.match(result.details.ocr_check.error, /unexpected format/);
+});
+
+test('the API check is passed through untouched', async () => {
+  const ocrCheck = { matches: false, checked: 21, mismatch_count: 1, mismatches: [{ at: 'r1c5 clue', page: 1, ocr: 7 }] };
+  const { solve } = backgroundWith({ page: ZIP_PAGE, api: () => ({ solved: true, details: { ocr_check: ocrCheck } }) });
+  const { result } = await solve('zip');
+  assert.deepEqual(JSON.parse(JSON.stringify(result.details.ocr_check)), ocrCheck);
+});
+
+test('Tango keeps its crop search and sends the reference with every crop', async () => {
+  const page = { kind: 'lotkaGamePuzzle', puzzle: TANGO_PUZZLE.lotkaGamePuzzle,
     cellMarks: Object.fromEntries(Object.entries(TANGO_MARKS).map(([cell, mark]) => [cell, [mark]])) };
-  const { calls, solve } = backgroundWith({ page, api: () => ({ solved: false, error: 'No valid solution found.' }) });
-  const { result } = await solve('tango');
-  assert.equal(calls.length, 2);
-  assert.equal(calls[1].cropSearch, true);
-  assert.equal(result.details.input_source, 'image');
+  const { calls, solve } = backgroundWith({ page, api: () => ({ solved: false, details: {} }) });
+  await solve('tango');
+  assert.ok(calls.length > 1);
+  assert.ok(calls.every(call => call.puzzle === 'tango'));
+  assert.ok(calls.every(call => JSON.stringify(call.parsedBoard) === JSON.stringify(TANGO_FIXTURE)));
 });
 
-test('the page widget says when a board was read from the screenshot', () => {
+test('the page widget reports the OCR check', () => {
   const context = vm.createContext({
     document: { querySelector: () => null },
     window: { self: {}, top: {}, location: { pathname: '/games/zip/' } },
     chrome: { runtime: { onMessage: { addListener() {} } } },
   });
   for (const file of ['puzzle_registry.js', 'content.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context);
-  assert.equal(context.formatPageFallbackNotice({ details: { input_source: 'page' } }), '');
-  assert.equal(context.formatPageFallbackNotice({ details: { page_fallback_reason: 'The game\'s puzzle data was not found on the page.' } }),
-    '\nRead from the screenshot. The game\'s puzzle data was not found on the page.');
+  const format = check => context.formatOcrCheck({ details: { ocr_check: check } });
+  assert.equal(context.formatOcrCheck({ details: {} }), '');
+  assert.equal(format({ matches: true }), '\nOCR check: read the board correctly.');
+  assert.equal(format({ matches: false, mismatch_count: 2, mismatches: [{ at: 'r1c5 clue', page: 1, ocr: 7 }] }),
+    "\nOCR check: 2 differences from the game's board (r1c5 clue: game 1, OCR 7).");
+  assert.equal(format({ matches: null, error: 'The game\'s puzzle data was not found on the page.' }),
+    "\nOCR check unavailable: The game's puzzle data was not found on the page.");
 });

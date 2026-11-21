@@ -51,7 +51,7 @@ def main() -> int:
         # Solve from the image alone and, when a page board is recorded, from that too.
         inputs = [("image", None)] if definition.image_input else []
         if definition.page_board_fixture:
-            inputs.append(("page", (REPO_ROOT / definition.page_board_fixture).read_text(encoding="utf-8")))
+            inputs.append(("with page board", (REPO_ROOT / definition.page_board_fixture).read_text(encoding="utf-8")))
         for source, page_board in inputs:
             start = time.perf_counter()
             with absolute_path.open("rb") as image_file:

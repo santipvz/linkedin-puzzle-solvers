@@ -368,7 +368,7 @@ function isConfidentTangoAttempt(result, score) {
   return details.parse_reliable === true && fixedCount >= 4 && fixedCount <= 24 && constraintCount >= 2 && movesCount > 0;
 }
 
-async function solveTangoWithCandidateSearch({ normalizedSelection, screenshotDataUrl, apiBaseUrl }) {
+async function solveTangoWithCandidateSearch({ normalizedSelection, screenshotDataUrl, apiBaseUrl, referenceBoard = null }) {
   const candidates = buildTangoSelectionCandidates(normalizedSelection);
   if (!candidates.length) {
     throw new Error("Could not build Tango board candidates.");
@@ -383,6 +383,7 @@ async function solveTangoWithCandidateSearch({ normalizedSelection, screenshotDa
     const boardImage = await cropCapturedImage(screenshotDataUrl, candidate);
     const result = await callSolverApi(apiBaseUrl, "tango", boardImage, {
       captureBoardStart: index === 0,
+      parsedBoard: referenceBoard,
     });
     const refinedSelection = candidate;
     const score = tangoAttemptScore(result, refinedSelection, normalizedSelection);
@@ -787,41 +788,27 @@ async function solveBoardCore({ tabId, puzzleType, apiBaseUrl, selection }) {
   let refinedSelection;
   let parsedBoard = null;
 
-  // First try the puzzle the game holds in memory. If it can't be read, or
-  // LinkedIn changed something and it doesn't solve, fall back to the screenshot.
-  let pageFallbackReason = null;
+  // The board is always solved from the screenshot (OCR). When the game's own
+  // puzzle can be read, it travels along so the API can say whether OCR read
+  // the board correctly; it never changes the answer.
+  let referenceBoard = null;
+  let referenceNote = null;
   const buildPageBoard = globalThis.PagePuzzle?.PAGE_BOARD_BUILDERS?.[puzzleType];
   if (buildPageBoard) {
     const page = await readPagePuzzle(tabId, puzzleType);
-    const pageBoard = page ? buildPageBoard(page) : null;
-    if (!page) {
-      pageFallbackReason = "The game's puzzle data was not found on the page.";
-    } else if (!pageBoard) {
-      pageFallbackReason = "The game's puzzle data had an unexpected format.";
-    } else {
-      try {
-        const pageImage = await cropCapturedImage(screenshotDataUrl, normalizeSelection(page.selection) || normalizedSelection);
-        const pageResult = await callSolverApi(apiBaseUrl, puzzleType, pageImage, { captureBoardStart: true, parsedBoard: pageBoard });
-        if (pageResult?.solved) {
-          return {
-            result: pageResult,
-            selection: normalizeSelection(page.selection) || refineSelectionWithBoardBbox(normalizedSelection, pageResult),
-            puzzleType,
-          };
-        }
-        pageFallbackReason = `The board read from the page did not solve: ${pageResult?.error || "no solution"}`;
-      } catch (error) {
-        pageFallbackReason = `The board read from the page was rejected: ${error.message || error}`;
-      }
+    referenceBoard = page ? buildPageBoard(page) : null;
+    if (!referenceBoard) {
+      referenceNote = page ? "The game's puzzle data had an unexpected format." : "The game's puzzle data was not found on the page.";
     }
   }
 
-  // Without page data, Tango tries several crops of the image and keeps the best parse.
+  // Tango tries several crops of the image and keeps the best parse.
   if (puzzleType === "tango") {
     const tangoSolved = await solveTangoWithCandidateSearch({
       normalizedSelection,
       screenshotDataUrl,
       apiBaseUrl,
+      referenceBoard,
     });
     result = tangoSolved.result;
     const tangoSelection = normalizeSelection(tangoSolved.selection) || normalizedSelection;
@@ -854,16 +841,15 @@ async function solveBoardCore({ tabId, puzzleType, apiBaseUrl, selection }) {
     });
     result = await callSolverApi(apiBaseUrl, puzzleType, boardImage, {
       captureBoardStart: true,
-      parsedBoard,
+      parsedBoard: parsedBoard || referenceBoard,
     });
     refinedSelection = refineSelectionWithBoardBbox(normalizedSelection, result);
   }
 
-  // Say which input the answer came from, so a broken page reader is noticed.
-  if (result && typeof result === "object") {
+  // Without a page board there is nothing to check OCR against; say why.
+  if (referenceNote && result && typeof result === "object") {
     const details = result.details && typeof result.details === "object" ? result.details : (result.details = {});
-    if (!details.input_source) details.input_source = parsedBoard ? "page" : "image";
-    if (pageFallbackReason) details.page_fallback_reason = pageFallbackReason;
+    if (!details.ocr_check) details.ocr_check = { matches: null, error: referenceNote };
   }
 
   return {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .errors import InvalidBoard
+from .ocr_check import cell_name
 from .models import JsonDict
 
 
@@ -20,3 +21,12 @@ def validate_sudoku_board(payload: object) -> JsonDict:
     if not any(value for row in board for value in row):
         raise InvalidBoard("Mini Sudoku page data has no preset digits.")
     return {"board": [list(row) for row in board]}
+
+
+def sudoku_board_facts(board: list[list[int]]) -> dict[str, object]:
+    """The preset digits, from either the page board or the OCR parse."""
+    return {f"{cell_name(row, col)} digit": int(value) for row, values in enumerate(board) for col, value in enumerate(values) if value}
+
+
+def sudoku_page_facts(board: JsonDict) -> dict[str, object]:
+    return sudoku_board_facts(board["board"])

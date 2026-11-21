@@ -1,14 +1,9 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
-
-import pytest
 
 from games.sudoku_solver.src.image_parser import MiniSudokuImageParser
 from games.sudoku_solver.src.mini_sudoku_solver import MiniSudokuSolver
-from services.solver_api.app.domain.errors import InvalidBoard
-from services.solver_api.app.domain.sudoku_board import validate_sudoku_board
 from services.solver_api.app.workers.solve_sudoku_worker import solve as solve_sudoku_worker
 
 
@@ -82,43 +77,3 @@ def test_daily_board_capture_preserves_the_frame_and_all_visible_clues() -> None
     assert response["solved"]
     assert response["details"]["unique_solution"]
     assert response["details"]["fixed_count"] == 16
-
-
-PAGE_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "linkedin-2026-11-20.json"
-
-
-def test_worker_solves_a_page_board_without_the_image() -> None:
-    board = json.loads(PAGE_FIXTURE.read_text())
-    response = solve_sudoku_worker(Path("unused.png"), parsed_board=board)
-
-    assert response["solved"], response["error"]
-    assert response["details"]["input_source"] == "page"
-    assert response["details"]["unique_solution"]
-    grid = response["solution_grid"]
-    assert all(sorted(row) == [1, 2, 3, 4, 5, 6] for row in grid)
-    assert all(sorted(column) == [1, 2, 3, 4, 5, 6] for column in zip(*grid))
-    assert all(grid[r][c] == value for r, row in enumerate(board["board"]) for c, value in enumerate(row) if value)
-    assert len(response["moves"]) == 36 - 12
-
-
-def test_page_board_with_several_answers_is_not_applied() -> None:
-    # A single preset digit leaves many valid grids.
-    board = [[1, 0, 0, 0, 0, 0]] + [[0] * 6 for _ in range(5)]
-    response = solve_sudoku_worker(Path("unused.png"), parsed_board={"board": board})
-    assert response["solved"] is False
-    assert "more than one" in response["error"]
-
-
-@pytest.mark.parametrize("payload", [
-    None, {}, {"board": [[0] * 6] * 6},
-    {"board": [[1] * 5] * 6},
-    {"board": [[1] * 6] * 5},
-    {"board": [[7] + [0] * 5] + [[0] * 6] * 5},
-    {"board": [[True] + [0] * 5] + [[0] * 6] * 5},
-    {"board": [[1] + [0] * 5] + [[0] * 6] * 5, "solution": []},
-])
-def test_invalid_page_boards_are_rejected(payload: object) -> None:
-    with pytest.raises(InvalidBoard):
-        validate_sudoku_board(payload)
-    if isinstance(payload, dict):
-        assert solve_sudoku_worker(Path("unused.png"), parsed_board=payload)["solved"] is False
