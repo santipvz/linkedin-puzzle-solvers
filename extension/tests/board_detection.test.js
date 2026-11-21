@@ -17,7 +17,7 @@ test("detects Queens from its section landmark with opaque CSS classes and role 
     window: { self: {}, top: {}, innerWidth: 1487, innerHeight: 692, devicePixelRatio: 1.25 },
     chrome: { runtime: { onMessage: { addListener() {} } } },
   });
-  scripts(context, ["puzzle_registry.js", "content.js"]);
+  scripts(context, ["puzzle_registry.js", "shared.js", "content.js"]);
   assert.deepEqual(JSON.parse(JSON.stringify(context.autoDetectBoardSelection("queens"))),
     { x: 528, y: 97, width: 416, height: 416, devicePixelRatio: 1.25 });
 });
@@ -31,7 +31,7 @@ test("widget refresh tolerates an invalidated extension context after reload", (
       getURL() { throw new Error("Extension context invalidated."); },
     } },
   });
-  scripts(context, ["puzzle_registry.js", "content.js"]);
+  scripts(context, ["puzzle_registry.js", "shared.js", "content.js"]);
   vm.runInContext("quickSolveButton = { style: {}, setAttribute() {} }", context);
 
   assert.doesNotThrow(() => context.updateQuickSolveButtonText());
@@ -56,7 +56,7 @@ function activeWidget() {
     setInterval(callback) { tick = callback; return 7; },
     clearInterval(id) { assert.equal(id, 7); timerCleared = true; },
   });
-  scripts(context, ["puzzle_registry.js", "content.js"]);
+  scripts(context, ["puzzle_registry.js", "shared.js", "content.js"]);
   // The widget already exists when Chrome invalidates an open tab's runtime.
   vm.runInContext(`
     quickSolveWidgetRoot = {};
@@ -137,7 +137,7 @@ test("ordinary solve failures keep the widget available for retry", async () => 
 
 test("explicit board detection bypasses a cached viewport selection", async () => {
   const context = vm.createContext({ chrome: { runtime: { onMessage: { addListener() {} } } } });
-  scripts(context, ["puzzle_registry.js", "api_config.js", "background.js"]);
+  scripts(context, ["puzzle_registry.js", "shared.js", "api_config.js", "background.js"]);
   const selection = { x: 528, y: 97, width: 416, height: 416, devicePixelRatio: 1.25 };
   context.getTopBoardSelection = async () => { throw new Error("Must not reuse a cached fallback"); };
   context.safeSendTabMessage = async () => ({ selection });
@@ -150,7 +150,7 @@ test("explicit board detection bypasses a cached viewport selection", async () =
 
 test('quick solve measures a new board instead of reusing coordinates from another game or scroll', async () => {
   const context = vm.createContext({ chrome: { runtime: { onMessage: { addListener() {} } } } });
-  scripts(context, ['puzzle_registry.js', 'api_config.js', 'background.js']);
+  scripts(context, ['puzzle_registry.js', 'shared.js', 'api_config.js', 'background.js']);
   context.getTopBoardSelection = async () => { throw new Error('Cached coordinates must not be read'); };
   const selection = {x:530,y:150,width:416,height:416,devicePixelRatio:1.25};
   context.safeSendTabMessage = async () => ({selection});
@@ -164,7 +164,7 @@ test('quick solve measures a new board instead of reusing coordinates from anoth
 
 test('a reliable Tango board with six givens and three signs is accepted before searching smaller crops', () => {
   const context = vm.createContext({chrome:{runtime:{onMessage:{addListener(){}}}}});
-  scripts(context,['puzzle_registry.js','api_config.js','background.js']);
+  scripts(context,['puzzle_registry.js','shared.js','api_config.js','background.js']);
   assert.equal(context.isConfidentTangoAttempt({solved:true,moves:[{}],details:{fixed_count:6,constraint_count:3,parse_reliable:true}},4112),true);
   assert.equal(context.isConfidentTangoAttempt({solved:true,moves:[{}],details:{fixed_count:12,constraint_count:9,parse_reliable:false}},9999),false);
 });
@@ -176,7 +176,7 @@ test('preparing a partly scrolled Wend board brings it into view and waits for s
   const context=vm.createContext({document:{querySelector:selector=>selector==='[data-testid="wend-game-board"]'?board:null},
     window:{self:{},top:{},innerWidth:400,innerHeight:400,devicePixelRatio:1},
     chrome:{runtime:{onMessage:{addListener(){}}}}});
-  scripts(context,['puzzle_registry.js','content.js']);context.sleep=async()=>{};
+  scripts(context,['puzzle_registry.js','shared.js','content.js']);context.sleep=async()=>{};
   const selection=await context.prepareBoardCapture('wend');
   assert.equal(scrolled,true);assert.equal(selection.y,40);assert.equal(selection.height,300);
 });
@@ -191,7 +191,7 @@ function sudokuCapture({top=40, left=40, frame=true}={}) {
   const context=vm.createContext({document:{querySelector:selector=>selector==='.sudoku-grid'?grid:null},
     window:{self:{},top:{},innerWidth:400,innerHeight:400,devicePixelRatio:1.25},
     chrome:{runtime:{onMessage:{addListener(){}}}}});
-  scripts(context,['puzzle_registry.js','content.js']);context.sleep=async()=>{};
+  scripts(context,['puzzle_registry.js','shared.js','content.js']);context.sleep=async()=>{};
   return {context,get scrolled(){return scrolled;}};
 }
 

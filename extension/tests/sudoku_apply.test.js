@@ -109,7 +109,7 @@ function createGame(options = {}) {
     MouseEvent: class { constructor(type, data) { this.type = type; Object.assign(this, data); } },
     KeyboardEvent: class { constructor(type, data) { this.type = type; Object.assign(this, data); } },
   });
-  for (const file of ["puzzle_registry.js", "content.js"]) {
+  for (const file of ["puzzle_registry.js", "shared.js", "content.js"]) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, "..", file), "utf8"), context);
   }
   context.sleep = async (ms) => {
@@ -253,7 +253,7 @@ test("does not accept a victory receipt before the other 35 values are verified"
 
 function createBackground() {
   const context = vm.createContext({ chrome: { runtime: { onMessage: { addListener() {} } } } });
-  for (const file of ["puzzle_registry.js", "api_config.js", "background.js"]) {
+  for (const file of ["puzzle_registry.js", "shared.js", "api_config.js", "background.js"]) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, "..", file), "utf8"), context);
   }
   context.buildApplyTargets = async () => [{ frameId: 1, selection: {} }, { frameId: 2, selection: {} }];

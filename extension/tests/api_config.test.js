@@ -30,7 +30,7 @@ async function popup(storage) {
       set(values, callback) { Object.assign(storage, values); callback(); },
     } } },
   });
-  for (const file of ["api_config.js", "popup.js"])
+  for (const file of ["shared.js", "api_config.js", "popup.js"])
     vm.runInContext(fs.readFileSync(path.join(__dirname, "..", file), "utf8"), context);
   await new Promise(setImmediate);
   elements.context = context;
@@ -71,7 +71,7 @@ function transport(oversized = false) {
       return { ok: true, text: async () => '{"solved":true}' };
     },
   });
-  for (const file of ["puzzle_registry.js", "api_config.js", "background.js"])
+  for (const file of ["puzzle_registry.js", "shared.js", "api_config.js", "background.js"])
     vm.runInContext(fs.readFileSync(path.join(__dirname, "..", file), "utf8"), context);
   return { context, calls };
 }
