@@ -9,8 +9,6 @@ const STORAGE_INTER_CLICK_DELAY_KEY = "solver_inter_click_delay_ms";
 const STORAGE_MOVE_INTERVAL_KEY = "solver_move_interval_ms";
 
 const DEFAULT_AUTO_CLOSE_AFTER_APPLY = true;
-const DEFAULT_INTER_CLICK_DELAY_MS = 45;
-const DEFAULT_MOVE_INTERVAL_MS = 100;
 const puzzleTypeSelect = document.getElementById("puzzleType");
 const apiUrlInput = document.getElementById("apiUrl");
 const apiModeSelect = document.getElementById("apiMode");
@@ -96,19 +94,6 @@ function populatePuzzleTypeOptions() {
   }
 }
 
-function storageGet(keys) {
-  return new Promise((resolve, reject) => {
-    chrome.storage.local.get(keys, (items) => {
-      const error = chrome.runtime.lastError;
-      if (error) {
-        reject(new Error(error.message));
-        return;
-      }
-      resolve(items);
-    });
-  });
-}
-
 function storageSet(items) {
   return new Promise((resolve, reject) => {
     chrome.storage.local.set(items, () => {
@@ -135,59 +120,6 @@ function tabsQuery(queryInfo) {
   });
 }
 
-function sendTabMessage(tabId, message, options = {}) {
-  return new Promise((resolve, reject) => {
-    chrome.tabs.sendMessage(tabId, message, options, (response) => {
-      const error = chrome.runtime.lastError;
-      if (error) {
-        reject(new Error(error.message));
-        return;
-      }
-      resolve(response);
-    });
-  });
-}
-
-function executeContentScript(tabId, frameId = 0) {
-  return new Promise((resolve, reject) => {
-    const target = Number.isInteger(frameId) ? { tabId, frameIds: [frameId] } : { tabId };
-
-    chrome.scripting.executeScript(
-      {
-        target,
-        files: ["puzzle_registry.js", "wend_paths.js", "content.js"],
-      },
-      () => {
-        const error = chrome.runtime.lastError;
-        if (error) {
-          reject(new Error(error.message));
-          return;
-        }
-        resolve();
-      }
-    );
-  });
-}
-
-function isNoReceiverError(error) {
-  const message = error && error.message ? error.message : "";
-  return message.includes("Receiving end does not exist");
-}
-
-async function sendTabMessageWithInjection(tabId, message, options = {}) {
-  try {
-    return await sendTabMessage(tabId, message, options);
-  } catch (error) {
-    if (!isNoReceiverError(error)) {
-      throw error;
-    }
-
-    const frameId = Number.isInteger(options.frameId) ? options.frameId : 0;
-    await executeContentScript(tabId, frameId);
-    return sendTabMessage(tabId, message, options);
-  }
-}
-
 function sendRuntimeMessage(message) {
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage(message, (response) => {
@@ -199,34 +131,6 @@ function sendRuntimeMessage(message) {
       resolve(response);
     });
   });
-}
-
-function normalizeSelection(selection) {
-  if (!selection || typeof selection !== "object") {
-    return null;
-  }
-
-  const x = Number(selection.x);
-  const y = Number(selection.y);
-  const width = Number(selection.width);
-  const height = Number(selection.height);
-  const dpr = Number(selection.devicePixelRatio) || 1;
-
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height)) {
-    return null;
-  }
-
-  if (width < 10 || height < 10) {
-    return null;
-  }
-
-  return {
-    x,
-    y,
-    width,
-    height,
-    devicePixelRatio: dpr,
-  };
 }
 
 async function getActiveTab() {
@@ -307,14 +211,6 @@ function summarizeResult(puzzleType, result) {
   }
 
   return lines.join("\n");
-}
-
-function normalizeDelay(value, fallback) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-  return Math.max(0, Math.min(500, Math.round(parsed)));
 }
 
 function getApplySettingsFromUi() {

@@ -11,7 +11,7 @@ function game({accept = true, partial = false} = {}) {
   const board={querySelector:selector=>cells[Number(selector.match(/"(\d+)"/)[1])]};
   const context=vm.createContext({document:{querySelector:()=>board},window:{self:{},top:{},innerWidth:400,innerHeight:400,location:{pathname:'/games/wend/'}},
     chrome:{runtime:{onMessage:{addListener(){}}}}});
-  for(const file of ['puzzle_registry.js','wend_paths.js','content.js']) vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),context);
+  for(const file of ['puzzle_registry.js','shared.js','wend_paths.js','content.js']) vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),context);
   let drags=0,points;
   context.sleep=async()=>{};
   context.dragViewportPath=async value=>{drags++;points=JSON.parse(JSON.stringify(value));if(accept)[0,1,2].forEach(i=>locked.add(i));return true;};
@@ -42,7 +42,7 @@ function pageGame() {
   const context=vm.createContext({document:{querySelector:()=>root,querySelectorAll:()=>rows},
     window:{self:{},top:{},innerWidth:400,innerHeight:400,devicePixelRatio:1},
     chrome:{runtime:{onMessage:{addListener(){}}}}});
-  for(const file of ['puzzle_registry.js','content.js']) vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),context);
+  for(const file of ['puzzle_registry.js','shared.js','content.js']) vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),context);
   return {context,cells,rows,board};
 }
 
@@ -67,7 +67,7 @@ test('Wend falls back to the image for incomplete, duplicate or unreadable page 
 
 test('Wend only sends page data when its live geometry matches the captured board',async()=>{
   const context=vm.createContext({chrome:{runtime:{onMessage:{addListener(){}}}}});
-  for(const file of ['puzzle_registry.js','api_config.js','background.js']) vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),context);
+  for(const file of ['puzzle_registry.js','shared.js','api_config.js','background.js']) vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),context);
   const selection={x:20,y:40,width:300,height:300,devicePixelRatio:1};
   context.tabsGet=async()=>({windowId:1});context.captureVisibleTab=async()=>'';
   context.cropCapturedImage=async()=>({});context.getGameFrameContext=async()=>({gameFrameId:0});
@@ -84,7 +84,7 @@ test('the API upload includes page data only when given and preserves the image 
   let request;
   const context=vm.createContext({Blob,FormData,chrome:{runtime:{onMessage:{addListener(){}}}},
     fetch:async(url,options)=>{request={url,...options};return {ok:true,text:async()=>'{"solved":true}'};}});
-  for(const file of ['puzzle_registry.js','api_config.js','background.js']) vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),context);
+  for(const file of ['puzzle_registry.js','shared.js','api_config.js','background.js']) vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),context);
   const board={board:[['A']],lengths:[1]}, image=new Blob(['image'],{type:'image/png'});
   await context.callSolverApi('http://127.0.0.1:18000','wend',image,{parsedBoard:board,captureBoardStart:true});
   assert.equal(request.url,'http://127.0.0.1:18000/solve/wend');

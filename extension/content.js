@@ -398,88 +398,6 @@ function initializeQuickSolveWidget() {
   }, 1200);
 }
 
-function normalizeSelection(selection) {
-  if (!selection) {
-    return null;
-  }
-
-  const x = Number(selection.x);
-  const y = Number(selection.y);
-  const width = Number(selection.width);
-  const height = Number(selection.height);
-  const dpr = Number(selection.devicePixelRatio) || window.devicePixelRatio || 1;
-
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height)) {
-    return null;
-  }
-
-  if (width < 10 || height < 10) {
-    return null;
-  }
-
-  return { x, y, width, height, devicePixelRatio: dpr };
-}
-
-function getBoardBboxFromResult(result) {
-  const details = result && typeof result === "object" ? result.details : null;
-  const bbox = details && typeof details === "object" ? details.board_bbox || details.crop_bbox || null : null;
-  if (!bbox || typeof bbox !== "object") {
-    return null;
-  }
-
-  const x = Number(bbox.x);
-  const y = Number(bbox.y);
-  const width = Number(bbox.width);
-  const height = Number(bbox.height);
-
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height)) {
-    return null;
-  }
-
-  if (width < 20 || height < 20) {
-    return null;
-  }
-
-  return { x, y, width, height };
-}
-
-function refineSelectionWithBoardBbox(selection, result) {
-  const normalized = normalizeSelection(selection);
-  const boardBbox = getBoardBboxFromResult(result);
-  if (!normalized || !boardBbox) {
-    return normalized;
-  }
-
-  const dpr = normalized.devicePixelRatio || 1;
-  const selectionPixelWidth = normalized.width * dpr;
-  const selectionPixelHeight = normalized.height * dpr;
-
-  if (selectionPixelWidth <= 0 || selectionPixelHeight <= 0) {
-    return normalized;
-  }
-
-  const bboxWidthRatio = boardBbox.width / selectionPixelWidth;
-  const bboxHeightRatio = boardBbox.height / selectionPixelHeight;
-  if (bboxWidthRatio >= 0.92 && bboxHeightRatio >= 0.92) {
-    return normalized;
-  }
-
-  const maxX = normalized.x + normalized.width - 10;
-  const maxY = normalized.y + normalized.height - 10;
-  const refinedX = Math.max(normalized.x, Math.min(maxX, normalized.x + boardBbox.x / dpr));
-  const refinedY = Math.max(normalized.y, Math.min(maxY, normalized.y + boardBbox.y / dpr));
-  const remainingWidth = normalized.x + normalized.width - refinedX;
-  const remainingHeight = normalized.y + normalized.height - refinedY;
-
-  return normalizeSelection({
-    x: refinedX,
-    y: refinedY,
-    width: Math.max(10, Math.min(boardBbox.width / dpr, remainingWidth)),
-    height: Math.max(10, Math.min(boardBbox.height / dpr, remainingHeight)),
-    devicePixelRatio: normalized.devicePixelRatio,
-  });
-}
-
 function refineTangoSelection(selection, result) {
   // Solver image coordinates are translated once in the background. Native
   // cells also keep apply aligned after a layout change or a scroll.
@@ -1512,13 +1430,9 @@ function waitForDomToSettle(element, maxMs, quietMs = 30) {
 }
 
 const DEFAULT_QUEENS_CLICKS_PER_MOVE = 2;
-const DEFAULT_INTER_CLICK_DELAY_MS = 45;
-const DEFAULT_MOVE_INTERVAL_MS = 100;
 const DEFAULT_TANGO_APPLY_MODE = "left-cycle";
 const TANGO_SUN_LEFT_CLICKS = 1;
 const TANGO_MOON_LEFT_CLICKS = 2;
-const MIN_DELAY_MS = 0;
-const MAX_DELAY_MS = 500;
 
 function leftClickViewportPoint(x, y) {
   return clickViewportPoint(x, y, 0);
@@ -1814,14 +1728,6 @@ function dispatchArrowKey(direction) {
     return dispatchKeyboardKey("ArrowRight", "ArrowRight", 39, { includeKeypress: false });
   }
   return false;
-}
-
-function normalizeDelay(value, fallback) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-  return Math.max(MIN_DELAY_MS, Math.min(MAX_DELAY_MS, Math.round(parsed)));
 }
 
 function normalizeApplySettings(settings) {

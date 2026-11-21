@@ -1,10 +1,8 @@
 if (typeof importScripts === "function") {
-  importScripts("puzzle_registry.js", "api_config.js", "page_puzzle.js");
+  importScripts("puzzle_registry.js", "shared.js", "api_config.js", "page_puzzle.js");
 }
 
 const DEFAULT_API_BASE = globalThis.SolverApiConfig.defaultUrl;
-const DEFAULT_INTER_CLICK_DELAY_MS = 45;
-const DEFAULT_MOVE_INTERVAL_MS = 100;
 const DEFAULT_TANGO_APPLY_MODE = "left-cycle";
 
 const STORAGE_API_KEY = "solver_api_url";
@@ -33,28 +31,6 @@ function normalizeApiBase(value) {
   }
 
   return value.trim().replace(/\/+$/, "") || DEFAULT_API_BASE;
-}
-
-function normalizeSelection(selection) {
-  if (!selection || typeof selection !== "object") {
-    return null;
-  }
-
-  const x = Number(selection.x);
-  const y = Number(selection.y);
-  const width = Number(selection.width);
-  const height = Number(selection.height);
-  const dpr = Number(selection.devicePixelRatio) || 1;
-
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height)) {
-    return null;
-  }
-
-  if (width < 10 || height < 10) {
-    return null;
-  }
-
-  return { x, y, width, height, devicePixelRatio: dpr };
 }
 
 function normalizeRect(rect) {
@@ -166,77 +142,6 @@ function translateTabSelectionToFrame(tabSelection, iframeRect, frameViewport) {
     width: Math.min(selection.width / scaleX, maxWidth),
     height: Math.min(selection.height / scaleY, maxHeight),
     devicePixelRatio: selection.devicePixelRatio,
-  });
-}
-
-function getBoardBboxFromResult(result) {
-  const details = result && typeof result === "object" ? result.details : null;
-  const bbox =
-    details && typeof details === "object"
-      ? details.board_bbox || details.crop_bbox || null
-      : null;
-  if (!bbox || typeof bbox !== "object") {
-    return null;
-  }
-
-  const x = Number(bbox.x);
-  const y = Number(bbox.y);
-  const width = Number(bbox.width);
-  const height = Number(bbox.height);
-
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height)) {
-    return null;
-  }
-
-  if (width < 20 || height < 20) {
-    return null;
-  }
-
-  return { x, y, width, height };
-}
-
-function refineSelectionWithBoardBbox(selection, result) {
-  const normalized = normalizeSelection(selection);
-  const boardBbox = getBoardBboxFromResult(result);
-  if (!normalized || !boardBbox) {
-    return normalized;
-  }
-
-  const dpr = normalized.devicePixelRatio || 1;
-  const selectionPixelWidth = normalized.width * dpr;
-  const selectionPixelHeight = normalized.height * dpr;
-
-  if (selectionPixelWidth <= 0 || selectionPixelHeight <= 0) {
-    return normalized;
-  }
-
-  const bboxWidthRatio = boardBbox.width / selectionPixelWidth;
-  const bboxHeightRatio = boardBbox.height / selectionPixelHeight;
-  const bboxAlreadyCoversSelection = bboxWidthRatio >= 0.92 && bboxHeightRatio >= 0.92;
-  if (bboxAlreadyCoversSelection) {
-    return normalized;
-  }
-
-  const offsetX = boardBbox.x / dpr;
-  const offsetY = boardBbox.y / dpr;
-  const refinedWidth = boardBbox.width / dpr;
-  const refinedHeight = boardBbox.height / dpr;
-
-  const maxX = normalized.x + normalized.width - 10;
-  const maxY = normalized.y + normalized.height - 10;
-
-  const refinedX = Math.max(normalized.x, Math.min(maxX, normalized.x + offsetX));
-  const refinedY = Math.max(normalized.y, Math.min(maxY, normalized.y + offsetY));
-
-  const remainingWidth = normalized.x + normalized.width - refinedX;
-  const remainingHeight = normalized.y + normalized.height - refinedY;
-
-  return normalizeSelection({
-    x: refinedX,
-    y: refinedY,
-    width: Math.max(10, Math.min(refinedWidth, remainingWidth)),
-    height: Math.max(10, Math.min(refinedHeight, remainingHeight)),
-    devicePixelRatio: normalized.devicePixelRatio,
   });
 }
 
@@ -440,15 +345,6 @@ async function solveTangoWithCandidateSearch({ normalizedSelection, screenshotDa
   };
 }
 
-function normalizeDelay(value, fallback) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-
-  return Math.max(0, Math.min(500, Math.round(parsed)));
-}
-
 function normalizeTangoApplyMode(value) {
   return value === "right-moon" ? "right-moon" : "left-cycle";
 }
@@ -463,74 +359,6 @@ function tabsGet(tabId) {
       }
       resolve(tab);
     });
-  });
-}
-
-function tabsSendMessage(tabId, message, options = {}) {
-  return new Promise((resolve, reject) => {
-    chrome.tabs.sendMessage(tabId, message, options, (response) => {
-      const error = chrome.runtime.lastError;
-      if (error) {
-        reject(new Error(error.message));
-        return;
-      }
-      resolve(response);
-    });
-  });
-}
-
-function executeContentScript(tabId, frameId = 0) {
-  return new Promise((resolve, reject) => {
-    if (chrome.scripting && typeof chrome.scripting.executeScript === "function") {
-      const target = Number.isInteger(frameId) ? { tabId, frameIds: [frameId] } : { tabId };
-
-      chrome.scripting.executeScript(
-        {
-          target,
-          files: ["puzzle_registry.js", "wend_paths.js", "content.js"],
-        },
-        () => {
-          const error = chrome.runtime.lastError;
-          if (error) {
-            reject(new Error(error.message));
-            return;
-          }
-          resolve();
-        }
-      );
-      return;
-    }
-
-    if (chrome.tabs && typeof chrome.tabs.executeScript === "function") {
-      const sharedDetails = Number.isInteger(frameId) ? { frameId, runAt: "document_idle" } : { runAt: "document_idle" };
-
-      chrome.tabs.executeScript(tabId, { ...sharedDetails, file: "puzzle_registry.js" }, () => {
-        const error = chrome.runtime.lastError;
-        if (error) {
-          reject(new Error(error.message));
-          return;
-        }
-
-        chrome.tabs.executeScript(tabId, { ...sharedDetails, file: "wend_paths.js" }, () => {
-          const secondError = chrome.runtime.lastError;
-          if (secondError) {
-            reject(new Error(secondError.message));
-            return;
-          }
-          chrome.tabs.executeScript(tabId, { ...sharedDetails, file: "content.js" }, () => {
-            const thirdError = chrome.runtime.lastError;
-            if (thirdError) {
-              reject(new Error(thirdError.message));
-              return;
-            }
-            resolve();
-          });
-        });
-      });
-      return;
-    }
-
-    reject(new Error("No supported script injection API available in this browser."));
   });
 }
 
@@ -567,25 +395,6 @@ async function readPagePuzzle(tabId, puzzleType) {
   return null;
 }
 
-function isNoReceiverError(error) {
-  const message = error && error.message ? error.message : "";
-  return message.includes("Receiving end does not exist");
-}
-
-async function sendTabMessageWithInjection(tabId, message, options = {}) {
-  try {
-    return await tabsSendMessage(tabId, message, options);
-  } catch (error) {
-    if (!isNoReceiverError(error)) {
-      throw error;
-    }
-
-    const frameId = Number.isInteger(options.frameId) ? options.frameId : 0;
-    await executeContentScript(tabId, frameId);
-    return tabsSendMessage(tabId, message, options);
-  }
-}
-
 async function safeSendTabMessage(tabId, message, options = {}) {
   try {
     const response = await sendTabMessageWithInjection(tabId, message, options);
@@ -610,19 +419,6 @@ function webNavigationGetAllFrames(tabId) {
         return;
       }
       resolve(Array.isArray(frames) ? frames : []);
-    });
-  });
-}
-
-function storageGet(keys) {
-  return new Promise((resolve, reject) => {
-    chrome.storage.local.get(keys, (items) => {
-      const error = chrome.runtime.lastError;
-      if (error) {
-        reject(new Error(error.message));
-        return;
-      }
-      resolve(items);
     });
   });
 }
@@ -722,20 +518,7 @@ async function callSolverApi(apiBaseUrl, puzzleType, imageBlob, options = {}) {
       throw new Error("Board image is too large for the online service. Select a smaller area or use a local API.");
     }
   }
-  const safePuzzleType =
-    puzzleType === "tango"
-      ? "tango"
-      : puzzleType === "sudoku"
-      ? "sudoku"
-      : puzzleType === "zip"
-      ? "zip"
-      : puzzleType === "patches"
-      ? "patches"
-      : puzzleType === "wend"
-      ? "wend"
-      : puzzleType === "sumbreak"
-      ? "sumbreak"
-      : "queens";
+  const safePuzzleType = sanitizePuzzleType(puzzleType) || "queens";
   const endpoint = `${normalizeApiBase(apiBaseUrl)}/solve/${safePuzzleType}`;
 
   const formData = new FormData();
@@ -855,20 +638,7 @@ async function solveBoardCore({ tabId, puzzleType, apiBaseUrl, selection }) {
   return {
     result,
     selection: refinedSelection,
-    puzzleType:
-    puzzleType === "tango"
-      ? "tango"
-      : puzzleType === "sudoku"
-      ? "sudoku"
-      : puzzleType === "zip"
-      ? "zip"
-      : puzzleType === "patches"
-      ? "patches"
-      : puzzleType === "wend"
-      ? "wend"
-      : puzzleType === "sumbreak"
-      ? "sumbreak"
-      : "queens",
+    puzzleType: sanitizePuzzleType(puzzleType) || "queens",
   };
 }
 

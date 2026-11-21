@@ -152,7 +152,7 @@ test('the API upload carries the Zip page board', async () => {
   let request;
   const context = vm.createContext({ Blob, FormData, chrome: { runtime: { onMessage: { addListener() {} } } },
     fetch: async (url, options) => { request = { url, ...options }; return { ok: true, text: async () => '{"solved":true}', headers: { get: () => null } }; } });
-  for (const file of ['puzzle_registry.js', 'api_config.js', 'page_puzzle.js', 'background.js']) {
+  for (const file of ['puzzle_registry.js', 'shared.js', 'api_config.js', 'page_puzzle.js', 'background.js']) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context);
   }
   await context.callSolverApi('http://127.0.0.1:18000', 'zip', new Blob(['image'], { type: 'image/png' }), { parsedBoard: ZIP_FIXTURE });
@@ -165,7 +165,7 @@ test('the API upload carries the Zip page board', async () => {
 // A background context whose page read, API and Tango crop search are stubbed.
 function backgroundWith({ page, api = () => ({ solved: true, details: {} }) }) {
   const context = vm.createContext({ chrome: { runtime: { onMessage: { addListener() {} } } } });
-  for (const file of ['puzzle_registry.js', 'api_config.js', 'page_puzzle.js', 'background.js']) {
+  for (const file of ['puzzle_registry.js', 'shared.js', 'api_config.js', 'page_puzzle.js', 'background.js']) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context);
   }
   const calls = [];
@@ -233,7 +233,7 @@ test('the page widget reports the OCR check', () => {
     window: { self: {}, top: {}, location: { pathname: '/games/zip/' } },
     chrome: { runtime: { onMessage: { addListener() {} } } },
   });
-  for (const file of ['puzzle_registry.js', 'content.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context);
+  for (const file of ['puzzle_registry.js', 'shared.js', 'content.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context);
   const format = check => context.formatOcrCheck({ details: { ocr_check: check } });
   assert.equal(context.formatOcrCheck({ details: {} }), '');
   assert.equal(format({ matches: true }), '\nOCR check: read the board correctly.');

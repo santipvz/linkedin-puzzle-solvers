@@ -79,7 +79,7 @@ function sumbreakGame(initial, { acceptMerges = true, svgLabels = true, animatio
     window: { self: {}, top: {}, innerWidth: 800, innerHeight: 800, devicePixelRatio: 1, location: { pathname: '/games/sumbreak/' } },
     chrome: { runtime: { onMessage: { addListener() {} } } },
   });
-  for (const file of ['puzzle_registry.js', 'content.js']) {
+  for (const file of ['puzzle_registry.js', 'shared.js', 'content.js']) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context);
   }
   context.sleep = async () => {};
@@ -199,7 +199,7 @@ test('the API upload includes Sumbreak page data', async () => {
   let request;
   const context = vm.createContext({ Blob, FormData, chrome: { runtime: { onMessage: { addListener() {} } } },
     fetch: async (url, options) => { request = { url, ...options }; return { ok: true, text: async () => '{"solved":true}' }; } });
-  for (const file of ['puzzle_registry.js', 'api_config.js', 'background.js']) {
+  for (const file of ['puzzle_registry.js', 'shared.js', 'api_config.js', 'background.js']) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context);
   }
   const board = { board: TODAY };
@@ -210,7 +210,7 @@ test('the API upload includes Sumbreak page data', async () => {
 
 test('Sumbreak asks the page for its board and sends only the board values', async () => {
   const context = vm.createContext({ chrome: { runtime: { onMessage: { addListener() {} } } } });
-  for (const file of ['puzzle_registry.js', 'api_config.js', 'background.js']) {
+  for (const file of ['puzzle_registry.js', 'shared.js', 'api_config.js', 'background.js']) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context);
   }
   const selection = { x: 20, y: 40, width: 300, height: 300, devicePixelRatio: 1 };

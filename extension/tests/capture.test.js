@@ -10,7 +10,7 @@ function background() {
     runtime: {onMessage: {addListener() {}}},
     tabs: {captureVisibleTab(windowId, options, callback) {calls.push({windowId, options}); callback('image');}},
   }});
-  for (const file of ['puzzle_registry.js', 'api_config.js', 'background.js'])
+  for (const file of ['puzzle_registry.js', 'shared.js', 'api_config.js', 'background.js'])
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context);
   return {context, calls};
 }
