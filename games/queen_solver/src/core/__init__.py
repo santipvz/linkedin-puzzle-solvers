@@ -1,1 +1,1 @@
-"""Core module containing the main Queen Solver class and interfaces."""
+"""Data models shared by the Queens vision, solver and visualizer."""

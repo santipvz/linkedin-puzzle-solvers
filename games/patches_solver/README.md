@@ -27,6 +27,7 @@ With page data, the worker never relaxes square clues, since that fallback only 
   - `wide`: width > height
   - `tall`: height > width
   - `any`: no aspect restriction
+- No region is a single cell. LinkedIn's own rectangle enumerator skips 1x1, so neither does the solver.
 
 ## Local run
 

@@ -55,6 +55,14 @@ class PatchesSolverTests(unittest.TestCase):
         self.assertFalse(result.solution_count_is_exact)
         self.assertEqual(4, sum(region.area for region in result.regions or []))
 
+    def test_regions_are_never_a_single_cell(self) -> None:
+        # A one-cell region would tile this 3x3 board as 1x1 + 2x1 + 2x3; LinkedIn never allows it.
+        clues = [PatchesClue(row=0, col=0, area=1), PatchesClue(row=0, col=1), PatchesClue(row=1, col=1)]
+        self.assertFalse(PatchesSolver().solve(board_size=3, clues=clues).solved)
+        # The same board with a two-cell first region has a tiling.
+        clues[0] = PatchesClue(row=0, col=0)
+        self.assertTrue(PatchesSolver().solve(board_size=3, clues=clues).solved)
+
     def test_rejects_invalid_solution_limits(self) -> None:
         for limit in (0, -1, True, 1.5):
             with self.subTest(limit=limit), self.assertRaises(ValueError):

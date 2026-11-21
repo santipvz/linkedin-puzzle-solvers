@@ -37,17 +37,21 @@ def test_representative_image_board(filename: str) -> None:
     assert solved
 
 
-def test_prevalidation_allows_single_cell_column_mix() -> None:
-    solver = BacktrackingQueensSolver()
+def test_single_cell_regions_next_to_small_regions_are_not_rejected_up_front() -> None:
+    # An earlier heuristic rejected boards mixing a one-cell region with small ones in a column.
     color = np.array([0, 0, 0], dtype=np.uint8)
-    regions = {
-        1: Region(id=1, positions=[(0, 0)], color=color, size=0),
-        2: Region(id=2, positions=[(1, 0), (1, 1)], color=color, size=0),
-        3: Region(id=3, positions=[(2, 2), (2, 3)], color=color, size=0),
-        4: Region(id=4, positions=[(3, 2), (3, 3)], color=color, size=0),
+    cells = {
+        1: [(0, 1)],
+        2: [(0, 0), (0, 2), (0, 3), (1, 0), (1, 1), (1, 2), (1, 3)],
+        3: [(2, 0), (2, 1), (2, 2), (2, 3), (3, 0), (3, 1)],
+        4: [(3, 2), (3, 3)],
     }
+    regions = {key: Region(id=key, positions=value, color=color, size=0) for key, value in cells.items()}
 
-    assert solver._pre_validate_solvability(4, regions)
+    result = BacktrackingQueensSolver().solve(4, regions)
+
+    assert result.success and result.validation_passed
+    assert [int(col) for col in result.solution.argmax(axis=1)] == [1, 3, 0, 2]
 
 
 PAGE_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "linkedin-2026-11-20.json"
