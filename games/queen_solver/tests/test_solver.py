@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -52,40 +51,3 @@ def test_single_cell_regions_next_to_small_regions_are_not_rejected_up_front() -
 
     assert result.success and result.validation_passed
     assert [int(col) for col in result.solution.argmax(axis=1)] == [1, 3, 0, 2]
-
-
-PAGE_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "linkedin-2026-11-20.json"
-# LinkedIn's own answer for the 2026-11-20 puzzle: the queen's column in each row.
-OFFICIAL_2026_11_20 = [7, 3, 8, 6, 4, 1, 5, 2, 0]
-
-
-def test_worker_solves_a_page_board_without_the_image() -> None:
-    from services.solver_api.app.workers.solve_queens_worker import solve as solve_queens_worker
-
-    board = json.loads(PAGE_FIXTURE.read_text())
-    response = solve_queens_worker(Path("unused.png"), parsed_board=board)
-
-    assert response["solved"], response["error"]
-    assert response["details"]["input_source"] == "page"
-    assert [move["col"] for move in sorted(response["moves"], key=lambda move: move["row"])] == OFFICIAL_2026_11_20
-
-
-@pytest.mark.parametrize("payload", [
-    None, {}, {"size": 4},
-    {"size": 3, "regions": [[0, 1, 2]] * 3},
-    {"size": 4, "regions": [[0, 1, 2, 3]] * 3},
-    {"size": 4, "regions": [[0, 1, 2, 3]] * 3 + [[0, 1, 2]]},
-    {"size": 4, "regions": [[0, 1, 2, 2]] * 4},
-    {"size": 4, "regions": [[0, 1, 2, -1]] * 4},
-    {"size": 4, "regions": [[0, 1, 2, True]] * 4},
-    {"size": 4, "regions": [[0, 1, 2, 3]] * 4, "solution": []},
-])
-def test_invalid_page_boards_are_rejected(payload: object) -> None:
-    from services.solver_api.app.domain.errors import InvalidBoard
-    from services.solver_api.app.domain.queens_board import validate_queens_board
-    from services.solver_api.app.workers.solve_queens_worker import solve as solve_queens_worker
-
-    with pytest.raises(InvalidBoard):
-        validate_queens_board(payload)
-    if isinstance(payload, dict):
-        assert solve_queens_worker(Path("unused.png"), parsed_board=payload)["solved"] is False

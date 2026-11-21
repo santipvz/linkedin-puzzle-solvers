@@ -308,48 +308,12 @@ def _recover_duplicate_clues(
     return best_payload[1], best_payload[2]
 
 
-def _solve_page_board(parsed_board: JsonDict, solver: object) -> JsonDict:
-    """Solve a Zip puzzle read from the page: no image or OCR involved."""
-    from services.solver_api.app.domain.zip_board import validate_zip_board, zip_solver_input
+def _ocr_check(parsed_board: JsonDict, clues: dict[tuple[int, int], int], parsed: JsonDict) -> JsonDict:
+    """Compare the clues and walls OCR read with the board from the game page."""
+    from services.solver_api.app.domain.ocr_check import check_ocr
+    from services.solver_api.app.domain.zip_board import validate_zip_board, zip_board_facts, zip_page_facts
 
-    try:
-        board = validate_zip_board(parsed_board)
-    except Exception as exc:
-        return {
-            "puzzle": "zip",
-            "solved": False,
-            "board_size": 0,
-            "path": [],
-            "directions": [],
-            "moves": [],
-            "start_cell": None,
-            "error": f"Invalid Zip page board: {exc}",
-            "details": {"parse_reliable": False, "input_source": "page"},
-        }
-
-    size = board["size"]
-    blocked_h, blocked_v, clues = zip_solver_input(board)
-    result = solver.solve(size=size, blocked_h=blocked_h, blocked_v=blocked_v, clues=clues)
-    path = [{"row": int(row), "col": int(col)} for row, col in (result.path or [])]
-    directions = [str(direction) for direction in (result.directions or [])]
-    return {
-        "puzzle": "zip",
-        "solved": bool(result.solved),
-        "board_size": size,
-        "path": path,
-        "directions": directions,
-        "moves": [{"direction": direction} for direction in directions],
-        "start_cell": path[0] if path else None,
-        "clues": [{"row": row, "col": col, "value": value} for (row, col), value in sorted(clues.items(), key=lambda item: item[1])],
-        "error": None if result.solved else result.error,
-        "details": {
-            "iterations": int(result.iterations),
-            "clue_count": len(clues),
-            "wall_count": len(board["walls"]),
-            "parse_reliable": True,
-            "input_source": "page",
-        },
-    }
+    return check_ocr(validate_zip_board, parsed_board, zip_page_facts, zip_board_facts(clues, parsed["blocked_h"], parsed["blocked_v"]))
 
 
 def solve(image_path: Path, *, parsed_board: JsonDict | None = None) -> JsonDict:
@@ -363,12 +327,8 @@ def solve(image_path: Path, *, parsed_board: JsonDict | None = None) -> JsonDict
 
     activate_game_import_context(game_root)
 
-    from src.zip_solver import ZipSolver
-
-    if parsed_board is not None:
-        return _solve_page_board(parsed_board, ZipSolver())
-
     from src.image_parser import ZipImageParser
+    from src.zip_solver import ZipSolver
 
     parser = ZipImageParser()
     solver = ZipSolver()
@@ -406,6 +366,8 @@ def solve(image_path: Path, *, parsed_board: JsonDict | None = None) -> JsonDict
                 "recovered_clues": recovered_clues,
             },
         }
+        if parsed_board is not None:
+            response["details"]["ocr_check"] = _ocr_check(parsed_board, clues, parsed)
         attach_captured_logs(response, captured_logs)
         return response
 
@@ -444,6 +406,8 @@ def solve(image_path: Path, *, parsed_board: JsonDict | None = None) -> JsonDict
         },
     }
 
+    if parsed_board is not None:
+        response["details"]["ocr_check"] = _ocr_check(parsed_board, clues, parsed)
     attach_captured_logs(response, captured_logs)
 
     return response

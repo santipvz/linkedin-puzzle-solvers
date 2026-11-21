@@ -182,7 +182,10 @@ def test_http_page_board_round_trip_and_validation():
     assert solver.calls[-1][-1] == page_board()
     for payload in ["{", "null", "[]", "{}", " " * 4097]:
         assert client.post("/solve/wend", files=image, data={"parsed_board": payload}).status_code == 422
-    assert client.post("/solve/zip", files=image, data={"parsed_board": json.dumps(page_board())}).status_code == 422
+    # Zip solves from the image; its page board is only a reference the worker checks,
+    # so even a malformed one is passed along instead of failing the request.
+    assert client.post("/solve/zip", files=image, data={"parsed_board": json.dumps(page_board())}).status_code == 200
+    assert solver.calls[-1][-1] == page_board()
 
 
 @pytest.mark.parametrize("mode", ["subprocess", "inprocess"])

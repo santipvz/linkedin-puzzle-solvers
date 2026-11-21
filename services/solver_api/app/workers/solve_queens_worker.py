@@ -302,6 +302,14 @@ def _run_solver_attempt(queens_solver_class: Any, image_path: Path, attempt_labe
     solution_grid = None
     moves: list[dict[str, int]] = []
 
+    region_grid = None
+    if puzzle_state is not None and puzzle_state.regions:
+        region_grid = [[-1] * board_size for _ in range(board_size)]
+        for region_id, region in puzzle_state.regions.items():
+            for row, col in region.positions:
+                if 0 <= row < board_size and 0 <= col < board_size:
+                    region_grid[row][col] = int(region_id)
+
     if puzzle_state is not None and puzzle_state.solution is not None:
         solution_grid = _serialize_solution_grid(puzzle_state.solution)
         for row_index, row_values in enumerate(solution_grid):
@@ -346,6 +354,7 @@ def _run_solver_attempt(queens_solver_class: Any, image_path: Path, attempt_labe
             },
         }
 
+    response["details"]["region_grid"] = region_grid
     attach_captured_logs(response, captured_logs)
 
     return response
@@ -459,51 +468,7 @@ def _finalize_queens_attempt(
     return best_attempt
 
 
-def _solve_page_board(parsed_board: JsonDict) -> JsonDict:
-    """Solve a Queens puzzle read from the page: no image or computer vision involved."""
-    from services.solver_api.app.domain.queens_board import queens_region_cells, validate_queens_board
-
-    solver_module = importlib.import_module("src.solver.queens_solver")
-    models_module = importlib.import_module("src.core.models")
-    try:
-        board = validate_queens_board(parsed_board)
-    except Exception as exc:
-        return {
-            "puzzle": "queens",
-            "solved": False,
-            "board_size": 0,
-            "moves": [],
-            "solution_grid": None,
-            "error": f"Invalid Queens page board: {exc}",
-            "details": {"parse_reliable": False, "input_source": "page"},
-        }
-
-    size = board["size"]
-    regions = {
-        region_id: models_module.Region(id=region_id, positions=cells, color=np.zeros(3), size=len(cells))
-        for region_id, cells in queens_region_cells(board).items()
-    }
-    result = solver_module.BacktrackingQueensSolver().solve(size, regions)
-    solved = bool(result.success and result.validation_passed)
-    grid = _serialize_solution_grid(result.solution) if solved else None
-    return {
-        "puzzle": "queens",
-        "solved": solved,
-        "board_size": size,
-        "moves": [{"row": row, "col": col} for row, values in enumerate(grid or []) for col, value in enumerate(values) if value == 1],
-        "solution_grid": grid,
-        "error": None if solved else (result.error_message or "No valid solution found."),
-        "details": {
-            "iterations": int(result.iterations),
-            "regions_detected": len(regions),
-            "validation_passed": bool(result.validation_passed),
-            "parse_reliable": True,
-            "input_source": "page",
-        },
-    }
-
-
-def solve(image_path: Path, *, parsed_board: JsonDict | None = None) -> JsonDict:
+def _solve_image(image_path: Path) -> JsonDict:
     game_root = game_root_for_worker(__file__, "queen_solver")
     if not game_root.exists():
         return {
@@ -514,8 +479,6 @@ def solve(image_path: Path, *, parsed_board: JsonDict | None = None) -> JsonDict
 
     activate_game_import_context(game_root)
 
-    if parsed_board is not None:
-        return _solve_page_board(parsed_board)
 
     queens_module = importlib.import_module(".".join(["src", "queens_solver"]))
     queens_solver_class = getattr(queens_module, "QueensSolver")
@@ -579,6 +542,19 @@ def solve(image_path: Path, *, parsed_board: JsonDict | None = None) -> JsonDict
     finally:
         for path in temp_paths:
             path.unlink(missing_ok=True)
+
+
+def solve(image_path: Path, *, parsed_board: JsonDict | None = None) -> JsonDict:
+    response = _solve_image(image_path)
+    if parsed_board is not None:
+        from services.solver_api.app.domain.ocr_check import check_ocr
+        from services.solver_api.app.domain.queens_board import queens_board_facts, queens_page_facts, validate_queens_board
+
+        # Compare the colour regions OCR found with the board from the game page.
+        details = response.setdefault("details", {})
+        ocr_facts = queens_board_facts(details.get("region_grid") or [])
+        details["ocr_check"] = check_ocr(validate_queens_board, parsed_board, queens_page_facts, ocr_facts)
+    return response
 
 
 def main() -> int:
