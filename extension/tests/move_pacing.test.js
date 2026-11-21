@@ -11,7 +11,7 @@ function contentContext() {
     window: { self: {}, top: {}, innerWidth: 800, innerHeight: 800, location: { pathname: '/games/queens/' } },
     chrome: { runtime: { onMessage: { addListener() {} } } },
   });
-  for (const file of ['puzzle_registry.js', 'content.js']) {
+  for (const file of ['puzzle_registry.js', 'shared.js', 'content.js']) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context);
   }
   return context;
@@ -106,7 +106,7 @@ test('the API client reads the server solve time from Server-Timing', async () =
   const context = vm.createContext({ Blob, FormData, chrome: { runtime: { onMessage: { addListener() {} } } },
     fetch: async () => ({ ok: true, headers: { get: (name) => (name === 'Server-Timing' ? 'solve;dur=212.4' : null) },
       text: async () => '{"solved":true,"details":{}}' }) });
-  for (const file of ['puzzle_registry.js', 'api_config.js', 'background.js']) {
+  for (const file of ['puzzle_registry.js', 'shared.js', 'api_config.js', 'background.js']) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context);
   }
   const payload = await context.callSolverApi('http://127.0.0.1:8000', 'queens', new Blob(['x'], { type: 'image/png' }), {});

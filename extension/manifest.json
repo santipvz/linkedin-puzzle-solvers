@@ -45,6 +45,7 @@
       ],
       "js": [
         "puzzle_registry.js",
+        "shared.js",
         "wend_paths.js",
         "content.js"
       ],
